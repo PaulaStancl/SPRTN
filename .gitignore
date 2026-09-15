@@ -1,0 +1,18 @@
+# Data and outputs live on the server, never in git
+data/*
+!data/.gitkeep
+results/*
+!results/.gitkeep
+work/
+logs/
+
+# Nextflow
+.nextflow/
+.nextflow.log*
+
+# Generated on the server by the scripts
+scripts/wgs/samplesheets/*.csv
+scripts/wgs/conf/oncoanalyser_refdata.config
+
+# OS
+.DS_Store

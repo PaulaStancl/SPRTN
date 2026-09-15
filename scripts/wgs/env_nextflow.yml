@@ -1,0 +1,10 @@
+# Nextflow + JVM only. Same pin as the CHLOCK setup, so the existing
+# /common/WORK/pstancl/envs/nextflow-26.04.6 is reused, not rebuilt.
+# sarek 3.10.0 and oncoanalyser 3.0.0 need >=25.10.4; tumourevo dev >=25.04.0.
+name: nextflow
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - openjdk=21
+  - nextflow=26.04.6

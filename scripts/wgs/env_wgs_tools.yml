@@ -1,0 +1,13 @@
+# Helper tools for downloading and preparing WGS test data (not used by the pipelines,
+# which run everything in containers).
+name: wgs-tools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - awscli        # public S3 sync: iGenomes, VEP cache
+  - seqtk         # FASTQ subsampling
+  - pigz
+  - samtools
+  - bcftools      # truth-set comparison later
+  - wget
