@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
 # 06 - Subsample to ~30x tumour / ~20x normal so a full run fits in days, not a
-#      week, on 12 cores. Same seed + same fraction on R1 and R2 keeps pairs.
+#      week, on 8 cores. Same seed + same fraction on R1 and R2 keeps pairs.
 #
 #   ./06_subsample_fastq.sh
 #   TUMOUR_FRACTION=1 ./06_subsample_fastq.sh     # skip subsampling for one side
@@ -32,7 +32,7 @@ for s in "$TUMOUR_ID" "$NORMAL_ID"; do
         out="$SUB_DIR/${s}_${r}.fastq.gz"
         [[ -f "$out.done" ]] && { ok "$(basename "$out") already done"; continue; }
         log "  $s $r  fraction $frac  -> $out"
-        ( seqtk sample -s"$SEED" "$in" "$frac" | pigz -p 2 > "$out.tmp" \
+        ( seqtk sample -s"$SEED" "$in" "$frac" | pigz -p 1 > "$out.tmp" \
           && mv "$out.tmp" "$out" && touch "$out.done" ) \
           > "$LOG_DIR/subsample_${s}_${r}.log" 2>&1 &
         pids+=($!)

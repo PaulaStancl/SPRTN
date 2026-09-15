@@ -67,13 +67,13 @@ Run from `scripts/wgs/`. Start steps 04 onwards inside `tmux`.
 ```
 
 - **Parallel work:** 04 and 05 are independent and can run at the same time in two tmux windows.
-- **Run 10 and 11 one after the other.** Each one takes all 12 cores.
+- **Run 10 and 11 one after the other.** Each one takes all 8 cores.
 - **Resuming:** every run uses `-resume`, so after a crash re-run the same script.
 
 ## Before the first run
 
-- **Resources:** check `conf/lobsang.config`. It is set to 12 CPUs and 400 GB RAM. `01_check_system.sh` compares that with the machine and fails if the config asks for more than the server has.
-- **Time:** at 30x/20x on 12 cores, alignment alone takes most of a day. Mutect2 is the slowest step in sarek. For a faster first pass run `SAREK_TOOLS=strelka,manta,ascat ./10_run_sarek.sh`, but tumourevo needs the Mutect2 VCF.
+- **Resources:** check `conf/lobsang.config`. It is set to 8 CPUs and 400 GB RAM (lobsang: 8 CPUs, 7 TB RAM). `01_check_system.sh` compares that with the machine and fails if the config asks for more than the server has.
+- **Time:** at 30x/20x on 8 cores, alignment alone takes most of a day. Mutect2 is the slowest step in sarek. For a faster first pass run `SAREK_TOOLS=strelka,manta,ascat ./10_run_sarek.sh`, but tumourevo needs the Mutect2 VCF.
 
 ## Things that are easy to trip over
 
