@@ -55,7 +55,7 @@ for entry in "${FILES[@]}"; do
 done
 
 status=0
-for p in "${pids[@]}"; do wait "$p" || status=1; done
+for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || status=1; done
 [[ "$status" -eq 0 ]] || die "a download failed - see $LOG_DIR/download_*.log, then re-run (resumes)"
 
 ls -lh "$RAW_DIR"/*.fastq.gz
