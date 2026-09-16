@@ -37,9 +37,21 @@ activate_tools
 mkdir -p "$SUB_DIR" "$LOG_DIR"
 
 SEED=100
+
+# Fractions are fractions: >1 is a typo, and 0 or less is meaningless. Exactly 1
+# means full depth and is handled by symlink below, never handed to seqtk.
+for frac in "$TUMOUR_FRACTION" "$NORMAL_FRACTION"; do
+    awk -v f="$frac" 'BEGIN{exit !(f+0 > 0 && f+0 <= 1)}' \
+        || die "fraction must be >0 and <=1, got: $frac"
+done
+
+# The .md5ok stamp is not proof the FASTQ is still there - it outlives a deleted
+# file, and ln -s would then make a dangling link.
 for s in "$TUMOUR_ID" "$NORMAL_ID"; do
     for r in R1 R2; do
-        [[ -f "$RAW_DIR/${s}_${r}.fastq.gz.md5ok" ]] || die "$RAW_DIR/${s}_${r}.fastq.gz not verified - run ./05_download_test_data.sh"
+        fq="$RAW_DIR/${s}_${r}.fastq.gz"
+        [[ -s "$fq" ]]         || die "$fq missing or empty - run ./05_download_test_data.sh"
+        [[ -f "$fq.md5ok" ]]   || die "$fq not verified - run ./05_download_test_data.sh"
     done
 done
 
@@ -53,9 +65,10 @@ for s in "$TUMOUR_ID" "$NORMAL_ID"; do
         [[ -s "$out" && -f "$out.done" ]] && { ok "$(basename "$out") already done"; continue; }
         rm -f "$out" "$out.tmp" "$out.done"
 
-        # seqtk reads any fraction >= 1 as a read COUNT - keep full depth by symlink
-        if awk -v f="$frac" 'BEGIN{exit !(f+0 >= 1)}'; then
-            ln -s "$in" "$out" && touch "$out.done"
+        # seqtk reads a fraction of 1 as "one read" - keep full depth by symlink.
+        # realpath: a relative target would be resolved against SUB_DIR, not $PWD.
+        if awk -v f="$frac" 'BEGIN{exit !(f+0 == 1)}'; then
+            ln -s "$(realpath "$in")" "$out" && touch "$out.done"
             ok "$s $r  full depth (symlink to raw)"
             continue
         fi
@@ -72,11 +85,13 @@ status=0
 for p in ${pids[@]+"${pids[@]}"}; do wait "$p" || status=1; done
 [[ "$status" -eq 0 ]] || die "subsampling failed - see $LOG_DIR/subsample_*.log"
 
-# Pairing check over the WHOLE file, not just the head: sampling R1 and R2
-# separately is only correct if the raw files hold the same records in the same
-# order, and a mismatch anywhere shifts every name after it. Minutes per sample.
-if [[ -n "${SKIP_PAIR_CHECK:-}" ]]; then
-    warn "SKIP_PAIR_CHECK set - R1/R2 pairing not verified"
+# Pairing check over ALL SUBSAMPLED reads, not just the head. Sampling R1 and R2
+# separately is correct only if the raw files hold corresponding records in the
+# same order; a mismatch among the retained reads is caught here. Proving that
+# every RAW pair is in sync would mean checking $RAW_DIR before subsampling.
+# Minutes per sample.
+if [[ "${SKIP_PAIR_CHECK:-0}" == "1" ]]; then
+    warn "SKIP_PAIR_CHECK=1 - R1/R2 pairing not verified"
 else
     names() { pigz -dc "$1" | awk 'NR%4==1{sub(/[ \/].*/,""); print}'; }
     for s in "$TUMOUR_ID" "$NORMAL_ID"; do
@@ -88,5 +103,9 @@ else
 fi
 
 ls -lh "$SUB_DIR"/*.fastq.gz
-log "Raw FASTQ no longer needed for the subsampled test:  rm $RAW_DIR/*.fastq.gz  (191 GB)"
+if awk -v t="$TUMOUR_FRACTION" -v n="$NORMAL_FRACTION" 'BEGIN{exit !(t+0 < 1 && n+0 < 1)}'; then
+    log "Subsampled FASTQ are independent copies - the raw ones can go:  rm $RAW_DIR/*.fastq.gz  (191 GB)"
+else
+    warn "Full-depth output is SYMLINKED to $RAW_DIR - do NOT delete the raw FASTQ"
+fi
 log "Next:  ./07_make_samplesheets.sh"
