@@ -43,7 +43,10 @@ for entry in "${FILES[@]}"; do
     read -r name url md5 <<<"$entry"
     if [[ -f "$name.md5ok" ]]; then ok "$name already verified"; continue; fi
     (
-        wget -c -q -O "$name" "$url" || { echo "download failed: $name" >&2; exit 1; }
+        # -nv, not -q: keep wget's error messages (server, timeout, 5xx) in the log.
+        # Retry a broken connection rather than failing the whole script on a blip.
+        wget -c -nv --tries=10 --waitretry=30 --read-timeout=120 -O "$name" "$url" \
+            || { echo "download failed: $name" >&2; exit 1; }
         echo "$md5  $name" | md5sum -c --quiet - || { echo "md5 MISMATCH: $name (delete it and re-run)" >&2; exit 1; }
         touch "$name.md5ok"
     ) > "$LOG_DIR/download_$name.log" 2>&1 &
