@@ -83,4 +83,4 @@ Run from `scripts/wgs/`. Start steps 04 onwards inside `tmux`.
 - **tumourevo can't use oncoanalyser output.** It accepts ASCAT, sequenza, Battenberg or facets for copy number, not PURPLE.
 - **Two different GRCh38 builds.** oncoanalyser uses Hartwig's `GRCh38_masked_exclusions_alts_hlas`, not the GATK `Homo_sapiens_assembly38`. Both use `chr` names, but BAMs are not interchangeable between the two pipelines.
 - **Single-sample signatures.** With one tumour, the signature tools in tumourevo only test that the pipeline runs.
-- **Disk.** Delete `work/wgs/<run>` once a run's results are checked. Raw FASTQ (191 GB) can go after script 06.
+- **Disk.** Delete `work/wgs/<run>` once a run's results are checked. The raw FASTQ are kept - never delete them, and at full depth the subsampled folder symlinks into them.

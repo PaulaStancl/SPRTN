@@ -103,9 +103,7 @@ else
 fi
 
 ls -lh "$SUB_DIR"/*.fastq.gz
-if awk -v t="$TUMOUR_FRACTION" -v n="$NORMAL_FRACTION" 'BEGIN{exit !(t+0 < 1 && n+0 < 1)}'; then
-    log "Subsampled FASTQ are independent copies - the raw ones can go:  rm $RAW_DIR/*.fastq.gz  (191 GB)"
-else
-    warn "Full-depth output is SYMLINKED to $RAW_DIR - do NOT delete the raw FASTQ"
-fi
+# The raw FASTQ stay: they are the downloaded originals, re-downloading is hours,
+# and at full depth the outputs above are symlinks into $RAW_DIR.
+log "raw FASTQ kept in $RAW_DIR - do not delete them"
 log "Next:  ./07_make_samplesheets.sh"
