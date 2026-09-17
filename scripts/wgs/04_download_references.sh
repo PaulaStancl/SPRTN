@@ -19,8 +19,13 @@ WHAT="${1:-}"
 [[ "$WHAT" =~ ^(sarek|oncoanalyser|vep|all)$ ]] || die "usage: $0 sarek|oncoanalyser|vep|all"
 
 # ---- sarek: iGenomes GATK.GRCh38 -------------------------------------------
-# Full prefix is 63 GB. Skipped: dragmap and BWAIndex (we align with bwa-mem2)
-# and GermlineResource (not referenced by sarek's igenomes.config).
+# Full prefix is 63 GB. Only GermlineResource is skipped - it is the one large
+# directory sarek's igenomes.config never references.
+#
+# BWAIndex (5.6 GB) and dragmap (6.8 GB) are downloaded even though we align with
+# bwa-mem2: sarek's schema marks every genome path `exists: true` and validates
+# ALL of them before the run, so missing indexes abort the pipeline with
+# "--bwa ... does not exist" even when that aligner is never used.
 download_sarek() {
     activate_tools
     local dest="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38"
@@ -28,8 +33,6 @@ download_sarek() {
     mkdir -p "$dest"
     aws s3 sync --no-sign-request --region eu-west-1 \
         s3://ngi-igenomes/igenomes/Homo_sapiens/GATK/GRCh38/ "$dest/" \
-        --exclude 'Sequence/dragmap/*' \
-        --exclude 'Sequence/BWAIndex/*' \
         --exclude 'Annotation/GermlineResource/*'
     for f in Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta \
              Sequence/BWAmem2Index \

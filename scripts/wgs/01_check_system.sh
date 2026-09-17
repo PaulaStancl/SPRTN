@@ -37,7 +37,7 @@ ok "machine: $ncpu cpus, $memgb GB RAM"
 
 echo; log "5. Disk  (budget ~1.5 TB for this test)"
 cat <<TXT
-        references : sarek iGenomes ~47 GB, oncoanalyser ~31 GB, VEP cache ~28 GB
+        references : sarek iGenomes ~59 GB, oncoanalyser ~31 GB, VEP cache ~28 GB
         FASTQ      : raw 191 GB + subsampled ~70 GB (both kept)
         work dirs  : sarek ~500 GB, oncoanalyser ~400 GB (delete after each run)
 TXT

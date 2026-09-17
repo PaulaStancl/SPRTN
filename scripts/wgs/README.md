@@ -56,7 +56,7 @@ Run from `scripts/wgs/`. Start steps 04 onwards inside `tmux`.
 ./01_check_system.sh                  # read-only: engine, CPU/RAM vs config, disk, network
 ./02_create_envs.sh                   # reuses nextflow-26.04.6, creates wgs-tools
 ./03_pull_pipelines.sh                # pulls the 3 pipelines at the pinned versions
-./04_download_references.sh all       # ~106 GB: iGenomes, VEP 115, oncoanalyser refs
+./04_download_references.sh all       # ~118 GB: iGenomes, VEP 115, oncoanalyser refs
 ./05_download_test_data.sh            # 191 GB FASTQ + truth set, md5-checked
 ./06_subsample_fastq.sh               # -> ~30x T / ~20x N
 ./07_make_samplesheets.sh             # sarek + oncoanalyser sheets (--full = no subsampling)
