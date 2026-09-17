@@ -13,7 +13,7 @@ These scripts set up and run three nf-core pipelines on one tumour/normal whole-
 | nf-core/oncoanalyser | 3.0.0 | FASTQ | stand-alone (PURPLE, LINX, ORANGE report) |
 | nf-core/tumourevo | dev `738cb05` (no release yet) | sarek VCF + ASCAT | subclonal deconvolution and signatures |
 
-All three use the existing Nextflow env `envs/nextflow-26.04.6`, the same one CHLOCK uses, and run their tools in apptainer containers.
+All three use the existing Nextflow env `envs/nextflow-26.04.6`, the same one CHLOCK uses, and run their tools in containers via the `singularity` profile (see the container note below).
 
 ## Test data: SEQC2 HCC1395 (breast cancer cell line)
 
@@ -83,4 +83,5 @@ Run from `scripts/wgs/`. Start steps 04 onwards inside `tmux`.
 - **tumourevo can't use oncoanalyser output.** It accepts ASCAT, sequenza, Battenberg or facets for copy number, not PURPLE.
 - **Two different GRCh38 builds.** oncoanalyser uses Hartwig's `GRCh38_masked_exclusions_alts_hlas`, not the GATK `Homo_sapiens_assembly38`. Both use `chr` names, but BAMs are not interchangeable between the two pipelines.
 - **tumourevo signature tools are off by default.** SparseSignatures/SigProfiler need a cohort; on sparse input SparseSignatures gets NA for every cross-validation MSE and dies choosing K. Upstream's own nf-test also runs only `tinc,mobster,pyclone-vi`. Add them via `TEVO_TOOLS=` once the rest works.
+- **Use the `singularity` profile, not `apptainer`.** oncoanalyser's own modules only choose the prebuilt Galaxy SIF when the engine is called `singularity`; under `apptainer` they fall back to quay.io Docker images and apptainer's OCI conversion fails on some (hmftools-esvee 2.0.1: `no descriptor found for reference ...`), which clearing the cache does not fix. `00_config.sh` therefore prefers `singularity`, which on lobsang is apptainer's own compat symlink.
 - **Disk.** Delete `work/wgs/<run>` once a run's results are checked. The raw FASTQ are kept - never delete them, and at full depth the subsampled folder symlinks into them.

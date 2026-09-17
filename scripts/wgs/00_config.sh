@@ -62,9 +62,16 @@ export TUMOUR_FRACTION="${TUMOUR_FRACTION:-0.56}"           # 53x -> ~30x
 export NORMAL_FRACTION="${NORMAL_FRACTION:-0.36}"           # 55x -> ~20x
 
 # ---- Container engine ------------------------------------------------------
+# 'singularity' is preferred over 'apptainer' on purpose, even when the binary is
+# just apptainer's compat symlink (lobsang: apptainer 1.4.2 provides both).
+# oncoanalyser's local modules pick the prebuilt Galaxy SIF only when
+# workflow.containerEngine == 'singularity'; under 'apptainer' they fall back to
+# quay.io Docker images, and apptainer's OCI->SIF conversion fails on some of them
+# (hmftools-esvee 2.0.1: FATAL "no descriptor found for reference ..."), which
+# clearing the cache does not fix. The SIF route is a plain https download.
 if [[ -z "${CONTAINER_ENGINE:-}" ]]; then
-    if   command -v apptainer   >/dev/null 2>&1; then CONTAINER_ENGINE=apptainer
-    elif command -v singularity >/dev/null 2>&1; then CONTAINER_ENGINE=singularity
+    if   command -v singularity >/dev/null 2>&1; then CONTAINER_ENGINE=singularity
+    elif command -v apptainer   >/dev/null 2>&1; then CONTAINER_ENGINE=apptainer
     elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then CONTAINER_ENGINE=docker
     else CONTAINER_ENGINE=none; fi
 fi
