@@ -39,8 +39,15 @@ test_oncoanalyser() {
 
 test_tumourevo() {
     # tumourevo dev still uses pre-strict Nextflow syntax; 26.04 is strict by default.
+    #
+    # --tools: the test profile lists sparsesignatures, but the pipeline's own
+    # nf-test (tests/default.nf.test) overrides tools to "tinc,mobster,pyclone-vi",
+    # i.e. upstream does not test signature extraction on this data either. The
+    # chr17 test mutations are too few for SparseSignatures cross-validation: every
+    # grid MSE comes back NA, min K is NA, and the module dies in `if (K < 2)`.
     NXF_SYNTAX_PARSER="${NXF_SYNTAX_PARSER:-v1}" \
     nf_run test_tumourevo "test,$NXF_PROFILE" nf-core/tumourevo -r "$TUMOUREVO_REV" \
+        --tools tinc,mobster,pyclone-vi \
         --outdir "$OUT/tumourevo"
 }
 

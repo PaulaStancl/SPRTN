@@ -4,12 +4,16 @@
 #      sarek output (Mutect2 VCF + ASCAT copy number). Needs 10 to be finished.
 #
 #   ./12_run_tumourevo.sh
-#   TEVO_TOOLS=mobster,viber,pyclone-vi ./12_run_tumourevo.sh
+#   TEVO_TOOLS=tinc,mobster,viber,pyclone-vi,sparsesignatures ./12_run_tumourevo.sh
 #
 # tumourevo does NOT accept oncoanalyser/PURPLE output (CNA callers: ASCAT,
 # sequenza, Battenberg, facets), so sarek is its only input here.
-# With a single tumour sample the signature tools (sparsesignatures,
-# sigprofiler) only check that the plumbing works - they need a cohort.
+#
+# Signature tools are OFF by default. They need a cohort, not one sample, and
+# upstream does not test them either: the pipeline's own nf-test overrides tools
+# to "tinc,mobster,pyclone-vi". On sparse input SparseSignatures returns NA for
+# every cross-validation MSE and then dies picking K (`if (K < 2)`). Add
+# sparsesignatures / sigprofiler through TEVO_TOOLS once the rest has run.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
@@ -17,7 +21,7 @@ source ./00_config.sh
 activate_env
 make_dirs
 
-TEVO_TOOLS="${TEVO_TOOLS:-tinc,mobster,viber,pyclone-vi,sparsesignatures,sigprofiler}"
+TEVO_TOOLS="${TEVO_TOOLS:-tinc,mobster,viber,pyclone-vi}"
 SAREK_OUT="$RESULTS_BASE/sarek/$DATASET"
 OUT="$RESULTS_BASE/tumourevo/$DATASET"
 PAIR="${TUMOUR_ID}_vs_${NORMAL_ID}"

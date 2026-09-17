@@ -82,5 +82,5 @@ Run from `scripts/wgs/`. Start steps 04 onwards inside `tmux`.
 - **VCF sample names.** sarek writes them as `<patient>_<sample>`, e.g. `HCC1395_HCC1395T`. tumourevo's `tumour_sample` / `normal_sample` must match exactly, and script 12 checks this with `bcftools query -l`.
 - **tumourevo can't use oncoanalyser output.** It accepts ASCAT, sequenza, Battenberg or facets for copy number, not PURPLE.
 - **Two different GRCh38 builds.** oncoanalyser uses Hartwig's `GRCh38_masked_exclusions_alts_hlas`, not the GATK `Homo_sapiens_assembly38`. Both use `chr` names, but BAMs are not interchangeable between the two pipelines.
-- **Single-sample signatures.** With one tumour, the signature tools in tumourevo only test that the pipeline runs.
+- **tumourevo signature tools are off by default.** SparseSignatures/SigProfiler need a cohort; on sparse input SparseSignatures gets NA for every cross-validation MSE and dies choosing K. Upstream's own nf-test also runs only `tinc,mobster,pyclone-vi`. Add them via `TEVO_TOOLS=` once the rest works.
 - **Disk.** Delete `work/wgs/<run>` once a run's results are checked. The raw FASTQ are kept - never delete them, and at full depth the subsampled folder symlinks into them.
