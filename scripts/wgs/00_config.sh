@@ -6,11 +6,17 @@
 #   source 00_config.sh
 #
 # Every other script in this folder sources this one - change paths HERE.
-# Anything already exported in your shell wins, e.g.
-#   SAREK_TOOLS=strelka,manta,ascat ./02_run_sarek.sh
+# Run settings (tool lists, versions, SEX, CANCER_TYPE) can be overridden from
+# the shell, e.g.  SAREK_TOOLS=strelka,manta,ascat ./02_run_sarek.sh
+# Project paths, the dataset name and the container engine can NOT - see below.
 #
 # One-time setup (envs, pipeline pulls, references) lives in ../wgs_test/
 # (01-04) and is already done on the server; these scripts only reuse it.
+#
+# Why project paths and the container engine ignore the shell: other projects'
+# configs (CHLOCK's env_setup/00_config.sh) export PROJECT_DIR, CONTAINER_ENGINE
+# and NXF_PROFILE too. In a shell that had sourced one of them, this pipeline
+# wrote into CHLOCK's folders under the apptainer profile.
 # ---------------------------------------------------------------------------
 
 _CFG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -25,7 +31,8 @@ export ENV_ROOT="${ENV_ROOT:-$WORK_BASE/envs}"
 export PROGRAMS_DIR="${PROGRAMS_DIR:-$WORK_BASE/PROGRAMI}"
 export CONTAINER_DIR="${CONTAINER_DIR:-$WORK_BASE/singularity_cache}"   # ONE cache for all pipelines
 export NXF_HOME="${NXF_HOME:-$PROGRAMS_DIR/nextflow}"                   # pulled pipelines live here
-export TMPDIR="${TMPDIR:-$WORK_BASE/tmp}"                               # never $HOME, never /tmp
+# Never $HOME or /tmp - and not the node-local TMPDIR a PBS job gets either.
+export TMPDIR="$WORK_BASE/tmp"
 
 # ---- Shared references (staged by ../wgs_test/04_download_references.sh) ---
 export REF_BASE="${REF_BASE:-$WORK_BASE/references}"
@@ -47,31 +54,33 @@ export TOOLS_PREFIX="${TOOLS_PREFIX:-$ENV_ROOT/wgs-tools}"              # bcftoo
 # ---- This project -----------------------------------------------------------
 # The project dir is the folder that contains scripts/, data/, results/.
 # logs/, work/ and results/ are shared with ../wgs_test; DATASET keeps them apart.
-export PROJECT_DIR="${PROJECT_DIR:-$( cd "$_CFG_DIR/../.." && pwd )}"
-export LOG_DIR="${LOG_DIR:-$PROJECT_DIR/logs/wgs}"
-export NXF_WORK_BASE="${NXF_WORK_BASE:-$PROJECT_DIR/work/wgs}"          # huge, delete after a run
-export RESULTS_BASE="${RESULTS_BASE:-$PROJECT_DIR/results/wgs}"
+export PROJECT_DIR="$( cd "$_CFG_DIR/../.." && pwd )"
+export LOG_DIR="$PROJECT_DIR/logs/wgs"
+export NXF_WORK_BASE="$PROJECT_DIR/work/wgs"                            # huge, delete after a run
+export RESULTS_BASE="$PROJECT_DIR/results/wgs"
 export SAMPLESHEET_DIR="$_CFG_DIR/samplesheets"
 export SITE_CONFIG="$_CFG_DIR/conf/lobsang.config"
 export ONCO_REFDATA_CONFIG="$_CFG_DIR/conf/oncoanalyser_refdata.config"  # copy of the one 04 wrote
 
 # ---- Dataset: Novogene delivery, archived on /common/RAW (see md5check*.log) -
-export DATASET="${DATASET:-RJALS}"
+export DATASET="RJALS"
 export PATIENT="RJALS"
 export TUMOUR_ID="RJALS_Tm"
 export NORMAL_ID="RJALS_N"
 export DELIVERY_DIR="${DELIVERY_DIR:-/common/RAW/pstancl/MariaBoskovic/SPRTN/wgs/X208SC25056159-Z01-F001}"
 export FASTQ_DIR="$DELIVERY_DIR/01.RawData"   # <sample>/<sample>_<library>_<flowcell>_L<n>_{1,2}.fq.gz
 
-# Sex chromosomes of the patient: XX or XY (NA only if truly unknown).
-# REQUIRED before sarek's first run: ASCAT uses it, and because it is part of
-# every task's inputs, changing it later restarts sarek from scratch.
+# Sex chromosomes of the patient: XY = male (confirmed by Paula 2026-09-22).
+# sarek's ASCAT uses it, and because it is part of every task's inputs,
+# changing it after sarek has started restarts sarek from scratch.
 # oncoanalyser does not need it (AMBER infers sex, PURPLE reports it).
-export SEX="${SEX:-}"
+export SEX="${SEX:-XY}"
 
 # IntOGen cancer-type code of the tumour, used by tumourevo for driver
-# annotation. REQUIRED for 04 only.
-export CANCER_TYPE="${CANCER_TYPE:-}"
+# annotation (04 only): HCC = hepatocellular carcinoma, 204 driver genes in
+# tumourevo's Compendium_Cancer_Genes.tsv. A code that is NOT in that table does
+# not fail - tumourevo silently falls back to PANCANCER drivers.
+export CANCER_TYPE="${CANCER_TYPE:-HCC}"
 
 # ---- Container engine ------------------------------------------------------
 # 'singularity' is preferred over 'apptainer' on purpose, even when the binary is
@@ -81,17 +90,26 @@ export CANCER_TYPE="${CANCER_TYPE:-}"
 # quay.io Docker images, and apptainer's OCI->SIF conversion fails on some of them
 # (hmftools-esvee 2.0.1: FATAL "no descriptor found for reference ..."), which
 # clearing the cache does not fix. The SIF route is a plain https download.
-if [[ -z "${CONTAINER_ENGINE:-}" ]]; then
-    if   command -v singularity >/dev/null 2>&1; then CONTAINER_ENGINE=singularity
-    elif command -v apptainer   >/dev/null 2>&1; then CONTAINER_ENGINE=apptainer
-    elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then CONTAINER_ENGINE=docker
-    else CONTAINER_ENGINE=none; fi
+#
+# Detected every time, never taken from the shell: CHLOCK's config exports
+# CONTAINER_ENGINE=apptainer / NXF_PROFILE=apptainer under the same names.
+#
+# No system-wide singularity on this host? Use the micromamba-installed one
+# (CHLOCK's env_setup/02b_install_apptainer.sh -> $ENV_ROOT/apptainer). It goes
+# on PATH directly instead of being activated: activate_env switches to the
+# nextflow env and would drop it again, leaving a PBS job with no engine.
+if ! command -v singularity >/dev/null 2>&1 && [[ -x "$ENV_ROOT/apptainer/bin/singularity" ]]; then
+    export PATH="$ENV_ROOT/apptainer/bin:$PATH"
 fi
+if   command -v singularity >/dev/null 2>&1; then CONTAINER_ENGINE=singularity
+elif command -v apptainer   >/dev/null 2>&1; then CONTAINER_ENGINE=apptainer
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then CONTAINER_ENGINE=docker
+else CONTAINER_ENGINE=none; fi
 export CONTAINER_ENGINE
-export NXF_PROFILE="${NXF_PROFILE:-$CONTAINER_ENGINE}"
+export NXF_PROFILE="$CONTAINER_ENGINE"
 
 # ---- Nextflow runtime -------------------------------------------------------
-export NXF_OPTS="${NXF_OPTS:--Xms1g -Xmx8g}"
+export NXF_OPTS="-Xms1g -Xmx8g"
 export NXF_SINGULARITY_CACHEDIR="$CONTAINER_DIR"
 export NXF_APPTAINER_CACHEDIR="$CONTAINER_DIR"
 export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-$TMPDIR/apptainer_cache}"
@@ -145,8 +163,16 @@ activate_tools() {
     export PATH="$TOOLS_PREFIX/bin:$PATH"
 }
 
-# nextflow run wrapper: site config, per-run launch + work dir, timestamped log
+# nextflow run wrapper: site config, resource caps, per-run launch + work dir,
+# timestamped log
 #   nf_run <run_name> <profile> <pipeline> [nextflow/pipeline args...]
+#
+# Resource caps are written for every launch to <run dir>/resources.config:
+# inside a PBS job (qsub_*.sh) the job's allocation - PBS sets NCPUS, the qsub
+# script sets JOB_MEMORY_GB because PBS exports no memory variable - and
+# otherwise lobsang's 8 cpus / 400 GB. Nextflow must never schedule more than
+# the job holds, or PBS kills the whole run. 12 GB are left for the Nextflow
+# JVM itself (-Xmx8g) and the OS.
 #
 # Each run is launched from its own directory ($NXF_WORK_BASE/<run_name>), which
 # holds that run's .nextflow/ history and its work/ dir. A bare -resume resumes
@@ -157,15 +183,39 @@ nf_run() {
     local name="$1" profile="$2" pipeline="$3"; shift 3
     local run_dir="$NXF_WORK_BASE/$name"
     local logf="$LOG_DIR/${name}.$(date +%Y%m%d_%H%M%S).log"
+    local cpus=8 mem_gb=400
+    if [[ -n "${PBS_JOBID:-}" ]]; then
+        [[ -n "${NCPUS:-}" ]]         || die "PBS job without NCPUS - request cpus with -l select=1:ncpus=N"
+        [[ -n "${JOB_MEMORY_GB:-}" ]] || die "PBS job without JOB_MEMORY_GB - set it in the qsub script, equal to mem="
+        cpus="$NCPUS"; mem_gb="$JOB_MEMORY_GB"
+    fi
+    local task_gb=$(( mem_gb - 12 ))
+    (( task_gb >= 16 )) || die "only $mem_gb GB for this run - request at least 32 GB"
     mkdir -p "$LOG_DIR" "$run_dir"
+    cat > "$run_dir/resources.config" <<EOF
+// Written by nf_run for the launch at $(date '+%F %T')${PBS_JOBID:+ in PBS job $PBS_JOBID}.
+process {
+    resourceLimits = [
+        cpus  : $cpus,
+        memory: ${task_gb}.GB,
+        time  : 240.h
+    ]
+}
+executor {
+    cpus   = $cpus
+    memory = ${task_gb}.GB
+}
+EOF
     log "pipeline : $pipeline"
     log "profile  : $profile"
+    log "resources: $cpus cpus, $task_gb GB for tasks${PBS_JOBID:+   (PBS job $PBS_JOBID)}"
     log "run dir  : $run_dir   (history + work/)"
     log "log      : $logf"
     echo
     ( cd "$run_dir" && nextflow -log "$logf" run "$pipeline" \
         -profile "$profile" \
         -c "$SITE_CONFIG" \
+        -c "$run_dir/resources.config" \
         -work-dir "$run_dir/work" \
         -resume \
         "$@" )

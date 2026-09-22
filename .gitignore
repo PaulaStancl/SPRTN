@@ -13,6 +13,8 @@ logs/
 # Generated on the server by the scripts
 scripts/*/samplesheets/*.csv
 scripts/*/conf/oncoanalyser_refdata.config
+# PBS job output (qsub -j oe)
+scripts/*/*.o[0-9]*
 
 # OS
 .DS_Store

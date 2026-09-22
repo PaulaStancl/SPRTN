@@ -80,6 +80,7 @@ Run from `scripts/wgs_test/`. Start steps 04 onwards inside `tmux`.
 
 ## Things that are easy to trip over
 
+- **Other projects' configs in the same shell.** CHLOCK's `env_setup/00_config.sh` exports `PROJECT_DIR`, `CONTAINER_ENGINE` and `NXF_PROFILE` too. After it had been sourced, a run here wrote into CHLOCK's folders with the `apptainer` profile. Both SPRTN configs now always derive paths from their own location and detect the engine themselves, so those names are ignored.
 - **tumourevo has no release.** It is pinned to a dev commit. Nextflow 26.04 parses strict syntax by default and tumourevo dev does not yet support it, so scripts 08 and 12 set `NXF_SYNTAX_PARSER=v1` for tumourevo only.
 - **Two VEP versions.** sarek 3.10 ships VEP 116 and tumourevo ships VEP 115. Only tumourevo annotates here, so only the 115 cache is downloaded, and sarek runs without `vep`.
 - **VCF sample names.** sarek writes them as `<patient>_<sample>`, e.g. `HCC1395_HCC1395T`. tumourevo's `tumour_sample` / `normal_sample` must match exactly, and script 12 checks this with `bcftools query -l`.

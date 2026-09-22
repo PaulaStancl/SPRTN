@@ -16,14 +16,14 @@ These scripts run nf-core/sarek, oncoanalyser and tumourevo on the SPRTN patient
 
 ## Before the first run
 
-1. **Set `SEX` in `00_config.sh`** to `XX` or `XY`. sarek needs it for ASCAT, and it is part of every task's inputs, so changing it after sarek has started restarts the whole run. oncoanalyser does not need it.
-2. **Set `CANCER_TYPE`** (the IntOGen code) before `04`. Only tumourevo uses it.
+1. **`SEX` is set to `XY`** (male) in `00_config.sh`. sarek needs it for ASCAT, and it is part of every task's inputs, so changing it after sarek has started restarts the whole run. oncoanalyser does not need it.
+2. **`CANCER_TYPE` is set to `HCC`** (hepatocellular carcinoma). Only tumourevo uses it, for driver annotation. An IntOGen code that isn't in tumourevo's driver table doesn't fail: it silently falls back to pan-cancer drivers, so check any new code against `Compendium_Cancer_Genes.tsv`.
 3. **Copy the oncoanalyser reference config** once: `cp ../wgs_test/conf/oncoanalyser_refdata.config conf/`. It is gitignored because `04_download_references.sh` writes it on the server.
 4. **Run on a machine that mounts `/common/RAW`.** Every script checks this first and stops if it can't read the FASTQ.
 
 ## Order
 
-Run from `scripts/wgs/`, inside `screen` or `tmux`.
+Run from `scripts/wgs/`. Either submit the steps as PBS jobs (next section) or run them directly inside `screen` or `tmux`.
 
 ```bash
 ./01_make_samplesheets.sh     # sarek + oncoanalyser sheets (sarek's only once SEX is set)
@@ -32,12 +32,38 @@ Run from `scripts/wgs/`, inside `screen` or `tmux`.
 ./04_run_tumourevo.sh         # after 02; builds its sheet from sarek output
 ```
 
-- **Run 02 and 03 one after the other.** Each one takes all 8 cores. Either order works; if the patient's sex isn't confirmed yet, start with 03.
+- **Run directly on lobsang, 02 and 03 must go one after the other,** because each one takes all 8 cores. As PBS jobs they can run at the same time. Either order works; if the patient's sex isn't confirmed yet, start with 03.
 - **Resuming:** re-run the same script after a crash and it continues from the last finished task.
+
+## Running as PBS jobs (queue q2)
+
+There is one job per pipeline. Each job runs Nextflow with the local executor on one node, capped at that job's allocation. PBS sets `NCPUS`, and each `qsub_*.sh` sets `JOB_MEMORY_GB`, which must equal its `mem=`. `nf_run` writes these caps to `work/wgs/<run>/resources.config`, leaving 12 GB for Nextflow itself.
+
+| job | select | walltime | notes |
+|---|---|---|---|
+| `qsub_sarek.sh` | `ncpus=24:mem=250gb` | 240 h | bwa-mem2 (which asks for exactly 24 cpus) and Mutect2 dominate. |
+| `qsub_oncoanalyser.sh` | `ncpus=24:mem=250gb` | 240 h | bwa-mem2, REDUX, SAGE, ESVEE (asks for 32 cpus, capped to 24) |
+| `qsub_tumourevo.sh` | `ncpus=8:mem=48gb` | 48 h | VEP plus clonality; mostly single-threaded, so more cpus don't help |
+| `qsub_check.sh` | `ncpus=1:mem=2gb` | 15 min | pre-flight: node, singularity, mounts, internet |
+
+Memory needs at least about 8 GB per cpu, because more cpus means more tasks running at once; 250 GB for 24 cpus leaves headroom. The whole job must fit on **one** node, so check the node sizes first (`pbsnodes -a | grep -E 'resources_available.(ncpus|mem) ='`). A request bigger than any node either gets rejected or sits in the queue forever. To change the size, edit `ncpus=`/`mem=` and set `JOB_MEMORY_GB` to the same value as `mem=`. `qsub` rejects a request above the queue's limits straight away, so a walltime that is too long fails at submission rather than days later.
+
+```bash
+cd scripts/wgs
+./01_make_samplesheets.sh                          # on the login node, once
+qsub qsub_check.sh                                 # read check_q2.o<id>: every line OK?
+qstat -Qf q2 | grep -E 'resources_(max|default)'   # queue limits: walltime, ncpus, mem
+SAREK=$(qsub qsub_sarek.sh)
+qsub qsub_oncoanalyser.sh
+qsub -W depend=afterok:$SAREK qsub_tumourevo.sh    # starts when sarek finishes OK
+```
+
+- **Out of walltime:** `qsub` the same script again. The run resumes from the last finished task, because every run has its own launch directory.
+- **Job output:** PBS writes `<name>.o<jobid>` into `scripts/wgs/` (gitignored). The full Nextflow log is in `logs/wgs/`.
 
 ## Time and disk
 
-- **Time:** expect roughly 1–2 weeks each for sarek and oncoanalyser on 8 cores. This is scaled from about 3.5× the test depth, and no full-depth run has been timed yet. Alignment and Mutect2 dominate.
+- **Time:** roughly 2,000–3,000 CPU-hours each for sarek and oncoanalyser at this depth. That is about 1–2 weeks on 8 cores and roughly 4–6 days on 24. Steps that don't parallelise (markdup, ASCAT, some Manta stages) keep it from scaling perfectly. These are estimates scaled from the test depth; no full-depth run has been timed yet. Alignment and Mutect2 dominate.
 - **Disk:** each work dir can reach several TB, and `/common/WORK` had 22 TB free. Delete `work/wgs/<run>` once that run's results are checked.
 
 ## Layout on the server

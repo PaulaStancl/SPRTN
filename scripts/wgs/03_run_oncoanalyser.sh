@@ -19,6 +19,9 @@ check_data
 SHEET="$SAMPLESHEET_DIR/oncoanalyser_${DATASET}.csv"
 OUT="$RESULTS_BASE/oncoanalyser/$DATASET"
 
+# oncoanalyser only uses its prebuilt SIFs under the singularity profile; under
+# apptainer the OCI conversion of hmftools-esvee fails (see 00_config.sh).
+[[ "$NXF_PROFILE" == singularity ]] || die "oncoanalyser needs the singularity profile, got '$NXF_PROFILE'"
 [[ -f "$SHEET" ]] || die "missing $SHEET - run ./01_make_samplesheets.sh"
 [[ -f "$ONCO_REFDATA_CONFIG" ]] \
     || die "missing $ONCO_REFDATA_CONFIG - copy ../wgs_test/conf/oncoanalyser_refdata.config here"

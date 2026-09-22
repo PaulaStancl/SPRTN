@@ -5,8 +5,14 @@
 #   source 00_config.sh
 #
 # Every other script sources this one - change paths and versions HERE.
-# Anything already exported in your shell wins, e.g.
-#   SAREK_TOOLS=strelka,manta,ascat ./10_run_sarek.sh
+# Run settings (tool lists, versions, subsampling fractions) can be overridden
+# from the shell, e.g.  SAREK_TOOLS=strelka,manta,ascat ./10_run_sarek.sh
+# Project paths, the dataset name and the container engine can NOT - see below.
+#
+# Why project paths and the container engine ignore the shell: other projects'
+# configs (CHLOCK's env_setup/00_config.sh) export PROJECT_DIR, CONTAINER_ENGINE
+# and NXF_PROFILE too. In a shell that had sourced one of them, this pipeline
+# wrote into CHLOCK's folders under the apptainer profile.
 # ---------------------------------------------------------------------------
 
 _CFG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -40,22 +46,22 @@ export TOOLS_PREFIX="${TOOLS_PREFIX:-$ENV_ROOT/wgs-tools}"              # seqtk,
 
 # ---- This project -----------------------------------------------------------
 # The project dir is the folder that contains scripts/, data/, results/.
-export PROJECT_DIR="${PROJECT_DIR:-$( cd "$_CFG_DIR/../.." && pwd )}"
-export LOG_DIR="${LOG_DIR:-$PROJECT_DIR/logs/wgs}"
-export NXF_WORK_BASE="${NXF_WORK_BASE:-$PROJECT_DIR/work/wgs}"          # huge, delete after a run
-export RESULTS_BASE="${RESULTS_BASE:-$PROJECT_DIR/results/wgs}"
+export PROJECT_DIR="$( cd "$_CFG_DIR/../.." && pwd )"
+export LOG_DIR="$PROJECT_DIR/logs/wgs"
+export NXF_WORK_BASE="$PROJECT_DIR/work/wgs"                            # huge, delete after a run
+export RESULTS_BASE="$PROJECT_DIR/results/wgs"
 export SAMPLESHEET_DIR="$_CFG_DIR/samplesheets"
 export SITE_CONFIG="$_CFG_DIR/conf/lobsang.config"
 export ONCO_REFDATA_CONFIG="$_CFG_DIR/conf/oncoanalyser_refdata.config"  # written by 04
 
 # ---- Test dataset: SEQC2 HCC1395 (breast cancer) tumour / HCC1395BL normal --
-export DATASET="${DATASET:-HCC1395}"
+export DATASET="HCC1395"
 export PATIENT="HCC1395"
 export TUMOUR_ID="HCC1395T"
 export NORMAL_ID="HCC1395BL"
 export SEX="XX"
 export CANCER_TYPE="BRCA"                                   # IntOGen code used by tumourevo
-export DATA_DIR="${DATA_DIR:-$PROJECT_DIR/data/wgs_test/$DATASET}"
+export DATA_DIR="$PROJECT_DIR/data/wgs_test/$DATASET"
 export RAW_DIR="$DATA_DIR/fastq_raw"                        # ~53x / ~55x, 191 GB
 export SUB_DIR="$DATA_DIR/fastq_subsampled"                 # ~30x / ~20x
 export TUMOUR_FRACTION="${TUMOUR_FRACTION:-0.56}"           # 53x -> ~30x
@@ -69,17 +75,18 @@ export NORMAL_FRACTION="${NORMAL_FRACTION:-0.36}"           # 55x -> ~20x
 # quay.io Docker images, and apptainer's OCI->SIF conversion fails on some of them
 # (hmftools-esvee 2.0.1: FATAL "no descriptor found for reference ..."), which
 # clearing the cache does not fix. The SIF route is a plain https download.
-if [[ -z "${CONTAINER_ENGINE:-}" ]]; then
-    if   command -v singularity >/dev/null 2>&1; then CONTAINER_ENGINE=singularity
-    elif command -v apptainer   >/dev/null 2>&1; then CONTAINER_ENGINE=apptainer
-    elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then CONTAINER_ENGINE=docker
-    else CONTAINER_ENGINE=none; fi
-fi
+#
+# Detected every time, never taken from the shell: CHLOCK's config exports
+# CONTAINER_ENGINE=apptainer / NXF_PROFILE=apptainer under the same names.
+if   command -v singularity >/dev/null 2>&1; then CONTAINER_ENGINE=singularity
+elif command -v apptainer   >/dev/null 2>&1; then CONTAINER_ENGINE=apptainer
+elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then CONTAINER_ENGINE=docker
+else CONTAINER_ENGINE=none; fi
 export CONTAINER_ENGINE
-export NXF_PROFILE="${NXF_PROFILE:-$CONTAINER_ENGINE}"
+export NXF_PROFILE="$CONTAINER_ENGINE"
 
 # ---- Nextflow runtime -------------------------------------------------------
-export NXF_OPTS="${NXF_OPTS:--Xms1g -Xmx8g}"
+export NXF_OPTS="-Xms1g -Xmx8g"
 export NXF_SINGULARITY_CACHEDIR="$CONTAINER_DIR"
 export NXF_APPTAINER_CACHEDIR="$CONTAINER_DIR"
 export APPTAINER_CACHEDIR="${APPTAINER_CACHEDIR:-$TMPDIR/apptainer_cache}"
