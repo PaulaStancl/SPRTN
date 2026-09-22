@@ -42,7 +42,7 @@ There is one job per pipeline. Each job runs Nextflow with the local executor on
 | job | select | walltime | notes |
 |---|---|---|---|
 | `qsub_sarek.sh` | `ncpus=40:mem=400gb` | 240 h | q2's maximum. bwa-mem2 gets 20 cpus per chunk so two chunks align at once; sarek's default of 24 would leave 16 idle. |
-| `qsub_oncoanalyser.sh` | `ncpus=24:mem=250gb` | 240 h | bwa-mem2, REDUX, SAGE, ESVEE (asks for 32 cpus, capped to 24) |
+| `qsub_oncoanalyser.sh` | `ncpus=24:mem=250gb` | 240 h | Its heavy steps (bwa-mem2, REDUX, SAGE, ESVEE, AMBER, COBALT) ask for 12 cpus / 72 GB each, so two run side by side. |
 | `qsub_tumourevo.sh` | `ncpus=8:mem=48gb` | 48 h | VEP plus clonality; mostly single-threaded, so more cpus don't help |
 | `qsub_check.sh` | `ncpus=2:mem=2gb` | 15 min | pre-flight: node, singularity, mounts, internet |
 
