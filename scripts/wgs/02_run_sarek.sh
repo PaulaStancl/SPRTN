@@ -31,6 +31,17 @@ sheet_sex=$(awk -F, 'NR > 1 { print $2 }' "$SHEET" | sort -u | tr '\n' ' ')
 [[ -d "$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/BWAmem2Index" ]] \
     || die "iGenomes not staged - run ../wgs_test/04_download_references.sh sarek"
 
+# bwa-mem2 asks for 24 cpus per chunk, so in a job of 32+ cpus only one chunk
+# fits and the rest sit idle through the whole alignment. Give it half the job
+# instead, so two chunks run side by side. Smaller jobs keep sarek's default.
+TUNING="$NXF_WORK_BASE/sarek_${DATASET}/sarek_tuning.config"
+mkdir -p "$(dirname "$TUNING")"
+if (( ${NCPUS:-0} >= 32 )); then
+    printf "process {\n    withName: 'BWAMEM2_MEM' {\n        cpus = %d\n    }\n}\n" $(( NCPUS / 2 )) > "$TUNING"
+    log "bwa-mem2 : $(( NCPUS / 2 )) cpus per chunk, two chunks at a time"
+else
+    echo "// fewer than 32 cpus: sarek's default bwa-mem2 request (24) is kept" > "$TUNING"
+fi
 log "sex      : $SEX"
 log "tools    : $SAREK_TOOLS"
 log "outdir   : $OUT"
@@ -41,7 +52,8 @@ nf_run "sarek_${DATASET}" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
     --genome GATK.GRCh38 \
     --igenomes_base "$IGENOMES_BASE" \
     --aligner bwa-mem2 \
-    --tools "$SAREK_TOOLS"
+    --tools "$SAREK_TOOLS" \
+    -c "$TUNING"
 
 log "sarek done: $OUT"
 log "Next:  ./04_run_tumourevo.sh   (then: rm -rf $NXF_WORK_BASE/sarek_${DATASET})"
