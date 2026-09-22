@@ -9,7 +9,7 @@ These scripts run nf-core/sarek, oncoanalyser and tumourevo on the SPRTN patient
 | tumour | RJALS_Tm | ~166 GB | 3 |
 | normal | RJALS_N | ~164 GB | 3 |
 
-- **Location:** `/common/RAW/pstancl/MariaBoskovic/SPRTN/wgs/X208SC25056159-Z01-F001`, the Novogene delivery. It passed `md5sum -c MD5.txt` (15/15) on arrival from the drive. The check after the move to `/common/RAW` is logged in `md5check_RAW.log` in that folder.
+- **Location:** `/common/RAW/pstancl/MariaBoskovic/SPRTN/wgs/X208SC25056159-Z01-F001`, the Novogene delivery. It passed `md5sum -c MD5.txt` (15/15) on arrival from the drive, and again (15/15) after the move to `/common/RAW`. The second check is logged in `md5check_RAW.log` in that folder.
 - **Input:** only `01.RawData/` is used. `02.Bam/` holds Novogene's own bwa BAMs (no GATK, no markdup), and both pipelines realign from FASTQ instead.
 - **Lanes:** each sample has 3 lane-pairs on 2 flowcells: `22VTTHLT4` L7 and L8, and `22VTVTLT4` L6. `01_make_samplesheets.sh` finds them from the filenames and writes one row per lane-pair, with lane `<flowcell>_L<n>`. That keeps read groups separate for sarek's BQSR.
 - **Depth:** roughly 90x per sample. This is an estimate from file size compared with the HCC1395 test data (94 GB ≈ 53x).
