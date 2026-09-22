@@ -1,87 +1,62 @@
-# WGS processing on lobsang: sarek, oncoanalyser, tumourevo
+# WGS on the real data: RJALS tumour/normal
 
-These scripts set up and run three nf-core pipelines on one tumour/normal whole-genome pair:
-- **sarek** calls somatic variants.
-- **oncoanalyser** runs the Hartwig WiGiTS toolchain.
-- **tumourevo** does clonal evolution analysis on sarek's output.
+These scripts run nf-core/sarek, oncoanalyser and tumourevo on the SPRTN patient pair. One-time setup (envs, pipeline pulls, references) and the HCC1395 test run live in `../wgs_test/`, and nothing here downloads anything.
 
-## Pipelines
+## Data
 
-| pipeline | version | input | output used downstream |
+| | sample | FASTQ | lane-pairs |
 |---|---|---|---|
-| nf-core/sarek | 3.10.0 | FASTQ | Mutect2 VCF + ASCAT copy number go to tumourevo |
-| nf-core/oncoanalyser | 3.0.0 | FASTQ | stand-alone (PURPLE, LINX, ORANGE report) |
-| nf-core/tumourevo | dev `738cb05` (no release yet) | sarek VCF + ASCAT | subclonal deconvolution and signatures |
+| tumour | RJALS_Tm | ~166 GB | 3 |
+| normal | RJALS_N | ~164 GB | 3 |
 
-All three use the existing Nextflow env `envs/nextflow-26.04.6`, the same one CHLOCK uses, and run their tools in containers via the `singularity` profile (see the container note below).
+- **Location:** `/common/RAW/pstancl/MariaBoskovic/SPRTN/wgs/X208SC25056159-Z01-F001`, the Novogene delivery. It passed `md5sum -c MD5.txt` (15/15) on arrival from the drive. The check after the move to `/common/RAW` is logged in `md5check_RAW.log` in that folder.
+- **Input:** only `01.RawData/` is used. `02.Bam/` holds Novogene's own bwa BAMs (no GATK, no markdup), and both pipelines realign from FASTQ instead.
+- **Lanes:** each sample has 3 lane-pairs on 2 flowcells: `22VTTHLT4` L7 and L8, and `22VTVTLT4` L6. `01_make_samplesheets.sh` finds them from the filenames and writes one row per lane-pair, with lane `<flowcell>_L<n>`. That keeps read groups separate for sarek's BQSR.
+- **Depth:** roughly 90x per sample. This is an estimate from file size compared with the HCC1395 test data (94 GB ≈ 53x).
 
-## Test data: SEQC2 HCC1395 (breast cancer cell line)
+## Before the first run
 
-| | sample | SRA run | depth | size |
-|---|---|---|---|---|
-| tumour | HCC1395T | SRR7890829 | ~53x | 94 GB |
-| normal | HCC1395BL | SRR7890826 | ~55x | 97 GB |
+1. **Set `SEX` in `00_config.sh`** to `XX` or `XY`. sarek needs it for ASCAT, and it is part of every task's inputs, so changing it after sarek has started restarts the whole run. oncoanalyser does not need it.
+2. **Set `CANCER_TYPE`** (the IntOGen code) before `04`. Only tumourevo uses it.
+3. **Copy the oncoanalyser reference config** once: `cp ../wgs_test/conf/oncoanalyser_refdata.config conf/`. It is gitignored because `04_download_references.sh` writes it on the server.
+4. **Run on a machine that mounts `/common/RAW`.** Every script checks this first and stops if it can't read the FASTQ.
 
-- **Source:** public, from BioProject PRJNA489865, sequenced at Fudan on a HiSeq X, 2×150, one run per sample.
-- **Subsampling:** script 06 reduces the reads to about 30x tumour and 20x normal.
-- **Truth set:** SEQC2 v1.2.1 somatic SNVs and indels on GRCh38, downloaded to `data/wgs_test/HCC1395/truth_set/`.
+## Order
+
+Run from `scripts/wgs/`, inside `screen` or `tmux`.
+
+```bash
+./01_make_samplesheets.sh     # sarek + oncoanalyser sheets (sarek's only once SEX is set)
+./02_run_sarek.sh             # FASTQ -> Mutect2, Strelka, Manta, ASCAT
+./03_run_oncoanalyser.sh      # FASTQ -> Hartwig WiGiTS + ORANGE report; independent of sarek
+./04_run_tumourevo.sh         # after 02; builds its sheet from sarek output
+```
+
+- **Run 02 and 03 one after the other.** Each one takes all 8 cores. Either order works; if the patient's sex isn't confirmed yet, start with 03.
+- **Resuming:** re-run the same script after a crash and it continues from the last finished task.
+
+## Time and disk
+
+- **Time:** expect roughly 1–2 weeks each for sarek and oncoanalyser on 8 cores. This is scaled from about 3.5× the test depth, and no full-depth run has been timed yet. Alignment and Mutect2 dominate.
+- **Disk:** each work dir can reach several TB, and `/common/WORK` had 22 TB free. Delete `work/wgs/<run>` once that run's results are checked.
 
 ## Layout on the server
 
 ```
-/common/WORK/pstancl/
-├── envs/nextflow-26.04.6/      reused
-├── envs/wgs-tools/             seqtk, pigz, awscli, samtools, bcftools
-├── singularity_cache/          shared container cache
-├── PROGRAMI/nextflow/          NXF_HOME (pulled pipelines)
-├── references/
-│   ├── igenomes/Homo_sapiens/GATK/GRCh38/   sarek + tumourevo fasta
-│   ├── hmf/oncoanalyser/                     GRCh38_hmf + WiGiTS resources
-│   └── vep_cache/homo_sapiens/115_GRCh38/    tumourevo
-└── projects/.../SPRTN/         this folder, copied to the server
-    ├── scripts/wgs/            these scripts
-    ├── data/wgs_test/HCC1395/  fastq_raw/  fastq_subsampled/  truth_set/
-    ├── results/wgs/            sarek/  oncoanalyser/  tumourevo/  _install_tests/
-    ├── work/wgs/               Nextflow work dirs (delete after each run)
-    └── logs/wgs/
+/common/RAW/pstancl/MariaBoskovic/SPRTN/wgs/X208SC25056159-Z01-F001/   input, read-only to the pipelines
+/common/WORK/pstancl/projects/MariaBoskovic/SPRTN/
+├── scripts/wgs/           these scripts
+├── scripts/wgs_test/      setup + HCC1395 test run
+├── results/wgs/           sarek/RJALS  oncoanalyser/RJALS  tumourevo/RJALS
+├── work/wgs/<run>/        .nextflow/ history + work/   (delete after each run)
+└── logs/wgs/
 ```
 
-To change any path or version, edit `00_config.sh`.
+`results/`, `work/` and `logs/` are shared with the test run, and the dataset name (`RJALS` vs `HCC1395`) keeps them apart.
 
-## Order
+## Differences from `../wgs_test`
 
-Run from `scripts/wgs/`. Start steps 04 onwards inside `tmux`.
-
-```bash
-./01_check_system.sh                  # read-only: engine, CPU/RAM vs config, disk, network
-./02_create_envs.sh                   # reuses nextflow-26.04.6, creates wgs-tools
-./03_pull_pipelines.sh                # pulls the 3 pipelines at the pinned versions
-./04_download_references.sh all       # ~118 GB: iGenomes, VEP 115, oncoanalyser refs
-./05_download_test_data.sh            # 191 GB FASTQ + truth set, md5-checked
-./06_subsample_fastq.sh               # -> ~30x T / ~20x N
-./07_make_samplesheets.sh             # sarek + oncoanalyser sheets (--full = no subsampling)
-./08_test_pipelines.sh all            # nf-core's own small tests: checks install, fills cache
-./10_run_sarek.sh                     # 1-3 days
-./11_run_oncoanalyser.sh              # 1-2 days, independent of sarek
-./12_run_tumourevo.sh                 # after 10; builds its sheet from sarek output
-```
-
-- **Parallel work:** 04 and 05 are independent and can run at the same time in two tmux windows.
-- **Run 10 and 11 one after the other.** Each one takes all 8 cores.
-- **Resuming:** every run uses `-resume`, so after a crash re-run the same script.
-
-## Before the first run
-
-- **Resources:** check `conf/lobsang.config`. It is set to 8 CPUs and 400 GB RAM (lobsang: 8 CPUs, 7 TB RAM). `01_check_system.sh` compares that with the machine and fails if the config asks for more than the server has.
-- **Time:** at 30x/20x on 8 cores, alignment alone takes most of a day. Mutect2 is the slowest step in sarek. For a faster first pass run `SAREK_TOOLS=strelka,manta,ascat ./10_run_sarek.sh`, but tumourevo needs the Mutect2 VCF.
-
-## Things that are easy to trip over
-
-- **tumourevo has no release.** It is pinned to a dev commit. Nextflow 26.04 parses strict syntax by default and tumourevo dev does not yet support it, so scripts 08 and 12 set `NXF_SYNTAX_PARSER=v1` for tumourevo only.
-- **Two VEP versions.** sarek 3.10 ships VEP 116 and tumourevo ships VEP 115. Only tumourevo annotates here, so only the 115 cache is downloaded, and sarek runs without `vep`.
-- **VCF sample names.** sarek writes them as `<patient>_<sample>`, e.g. `HCC1395_HCC1395T`. tumourevo's `tumour_sample` / `normal_sample` must match exactly, and script 12 checks this with `bcftools query -l`.
-- **tumourevo can't use oncoanalyser output.** It accepts ASCAT, sequenza, Battenberg or facets for copy number, not PURPLE.
-- **Two different GRCh38 builds.** oncoanalyser uses Hartwig's `GRCh38_masked_exclusions_alts_hlas`, not the GATK `Homo_sapiens_assembly38`. Both use `chr` names, but BAMs are not interchangeable between the two pipelines.
-- **tumourevo signature tools are off by default.** SparseSignatures/SigProfiler need a cohort; on sparse input SparseSignatures gets NA for every cross-validation MSE and dies choosing K. Upstream's own nf-test also runs only `tinc,mobster,pyclone-vi`. Add them via `TEVO_TOOLS=` once the rest works.
-- **Use the `singularity` profile, not `apptainer`.** oncoanalyser's own modules only choose the prebuilt Galaxy SIF when the engine is called `singularity`; under `apptainer` they fall back to quay.io Docker images and apptainer's OCI conversion fails on some (hmftools-esvee 2.0.1: `no descriptor found for reference ...`), which clearing the cache does not fix. `00_config.sh` therefore prefers `singularity`, which on lobsang is apptainer's own compat symlink.
-- **Disk.** Delete `work/wgs/<run>` once a run's results are checked. The raw FASTQ are kept - never delete them, and at full depth the subsampled folder symlinks into them.
+- **Each run has its own launch directory** (`work/wgs/<run>/`). A plain `-resume` resumes whichever run was started *last* in the launch directory. With a shared directory, running oncoanalyser between two sarek attempts would make sarek start over.
+- **`/common/RAW` is bound read-only** into the containers (`conf/lobsang.config`), so no pipeline step can write into the archive.
+- **`umask 077`:** everything these runs write is readable only by you.
+- The pipeline versions, references, container engine and resources are the same as in the test run. See `../wgs_test/README.md` for why `singularity` is used rather than `apptainer`, and for the tumourevo and VEP pins.

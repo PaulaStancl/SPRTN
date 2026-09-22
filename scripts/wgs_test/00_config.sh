@@ -1,23 +1,16 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# Configuration for the WGS runs on the real SPRTN data: Novogene delivery
-# X208SC25056159-Z01-F001, patient RJALS, tumour RJALS_Tm / normal RJALS_N.
+# Shared configuration for the WGS nf-core pipelines on lobsang.
 #
 #   source 00_config.sh
 #
-# Every other script in this folder sources this one - change paths HERE.
+# Every other script sources this one - change paths and versions HERE.
 # Anything already exported in your shell wins, e.g.
-#   SAREK_TOOLS=strelka,manta,ascat ./02_run_sarek.sh
-#
-# One-time setup (envs, pipeline pulls, references) lives in ../wgs_test/
-# (01-04) and is already done on the server; these scripts only reuse it.
+#   SAREK_TOOLS=strelka,manta,ascat ./10_run_sarek.sh
 # ---------------------------------------------------------------------------
 
 _CFG_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export WGS_SCRIPTS="$_CFG_DIR"
-
-# Everything these runs write derives from patient data - keep it private.
-umask 077
 
 # ---- Shared server layout (same as every other project) --------------------
 export WORK_BASE="${WORK_BASE:-/common/WORK/pstancl}"
@@ -27,51 +20,46 @@ export CONTAINER_DIR="${CONTAINER_DIR:-$WORK_BASE/singularity_cache}"   # ONE ca
 export NXF_HOME="${NXF_HOME:-$PROGRAMS_DIR/nextflow}"                   # pulled pipelines live here
 export TMPDIR="${TMPDIR:-$WORK_BASE/tmp}"                               # never $HOME, never /tmp
 
-# ---- Shared references (staged by ../wgs_test/04_download_references.sh) ---
+# ---- Shared references (outside the project, reused by other projects) -----
 export REF_BASE="${REF_BASE:-$WORK_BASE/references}"
 export IGENOMES_BASE="${IGENOMES_BASE:-$REF_BASE/igenomes}"             # sarek: GATK.GRCh38
 export HMF_REF_DIR="${HMF_REF_DIR:-$REF_BASE/hmf/oncoanalyser}"         # oncoanalyser: GRCh38_hmf
 export VEP_CACHE="${VEP_CACHE:-$REF_BASE/vep_cache}"                    # tumourevo: VEP cache
 
-# ---- Pipeline versions (same pins the test run passed with) ----------------
-export SAREK_REV="${SAREK_REV:-3.10.0}"
-export ONCOANALYSER_REV="${ONCOANALYSER_REV:-3.0.0}"
-export TUMOUREVO_REV="${TUMOUREVO_REV:-738cb052fd51f47563ff0f96eaa4b2eb9d4b44f3}"   # dev, no release yet
+# ---- Pipeline versions ------------------------------------------------------
+export SAREK_REV="${SAREK_REV:-3.10.0}"                  # released 2026-08-12
+export ONCOANALYSER_REV="${ONCOANALYSER_REV:-3.0.0}"     # released 2026-09-01
+# tumourevo has no release yet - pinned to the dev HEAD of 2026-09-08
+export TUMOUREVO_REV="${TUMOUREVO_REV:-738cb052fd51f47563ff0f96eaa4b2eb9d4b44f3}"
 export VEP_CACHE_VERSION="${VEP_CACHE_VERSION:-115}"     # tumourevo ships ensembl-vep 115.2
 
-# ---- Envs (created by ../wgs_test/02_create_envs.sh) ------------------------
-export NEXTFLOW_VERSION="${NEXTFLOW_VERSION:-26.04.6}"
+# ---- Nextflow env: version read from env_nextflow.yml (single source) -----
+export NEXTFLOW_VERSION="${NEXTFLOW_VERSION:-$(sed -n 's/^[[:space:]]*-[[:space:]]*nextflow=\([0-9][0-9.]*\).*/\1/p' "$_CFG_DIR/env_nextflow.yml" | head -1)}"
 export ENV_PREFIX="${ENV_PREFIX:-$ENV_ROOT/nextflow-$NEXTFLOW_VERSION}"
-export TOOLS_PREFIX="${TOOLS_PREFIX:-$ENV_ROOT/wgs-tools}"              # bcftools for 04
+export TOOLS_PREFIX="${TOOLS_PREFIX:-$ENV_ROOT/wgs-tools}"              # seqtk, pigz, awscli, samtools
 
 # ---- This project -----------------------------------------------------------
 # The project dir is the folder that contains scripts/, data/, results/.
-# logs/, work/ and results/ are shared with ../wgs_test; DATASET keeps them apart.
 export PROJECT_DIR="${PROJECT_DIR:-$( cd "$_CFG_DIR/../.." && pwd )}"
 export LOG_DIR="${LOG_DIR:-$PROJECT_DIR/logs/wgs}"
 export NXF_WORK_BASE="${NXF_WORK_BASE:-$PROJECT_DIR/work/wgs}"          # huge, delete after a run
 export RESULTS_BASE="${RESULTS_BASE:-$PROJECT_DIR/results/wgs}"
 export SAMPLESHEET_DIR="$_CFG_DIR/samplesheets"
 export SITE_CONFIG="$_CFG_DIR/conf/lobsang.config"
-export ONCO_REFDATA_CONFIG="$_CFG_DIR/conf/oncoanalyser_refdata.config"  # copy of the one 04 wrote
+export ONCO_REFDATA_CONFIG="$_CFG_DIR/conf/oncoanalyser_refdata.config"  # written by 04
 
-# ---- Dataset: Novogene delivery, archived on /common/RAW (see md5check*.log) -
-export DATASET="${DATASET:-RJALS}"
-export PATIENT="RJALS"
-export TUMOUR_ID="RJALS_Tm"
-export NORMAL_ID="RJALS_N"
-export DELIVERY_DIR="${DELIVERY_DIR:-/common/RAW/pstancl/MariaBoskovic/SPRTN/wgs/X208SC25056159-Z01-F001}"
-export FASTQ_DIR="$DELIVERY_DIR/01.RawData"   # <sample>/<sample>_<library>_<flowcell>_L<n>_{1,2}.fq.gz
-
-# Sex chromosomes of the patient: XX or XY (NA only if truly unknown).
-# REQUIRED before sarek's first run: ASCAT uses it, and because it is part of
-# every task's inputs, changing it later restarts sarek from scratch.
-# oncoanalyser does not need it (AMBER infers sex, PURPLE reports it).
-export SEX="${SEX:-}"
-
-# IntOGen cancer-type code of the tumour, used by tumourevo for driver
-# annotation. REQUIRED for 04 only.
-export CANCER_TYPE="${CANCER_TYPE:-}"
+# ---- Test dataset: SEQC2 HCC1395 (breast cancer) tumour / HCC1395BL normal --
+export DATASET="${DATASET:-HCC1395}"
+export PATIENT="HCC1395"
+export TUMOUR_ID="HCC1395T"
+export NORMAL_ID="HCC1395BL"
+export SEX="XX"
+export CANCER_TYPE="BRCA"                                   # IntOGen code used by tumourevo
+export DATA_DIR="${DATA_DIR:-$PROJECT_DIR/data/wgs_test/$DATASET}"
+export RAW_DIR="$DATA_DIR/fastq_raw"                        # ~53x / ~55x, 191 GB
+export SUB_DIR="$DATA_DIR/fastq_subsampled"                 # ~30x / ~20x
+export TUMOUR_FRACTION="${TUMOUR_FRACTION:-0.56}"           # 53x -> ~30x
+export NORMAL_FRACTION="${NORMAL_FRACTION:-0.36}"           # 55x -> ~20x
 
 # ---- Container engine ------------------------------------------------------
 # 'singularity' is preferred over 'apptainer' on purpose, even when the binary is
@@ -108,18 +96,8 @@ fail() { printf '  \033[1;31mFAIL\033[0m  %s\n' "$*"; }
 die()  { printf '\033[1;31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 make_dirs() {
-    mkdir -p "$TMPDIR" "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" \
-             "$LOG_DIR" "$NXF_WORK_BASE" "$RESULTS_BASE" "$SAMPLESHEET_DIR"
-}
-
-# The data sits on /common/RAW, which the site config binds read-only into the
-# containers. Fail now, not days into a run, if this host cannot read it.
-check_data() {
-    local s
-    for s in "$TUMOUR_ID" "$NORMAL_ID"; do
-        [[ -r "$FASTQ_DIR/$s" && -x "$FASTQ_DIR/$s" ]] \
-            || die "cannot read $FASTQ_DIR/$s on $(hostname) - is /common/RAW mounted here?"
-    done
+    mkdir -p "$CONTAINER_DIR" "$NXF_HOME" "$TMPDIR" "$APPTAINER_CACHEDIR" "$APPTAINER_TMPDIR" \
+             "$REF_BASE" "$LOG_DIR" "$NXF_WORK_BASE" "$RESULTS_BASE" "$SAMPLESHEET_DIR"
 }
 
 # Nextflow prefers JAVA_HOME over PATH; the system one on the server is Java 11.
@@ -135,38 +113,31 @@ set_java_home() {
 activate_env() {
     command -v micromamba >/dev/null 2>&1 || die "micromamba not found in PATH"
     eval "$(micromamba shell hook --shell bash)"
-    [[ -d "$ENV_PREFIX" ]] || die "env not found: $ENV_PREFIX  (run ../wgs_test/02_create_envs.sh)"
+    [[ -d "$ENV_PREFIX" ]] || die "env not found: $ENV_PREFIX  (run ./02_create_envs.sh)"
     micromamba activate "$ENV_PREFIX"
     set_java_home "$ENV_PREFIX" || die "no JDK inside $ENV_PREFIX"
 }
 
 activate_tools() {
-    [[ -d "$TOOLS_PREFIX/bin" ]] || die "tools env not found: $TOOLS_PREFIX  (run ../wgs_test/02_create_envs.sh)"
+    [[ -d "$TOOLS_PREFIX/bin" ]] || die "tools env not found: $TOOLS_PREFIX  (run ./02_create_envs.sh)"
     export PATH="$TOOLS_PREFIX/bin:$PATH"
 }
 
-# nextflow run wrapper: site config, per-run launch + work dir, timestamped log
+# nextflow run wrapper: site config, per-run work dir, timestamped log, -resume
 #   nf_run <run_name> <profile> <pipeline> [nextflow/pipeline args...]
-#
-# Each run is launched from its own directory ($NXF_WORK_BASE/<run_name>), which
-# holds that run's .nextflow/ history and its work/ dir. A bare -resume resumes
-# the LAST run started in the launch directory, so with one shared launch dir,
-# running oncoanalyser between two sarek attempts would make the second sarek
-# attempt start from scratch. Every path passed in must therefore be absolute.
 nf_run() {
     local name="$1" profile="$2" pipeline="$3"; shift 3
-    local run_dir="$NXF_WORK_BASE/$name"
     local logf="$LOG_DIR/${name}.$(date +%Y%m%d_%H%M%S).log"
-    mkdir -p "$LOG_DIR" "$run_dir"
+    mkdir -p "$LOG_DIR" "$NXF_WORK_BASE/$name"
     log "pipeline : $pipeline"
     log "profile  : $profile"
-    log "run dir  : $run_dir   (history + work/)"
+    log "work dir : $NXF_WORK_BASE/$name"
     log "log      : $logf"
     echo
-    ( cd "$run_dir" && nextflow -log "$logf" run "$pipeline" \
+    nextflow -log "$logf" run "$pipeline" \
         -profile "$profile" \
         -c "$SITE_CONFIG" \
-        -work-dir "$run_dir/work" \
+        -work-dir "$NXF_WORK_BASE/$name" \
         -resume \
-        "$@" )
+        "$@"
 }

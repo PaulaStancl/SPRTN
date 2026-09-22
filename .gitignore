@@ -11,8 +11,8 @@ logs/
 .nextflow.log*
 
 # Generated on the server by the scripts
-scripts/wgs/samplesheets/*.csv
-scripts/wgs/conf/oncoanalyser_refdata.config
+scripts/*/samplesheets/*.csv
+scripts/*/conf/oncoanalyser_refdata.config
 
 # OS
 .DS_Store
