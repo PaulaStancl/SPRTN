@@ -44,9 +44,9 @@ There is one job per pipeline. Each job runs Nextflow with the local executor on
 | `qsub_sarek.sh` | `ncpus=24:mem=250gb` | 240 h | bwa-mem2 (which asks for exactly 24 cpus) and Mutect2 dominate. |
 | `qsub_oncoanalyser.sh` | `ncpus=24:mem=250gb` | 240 h | bwa-mem2, REDUX, SAGE, ESVEE (asks for 32 cpus, capped to 24) |
 | `qsub_tumourevo.sh` | `ncpus=8:mem=48gb` | 48 h | VEP plus clonality; mostly single-threaded, so more cpus don't help |
-| `qsub_check.sh` | `ncpus=1:mem=2gb` | 15 min | pre-flight: node, singularity, mounts, internet |
+| `qsub_check.sh` | `ncpus=2:mem=2gb` | 15 min | pre-flight: node, singularity, mounts, internet |
 
-Memory needs at least about 8 GB per cpu, because more cpus means more tasks running at once; 250 GB for 24 cpus leaves headroom. The whole job must fit on **one** node, so check the node sizes first (`pbsnodes -a | grep -E 'resources_available.(ncpus|mem) ='`). A request bigger than any node either gets rejected or sits in the queue forever. To change the size, edit `ncpus=`/`mem=` and set `JOB_MEMORY_GB` to the same value as `mem=`. `qsub` rejects a request above the queue's limits straight away, so a walltime that is too long fails at submission rather than days later.
+Memory needs at least about 8 GB per cpu, because more cpus means more tasks running at once; 250 GB for 24 cpus leaves headroom. **Limits (checked 2026-09-22):** q2 allows **2 to 40 cpus per job**, with no memory or walltime limit. A request outside that range is rejected at `qsub` with `Job violates queue and/or server resource limits`. PBS has a single execution node with 400 cpus and about 7 TB RAM, so sarek and oncoanalyser fit side by side, and 40 cpus per job is the ceiling. To change a job's size, edit `ncpus=`/`mem=` and set `JOB_MEMORY_GB` to the same value as `mem=`.
 
 ```bash
 cd scripts/wgs

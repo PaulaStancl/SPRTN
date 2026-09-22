@@ -9,7 +9,7 @@
 # would fail on that node.
 # ---------------------------------------------------------------------------
 #PBS -q q2
-#PBS -l select=1:ncpus=1:mem=2gb
+#PBS -l select=1:ncpus=2:mem=2gb        # q2 rejects jobs with fewer than 2 cpus
 #PBS -l walltime=00:15:00
 #PBS -N check_q2
 #PBS -j oe
