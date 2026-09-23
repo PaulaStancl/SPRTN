@@ -63,7 +63,7 @@ qsub -W depend=afterok:$SAREK qsub_tumourevo.sh    # starts when sarek finishes 
 
 ## Time and disk
 
-- **Time:** roughly 2,000–3,000 CPU-hours each for sarek and oncoanalyser at this depth. That is about 1–2 weeks on 8 cores and roughly 4–6 days on 24. Steps that don't parallelise (markdup, ASCAT, some Manta stages) keep it from scaling perfectly. These are estimates scaled from the test depth; no full-depth run has been timed yet. Alignment and Mutect2 dominate.
+- **Time (measured 2026-09-23):** oncoanalyser finished in **21 h 17 m** on 40 cpus (PBS job 269545, exit 0), about 520 cpu-hours with 24.6 of the 40 cores busy on average. That is far below the 2,000–3,000 cpu-hours first estimated from the test data. sarek is slower: alignment took about 17 h, and markdup, ASCAT and Mutect2 follow. The gap between 24.6 and 40 busy cores is the steps that don't parallelise, so asking for more than 40 cpus would buy little.
 - **Disk:** each work dir can reach several TB, and `/common/WORK` had 22 TB free. Delete `work/wgs/<run>` once that run's results are checked.
 
 ## Layout on the server
