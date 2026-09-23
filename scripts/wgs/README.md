@@ -41,7 +41,7 @@ There is one job per pipeline. Each job runs Nextflow with the local executor on
 
 | job | select | walltime | notes |
 |---|---|---|---|
-| `qsub_sarek.sh` | `ncpus=40:mem=400gb` | 240 h | q2's maximum. bwa-mem2 gets 20 cpus per chunk so two chunks align at once; sarek's default of 24 would leave 16 idle. |
+| `qsub_sarek.sh` | `ncpus=40:mem=1000gb` | 240 h | q2's maximum. bwa-mem2 gets 20 cpus per chunk so two chunks align at once; sarek's default of 24 would leave 16 idle. |
 | `qsub_oncoanalyser.sh` | `ncpus=40:mem=400gb` | 240 h | q2's maximum. Its heavy steps (bwa-mem2, REDUX, SAGE, ESVEE, AMBER, COBALT) ask for 12 cpus / 72 GB each, so three run side by side and the small steps use the rest. |
 | `qsub_tumourevo.sh` | `ncpus=8:mem=48gb` | 48 h | VEP plus clonality; mostly single-threaded, so more cpus don't help |
 | `qsub_check.sh` | `ncpus=2:mem=2gb` | 15 min | pre-flight: node, singularity, mounts, internet |
@@ -59,6 +59,7 @@ qsub -W depend=afterok:$SAREK qsub_tumourevo.sh    # starts when sarek finishes 
 ```
 
 - **Out of walltime:** `qsub` the same script again. The run resumes from the last finished task, because every run has its own launch directory.
+- **Ask for far more memory than the tasks do.** A job is killed (SIGTERM, exit 143) when PBS sees it over its `mem=` request, and the page cache from writing big BAMs counts towards that. sarek's first attempt died this way at duplicate marking: biggest task 30 GB, request 400 GB, killed at 400 GB after writing ~200 GB per sample. Hence 1000gb.
 - **Job output:** PBS writes `<name>.o<jobid>` into `scripts/wgs/` (gitignored). The full Nextflow log is in `logs/wgs/`.
 
 ## Time and disk
