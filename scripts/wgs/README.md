@@ -59,7 +59,7 @@ qsub -W depend=afterok:$SAREK qsub_tumourevo.sh    # starts when sarek finishes 
 ```
 
 - **Out of walltime:** `qsub` the same script again. The run resumes from the last finished task, because every run has its own launch directory.
-- **Ask for far more memory than the tasks do.** A job is killed (SIGTERM, exit 143) when PBS sees it over its `mem=` request, and the page cache from writing big BAMs counts towards that. sarek's first attempt died this way at duplicate marking: biggest task 30 GB, request 400 GB, killed at 400 GB after writing ~200 GB per sample. Hence 1000gb.
+- **Per-task time limits, not the PBS walltime, are what kill long steps.** sarek's default is 8 h per task (its `GATK4_MARKDUPLICATES` block sets only cpus and memory, so duplicate marking inherits it), and Nextflow kills a local task that exceeds its `time` with SIGTERM, reported as exit 143. That ended the runs of 2026-09-22 and 2026-09-23 at exactly 8 h, twice, on a step needing ~10 h. `02_run_sarek.sh` now writes `time = 240.h` for every task and label, so the job's walltime is the only limit. The first diagnosis blamed memory and was wrong; raising the job from 400gb to 1000gb changed nothing.
 - **Job output:** PBS writes `<name>.o<jobid>` into `scripts/wgs/` (gitignored). The full Nextflow log is in `logs/wgs/`.
 
 ## Time and disk
