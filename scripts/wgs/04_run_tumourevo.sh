@@ -58,6 +58,23 @@ $DATASET,$PATIENT,$T_SM,$N_SM,$VCF,$VCF.tbi,$SEG,$PP,ASCAT,$CANCER_TYPE
 EOF
 ok "$SHEET"
 
+# tumourevo's per-task limits are tight: 2 h by default, 6 / 8 / 10 h for its
+# process_low / medium / high labels. Nextflow kills a local task that passes its
+# time (SIGTERM -> exit 143), which is what killed sarek's markdup twice. Inside a
+# PBS job the walltime is the only limit that should apply. Times are not part of
+# a task hash, so this does not affect resuming.
+TUNING="$NXF_WORK_BASE/tumourevo_${DATASET}/tumourevo_tuning.config"
+mkdir -p "$(dirname "$TUNING")"
+{
+    echo "// Written by 04_run_tumourevo.sh at $(date '+%F %T')."
+    echo "process {"
+    echo "    time = 240.h"
+    for _lab in process_single process_low process_medium process_high process_long process_high_memory; do
+        echo "    withLabel: $_lab { time = 240.h }"
+    done
+    echo "}"
+} > "$TUNING"
+log "task time: 240 h (tumourevo's default is 2 h)"
 log "tools    : $TEVO_TOOLS"
 log "outdir   : $OUT"
 
@@ -74,6 +91,7 @@ nf_run "tumourevo_${DATASET}" "$NXF_PROFILE" nf-core/tumourevo -r "$TUMOUREVO_RE
     --vep_cache "$VEP_CACHE" \
     --vep_cache_version "$VEP_CACHE_VERSION" \
     --vep_genome GRCh38 \
-    --vep_species homo_sapiens
+    --vep_species homo_sapiens \
+    -c "$TUNING"
 
 log "tumourevo done: $OUT"
