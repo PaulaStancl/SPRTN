@@ -110,7 +110,8 @@ info_fields <- function(info) {
   if (!nrow(l)) return(NULL)
   l[, `:=`(key   = sub("=.*", "", kv),
            value = fifelse(grepl("=", kv, fixed = TRUE), sub("^[^=]*=", "", kv), "TRUE"))]
-  w <- dcast(l, i ~ key, value.var = "value", fun.aggregate = function(x) x[1])
+  l <- unique(l, by = c("i", "key"))                              # a repeated key: keep the first
+  w <- dcast(l, i ~ key, value.var = "value")                     # no fun.aggregate: ~30x faster
   w <- w[data.table(i = seq_len(n)), on = "i"][, i := NULL]      # keep records with no INFO
   setnames(w, paste0("info_", names(w)))
   convert_types(w)
