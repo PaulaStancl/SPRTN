@@ -52,6 +52,10 @@ atom[MUTTYPE == "SNV", NC_3 := trinuc_context(.SD)]
 bad <- atom[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]      # middle base must be REF
 if (bad) warning(bad, " SNVs whose REF is not the reference base - is FASTA the genome sarek used?")
 atom[MUTTYPE == "SNV" & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT1, NC_3)]
+# which callers have each PASS mutation (key CHROM:POS:REF:ALT, MNVs split), and the record
+# each row of atom comes from (REC_KEY - an MNV's split bases share their MNV's key)
+atom[, CALLERS := paste(sort(unique(CALLER)), collapse = "+"), by = .(CHROM, POS, REF, ALT1)]
+atom[, REC_KEY := fifelse(FROM_MNV, MNV_KEY, paste0(CHROM, ":", POS, ":", REF, ">", ALT1))]
 
 # ---- 3. structural variants: Manta ---------------------------------------------
 if ("manta" %in% names(files)) {
@@ -132,7 +136,91 @@ if (HAVE_QCVCF) {
                 w = 9 * uniqueN(snv96$tool), h = 2 + 1.7 * (uniqueN(snv96$QC_SHARED) + 1))
   }
 }
-# ---- 6. mutational signatures: PASS sets for SigProfiler ------------------------
+# ---- 6. clonal vs subclonal: PyClone-VI clusters (tumourevo) on the Mutect2 calls ----
+# tumourevo ran PyClone-VI on sarek's Mutect2 PASS calls (autosomes; copy number and purity
+# from ASCAT). Its clusters are joined back to the Mutect2 records here (mutation_id is
+# RJALS:<chrom>:<VCF POS>:<ALT>), and the clusters are compared on what separates a real
+# subclone from a neutral tail or low-VAF false positives: support by the second caller
+# (Strelka), allele fraction, alt reads, depth, Mutect2's TLOD, PyClone's assignment
+# certainty, karyotype - and in section 7 the SBS96 signatures. PyClone-VI's result is the
+# same with or without tumourevo's CNAqc filter (same 4,928 mutations), so the unfiltered
+# run is read; set SPRTN_TEVO_RUN=RJALS_cnaqcPASS for the other.
+cd_dir <- file.path(od, "clonality"); dir.create(cd_dir, showWarnings = FALSE)
+py_dir <- file.path(RESULTS, "tumourevo", Sys.getenv("SPRTN_TEVO_RUN", PATIENT), "subclonal_deconvolution", "pyclonevi")
+py_fit <- if (dir.exists(py_dir)) find_one(py_dir, "_best_fit\\.txt$", required = FALSE) else NA_character_
+clone_sets <- list()
+if (!is.na(py_fit)) {
+  fit <- fread(py_fit)
+  py_in <- find_one(py_dir, "_pyclone_input\\.tsv$", required = FALSE)   # not *_all_samples.tsv
+  if (!is.na(py_in))
+    fit <- unique(fread(py_in)[, .(mutation_id, major_cn, minor_cn)])[fit, on = "mutation_id"]
+  # clusters named by their mean cellular prevalence (CP): >= 0.9 clonal, below that subclonal
+  cl <- fit[, .(n = .N, CP = mean(cellular_prevalence)), by = cluster_id][order(-CP)]
+  cl[, CLONE := fifelse(CP >= 0.9, "clonal", sprintf("subclonal_CP%02.0f", 100 * CP))]
+  cl[, CLONE := make.unique(CLONE, sep = "_")]
+  print(cl); fwrite(cl, file.path(cd_dir, "pyclone_clusters.csv"))
+  fit <- cl[, .(cluster_id, CLONE)][fit, on = "cluster_id"]
+  ids <- tstrsplit(fit$mutation_id, ":", fixed = TRUE)
+  fit[, `:=`(CHROM = paste0("chr", ids[[2]]), POS = as.integer(ids[[3]]), ALT1 = ids[[4]])]
+
+  # Mutect2 PASS records + Strelka support of each (an MNV: all / some / none of its bases)
+  m2 <- calls_pass[CALLER == "mutect2"]
+  m2[, REC_KEY := paste0(CHROM, ":", POS, ":", REF, ">", ALT1)]
+  sup <- atom[CALLER == "mutect2", .(STRELKA = if (all(CALLERS == "mutect2+strelka")) "PASS in Strelka"
+                                               else if (any(CALLERS == "mutect2+strelka")) "partly (MNV)"
+                                               else "not PASS in Strelka"), by = REC_KEY]
+  m2 <- sup[m2, on = "REC_KEY"]
+  keep <- intersect(c("CHROM", "POS", "REF", "ALT1", "MUTTYPE", "REC_KEY", "STRELKA", "VAF", "N_VAF", "T_ALT",
+                      "t_DP", "n_DP", "info_TLOD", "info_ECNT", "info_MBQ", "info_MMQ", "info_MPOS", "info_POPAF"), names(m2))
+  clon <- m2[, ..keep][fit, on = .(CHROM, POS, ALT1), nomatch = NULL]
+  message(sprintf("PyClone-VI: %d mutations, %d matched to Mutect2 PASS records", nrow(fit), nrow(clon)))
+  if (nrow(clon) < nrow(fit))   # e.g. indels shifted by bcftools norm (tumourevo read the raw VCF)
+    print(fit[!clon, on = "mutation_id", .N, by = .(type = fifelse(nchar(ALT1) == 1, "SNV-like ALT", "longer ALT"))])
+  num1 <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
+  for (m in intersect(c("info_TLOD", "info_ECNT", "info_MBQ", "info_MMQ", "info_MPOS", "info_POPAF", "t_DP", "n_DP"), names(clon)))
+    set(clon, j = m, value = num1(clon[[m]]))     # Number=A / R fields: first (tumour / ALT) value
+  clon[, KARYOTYPE := if ("major_cn" %in% names(clon)) paste0(major_cn, ":", minor_cn) else NA_character_]
+  clon[, CLONE := factor(CLONE, levels = cl$CLONE)]
+  fwrite(clon, file.path(cd_dir, "clonality_mutations.csv"))
+
+  # per cluster: size, caller agreement, read evidence
+  summ <- clon[, .(n = .N, pct_PASS_in_Strelka = round(100 * mean(STRELKA == "PASS in Strelka"), 1),
+                   median_VAF = median(VAF, na.rm = TRUE), median_alt_reads = median(T_ALT, na.rm = TRUE),
+                   pct_alt_reads_le5 = round(100 * mean(T_ALT <= 5, na.rm = TRUE), 1),
+                   median_tumour_DP = median(t_DP, na.rm = TRUE),
+                   median_TLOD = if ("info_TLOD" %in% names(clon)) median(info_TLOD, na.rm = TRUE) else NA_real_,
+                   median_assignment_prob = median(cluster_assignment_prob, na.rm = TRUE),
+                   pct_SNV = round(100 * mean(MUTTYPE == "SNV"), 1)), by = CLONE][order(CLONE)]
+  print(summ); fwrite(summ, file.path(cd_dir, "clonality_summary.csv"))
+  kt <- clon[, .N, by = .(CLONE, KARYOTYPE)][, pct := round(100 * N / sum(N), 1), by = CLONE][order(CLONE, -N)]
+  fwrite(kt, file.path(cd_dir, "clonality_karyotypes.csv"))
+
+  sv <- clon[, .N, by = .(CLONE, STRELKA)]
+  save_plot(ggplot(sv, aes(CLONE, N, fill = STRELKA)) + geom_col(position = "fill") +
+              geom_text(aes(label = N), position = position_fill(vjust = 0.5), size = 3) +
+              scale_y_continuous(labels = function(x) paste0(100 * x, "%")) +
+              labs(x = NULL, y = "share of the cluster's Mutect2 PASS calls", fill = NULL,
+                   title = "Caller agreement per PyClone-VI cluster"), "clonality_strelka_support", cd_dir, w = 7, h = 5)
+  save_plot(ggplot(clon, aes(VAF, fill = CLONE)) + geom_histogram(bins = 60, position = "identity", alpha = 0.6) +
+              facet_wrap(~KARYOTYPE, scales = "free_y") +
+              labs(x = "tumour VAF (raw)", y = "mutations", title = "VAF per cluster, by karyotype (major:minor)"),
+            "clonality_vaf", cd_dir, w = 10, h = 6)
+  save_plot(ggplot(clon, aes(cellular_prevalence, fill = CLONE)) + geom_histogram(bins = 50) +
+              labs(x = "cellular prevalence (PyClone-VI)", y = "mutations", title = "PyClone-VI cellular prevalence"),
+            "clonality_cp", cd_dir, w = 7, h = 4)
+  ev <- melt(clon, id.vars = c("CLONE", "STRELKA"), na.rm = TRUE, variable.name = "metric", variable.factor = FALSE,
+             measure.vars = intersect(c("T_ALT", "t_DP", "info_TLOD", "cluster_assignment_prob", "info_MPOS"), names(clon)))
+  save_plot(ggplot(ev, aes(CLONE, value, fill = STRELKA)) + geom_boxplot(outlier.size = 0.3) +
+              facet_wrap(~metric, scales = "free_y") +
+              labs(x = NULL, y = NULL, fill = NULL, title = "Read evidence per cluster and caller agreement"),
+            "clonality_evidence", cd_dir, w = 11, h = 7)
+
+  # each cluster's Mutect2 PASS calls (MNVs split) as a signature set for section 7
+  for (cn in levels(clon$CLONE))
+    clone_sets[[paste0("mutect2_", cn)]] <- atom[CALLER == "mutect2" & REC_KEY %chin% clon[CLONE == cn, REC_KEY]]
+} else message("no PyClone-VI best fit under ", py_dir, " - section 6 skipped")
+
+# ---- 7. mutational signatures: PASS sets for SigProfiler ------------------------
 # Each PASS set as a minimal VCF in signatures/input/vcf/ (one "sample" per file), for
 # 01b_sarek_signatures.py: SigProfilerMatrixGenerator builds SBS96 / DBS78 / ID83 from them
 # (the only matrices the fits use)
@@ -141,15 +229,16 @@ if (HAVE_QCVCF) {
 # SNVs into doublets itself, the same way for both callers. Sets (keys CHROM:POS:REF:ALT):
 #   mutect2 / strelka                 all PASS calls of that caller
 #   mutect2_strelka                   PASS in both callers (intersection)
+#   mutect2_<cluster>                 Mutect2 PASS calls of one PyClone-VI cluster (section 6),
+#                                     e.g. mutect2_clonal vs mutect2_subclonal_CP21
 sig_in <- file.path(od, "signatures", "input")
 dir.create(file.path(sig_in, "vcf"), recursive = TRUE, showWarnings = FALSE)
 unlink(list.files(file.path(sig_in, "vcf"), "\\.vcf$", full.names = TRUE))   # no sets left over from an earlier run
-atom[, CALLERS := paste(sort(unique(CALLER)), collapse = "+"), by = .(CHROM, POS, REF, ALT1)]
-sets <- rbindlist(list(
+sets <- rbindlist(c(list(
   mutect2         = atom[CALLER == "mutect2"],
   strelka         = atom[CALLER == "strelka"],
   mutect2_strelka = atom[CALLER == "mutect2" & CALLERS == "mutect2+strelka"]
-), idcol = "SET")[, .(SET, CHROM, POS, REF, ALT = ALT1, MUTTYPE, FROM_MNV, CALLERS, NC_3, SBS96)]
+), clone_sets), idcol = "SET")[, .(SET, CHROM, POS, REF, ALT = ALT1, MUTTYPE, FROM_MNV, CALLERS, NC_3, SBS96)]
 sets <- unique(sets, by = c("SET", "CHROM", "POS", "REF", "ALT"))
 sets <- sets[order(SET, match(CHROM, STD_CHR), POS)]
 set_counts <- dcast(sets, SET ~ MUTTYPE, fun.aggregate = length, value.var = "POS")

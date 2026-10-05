@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 # ---------------------------------------------------------------------------
 # 01b_sarek_signatures.py - COSMIC mutational signatures in the sarek PASS sets.
-# Run after 01_sarek.R (section 6 writes the inputs), in the sigprofiler env:
+# Run after 01_sarek.R (section 7 writes the inputs), in the sigprofiler env:
 #
 #   micromamba activate /common/WORK/pstancl/envs/sigprofiler
 #   python 01b_sarek_signatures.py                     # SBS96 + DBS78 + ID83
 #   python 01b_sarek_signatures.py --contexts SBS96    # one context only
 #
 # Input  <OUT>/sarek/signatures/input/vcf/<set>.vcf - mutect2 (all PASS), strelka (all PASS),
-#        mutect2_strelka (PASS in both); each file is one "sample".
+#        mutect2_strelka (PASS in both), mutect2_<cluster> (one PyClone-VI cluster each);
+#        each file is one "sample", fitted on its own.
 # Output <OUT>/sarek/signatures/sigprofiler/
 #   matrix_generator/output/{SBS,DBS,ID}/   SigProfilerMatrixGenerator matrices
 #   SBS96/<set>/ DBS78/<set>/ ID83/<set>/   SigProfilerAssignment cosmic_fit results - one
@@ -58,7 +59,7 @@ from SigProfilerAssignment import Analyzer as Analyze  # noqa: E402 - after argp
 
 vcf_dir = os.path.join(IN_DIR, "vcf")
 if not glob.glob(os.path.join(vcf_dir, "*.vcf")):
-    sys.exit(f"No PASS-set VCFs in {vcf_dir} - run 01_sarek.R (section 6) first")
+    sys.exit(f"No PASS-set VCFs in {vcf_dir} - run 01_sarek.R (section 7) first")
 os.makedirs(FIT_DIR, exist_ok=True)
 
 # ---- matrices: SigProfilerMatrixGenerator --------------------------------------
