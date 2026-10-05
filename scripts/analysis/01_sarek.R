@@ -135,6 +135,7 @@ if (HAVE_QCVCF) {
 # ---- 6. mutational signatures: PASS sets for SigProfiler ------------------------
 # Each PASS set as a minimal VCF in signatures/input/vcf/ (one "sample" per file), for
 # 01b_sarek_signatures.py: SigProfilerMatrixGenerator builds SBS96 / DBS78 / ID83 from them
+# (the only matrices the fits use)
 # and SigProfilerAssignment fits COSMIC signatures (cosmic_fit, which replaced
 # SigProfilerSingleSample). MNVs are written split: the matrix generator rejoins adjacent
 # SNVs into doublets itself, the same way for both callers. Sets (keys CHROM:POS:REF:ALT):
@@ -161,9 +162,9 @@ for (st in unique(sets$SET)) {
   fwrite(sets[SET == st, .(CHROM, POS, ID = ".", REF, ALT, QUAL = ".", FILTER = "PASS", INFO = ".")],
          f, sep = "\t", append = TRUE, col.names = FALSE)
 }
-# The same SBS96 counts computed here (+ strand context from FASTA -> sbs96()), in
-# SigProfiler's matrix format: a cross-check for the matrix generator, and the input
-# 01b uses with --from-r-matrix (no SigProfiler genome download needed).
+# The same SBS96 counts computed here (+ strand context from the GATK FASTA -> sbs96()), in
+# SigProfiler's matrix format - NOT used for fitting, only to compare with the matrix
+# generator's (01b writes sbs96_compare.csv, class by class).
 m96 <- dcast(sets[!is.na(SBS96)], SBS96 ~ SET, fun.aggregate = length, value.var = "POS")
 m96 <- m96[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
 setnames(m96, "SBS96", "MutationType")

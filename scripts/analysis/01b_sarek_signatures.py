@@ -4,8 +4,8 @@
 # Run after 01_sarek.R (section 6 writes the inputs), in the sigprofiler env:
 #
 #   micromamba activate /common/WORK/pstancl/envs/sigprofiler
-#   python 01b_sarek_signatures.py                  # SBS96 + DBS78 + ID83
-#   python 01b_sarek_signatures.py --from-r-matrix  # SBS96 only, from 01_sarek.R's matrix
+#   python 01b_sarek_signatures.py                     # SBS96 + DBS78 + ID83
+#   python 01b_sarek_signatures.py --contexts SBS96    # one context only
 #
 # Input  <OUT>/sarek/signatures/input/vcf/<set>.vcf - mutect2 (all PASS), strelka (all PASS),
 #        mutect2_strelka (PASS in both); each file is one "sample".
@@ -15,15 +15,16 @@
 #                                           cosmic_fit call per set, so each is fitted on its own
 #   activities_<context>.csv                signature, mutations assigned, fraction - all sets
 #   fit_stats_<context>.csv                 cosine similarity etc. of each set's reconstruction
-#   sbs96_crosscheck.csv                    matrix generator vs 01_sarek.R SBS96 counts
+#   sbs96_compare.csv / sbs96_crosscheck.csv  SigProfiler vs 01_sarek.R SBS96, per class / per set
+#                                           (comparison only - fits use SigProfiler's matrices)
 #
 # cosmic_fit is SigProfilerAssignment's single-sample refitting (the SigProfilerSingleSample
 # package is deprecated and was folded into it): each set's profile is explained as a
 # non-negative mix of COSMIC reference signatures - no de novo extraction, which needs a cohort.
 #
-# The matrix generator needs its own copy of GRCh38 (a one-off download of a few GB):
+# All matrices (SBS96, DBS78, ID83) are built by SigProfilerMatrixGenerator from the VCFs,
+# on its own GRCh38 - installed once (a few GB):
 #   python -c "from SigProfilerMatrixGenerator import install as g; g.install('GRCh38')"
-# Without it, --from-r-matrix fits SBS96 from the matrix 01_sarek.R built from the GATK FASTA.
 # ---------------------------------------------------------------------------
 import argparse
 import glob
@@ -47,8 +48,6 @@ CONTEXTS = {"SBS96": ("SBS", "SBS96"), "DBS78": ("DBS", "DBS78"), "ID83": ("ID",
 
 ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument("--contexts", default="SBS96,DBS78,ID83", help="comma-separated: SBS96, DBS78, ID83")
-ap.add_argument("--from-r-matrix", action="store_true",
-                help="fit SBS96 from 01_sarek.R's matrix; no SigProfiler genome needed")
 ap.add_argument("--cosmic-version", type=float, default=None, help="COSMIC version (default: the package's)")
 ap.add_argument("--exclude-subgroups", default="",
                 help="comma-separated signature subgroups to leave out, e.g. Chemotherapy_signatures")
@@ -61,40 +60,43 @@ vcf_dir = os.path.join(IN_DIR, "vcf")
 if not glob.glob(os.path.join(vcf_dir, "*.vcf")):
     sys.exit(f"No PASS-set VCFs in {vcf_dir} - run 01_sarek.R (section 6) first")
 os.makedirs(FIT_DIR, exist_ok=True)
-r_matrix = os.path.join(IN_DIR, f"{PATIENT}.SBS96.from_R.txt")
 
-# ---- matrices -----------------------------------------------------------------
+# ---- matrices: SigProfilerMatrixGenerator --------------------------------------
+from SigProfilerMatrixGenerator.scripts import SigProfilerMatrixGeneratorFunc as matGen  # noqa: E402
+# the generator writes output/ next to its input, so work on a copy of the VCFs
+mg_dir = os.path.join(FIT_DIR, "matrix_generator")
+shutil.rmtree(mg_dir, ignore_errors=True)
+shutil.copytree(vcf_dir, mg_dir)
+try:
+    matGen.SigProfilerMatrixGeneratorFunc(PATIENT, "GRCh38", mg_dir + "/", exome=False, bed_file=None,
+                                          chrom_based=False, plot=True, tsb_stat=False, seqInfo=False)
+except Exception as e:  # most often: the GRCh38 reference is not installed
+    sys.exit(f"SigProfilerMatrixGenerator failed: {e}\nInstall its genome once with\n"
+             "  python -c \"from SigProfilerMatrixGenerator import install as g; g.install('GRCh38')\"")
 matrices = {}
-if args.from_r_matrix:
-    matrices["SBS96"] = r_matrix
-else:
-    from SigProfilerMatrixGenerator.scripts import SigProfilerMatrixGeneratorFunc as matGen
-    # the generator writes output/ next to its input, so work on a copy of the VCFs
-    mg_dir = os.path.join(FIT_DIR, "matrix_generator")
-    shutil.rmtree(mg_dir, ignore_errors=True)
-    shutil.copytree(vcf_dir, mg_dir)
-    try:
-        matGen.SigProfilerMatrixGeneratorFunc(PATIENT, "GRCh38", mg_dir + "/", exome=False, bed_file=None,
-                                              chrom_based=False, plot=True, tsb_stat=False, seqInfo=False)
-    except Exception as e:  # most often: the GRCh38 reference is not installed
-        sys.exit(f"SigProfilerMatrixGenerator failed: {e}\nInstall its genome once with\n"
-                 "  python -c \"from SigProfilerMatrixGenerator import install as g; g.install('GRCh38')\"\n"
-                 "or run with --from-r-matrix (SBS96 only).")
-    for ctx in args.contexts.split(","):
-        sub, name = CONTEXTS[ctx.strip()]
-        matrices[ctx.strip()] = os.path.join(mg_dir, "output", sub, f"{PATIENT}.{name}.all")
+for ctx in args.contexts.split(","):
+    sub, name = CONTEXTS[ctx.strip()]
+    matrices[ctx.strip()] = os.path.join(mg_dir, "output", sub, f"{PATIENT}.{name}.all")
 
-    # cross-check: the generator's SBS96 vs 01_sarek.R's (same mutations, other reference copy)
-    mg96 = matrices.get("SBS96")
-    if mg96 and os.path.exists(mg96) and os.path.exists(r_matrix):
-        a = pd.read_csv(mg96, sep="\t", index_col=0)
-        b = pd.read_csv(r_matrix, sep="\t", index_col=0).reindex(index=a.index, columns=a.columns).fillna(0)
-        cc = pd.DataFrame({"set": a.columns, "matrix_generator": a.sum().values, "from_R": b.sum().values,
-                           "rows_differing": (a != b).sum().values})
-        cc.to_csv(os.path.join(FIT_DIR, "sbs96_crosscheck.csv"), index=False)
-        print(cc.to_string(index=False))
-        if cc["rows_differing"].any():
-            print("WARNING: SBS96 counts differ between SigProfiler and 01_sarek.R - see sbs96_crosscheck.csv")
+# Comparison only - the fits below use the matrix generator's matrices, never 01_sarek.R's:
+# SBS96 per class and set, SigProfiler vs 01_sarek.R (sbs96_compare.csv, every row) and
+# totals per set (sbs96_crosscheck.csv).
+r_matrix = os.path.join(IN_DIR, f"{PATIENT}.SBS96.from_R.txt")
+mg96 = matrices.get("SBS96")
+if mg96 and os.path.exists(mg96) and os.path.exists(r_matrix):
+    a = pd.read_csv(mg96, sep="\t", index_col=0)
+    b = pd.read_csv(r_matrix, sep="\t", index_col=0).reindex(index=a.index, columns=a.columns).fillna(0).astype(int)
+    cmp = (a.rename_axis("MutationType").reset_index().melt(id_vars="MutationType", var_name="set", value_name="sigprofiler")
+           .merge(b.rename_axis("MutationType").reset_index().melt(id_vars="MutationType", var_name="set", value_name="from_R"),
+                  on=["MutationType", "set"]))
+    cmp["difference"] = cmp["sigprofiler"] - cmp["from_R"]
+    cmp.to_csv(os.path.join(FIT_DIR, "sbs96_compare.csv"), index=False)
+    cc = cmp.groupby("set").agg(sigprofiler=("sigprofiler", "sum"), from_R=("from_R", "sum"),
+                                rows_differing=("difference", lambda d: int((d != 0).sum()))).reset_index()
+    cc.to_csv(os.path.join(FIT_DIR, "sbs96_crosscheck.csv"), index=False)
+    print(cc.to_string(index=False))
+    if cc["rows_differing"].any():
+        print("SBS96 differs between SigProfiler and 01_sarek.R - rows with difference != 0 in sbs96_compare.csv")
 
 # ---- COSMIC refit per context -----------------------------------------------------
 for ctx, path in matrices.items():
