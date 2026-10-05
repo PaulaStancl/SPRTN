@@ -7,8 +7,7 @@
 #   SPRTN_RESULTS   results/wgs folder     SPRTN_OUT   where tables/plots go
 # ---------------------------------------------------------------------------
 suppressPackageStartupMessages({
-  library(data.table)
-  library(ggplot2); library(VariantAnnotation); library(GenomicRanges)
+  library(data.table); library(ggplot2)
 })
 
 # ---- paths ------------------------------------------------------------------
@@ -64,41 +63,48 @@ norm_chr <- function(x) { x <- as.character(x); fifelse(grepl("^chr", x), x, pas
 
 save_plot <- function(p, name, dir, w = 7, h = 4) ggsave(file.path(dir, paste0(name, ".pdf")), p, width = w, height = h)
 
-# Tumour allele fraction from FORMAT/AF (Mutect2, SAGE/PURPLE); NA when absent (Strelka).
-tumour_vaf <- function(vcf) {
-  na <- rep(NA_real_, nrow(vcf))
-  tryCatch({
-    g <- geno(vcf)
-    if (!"AF" %in% names(g)) return(na)
-    col <- grep(TUMOUR, colnames(vcf), fixed = TRUE)
-    if (length(col) != 1) return(na)
-    m <- g[["AF"]]
-    x <- if (length(dim(m)) == 3) m[, col, 1] else m[, col]
-    if (is.list(x) || methods::is(x, "List")) x <- vapply(x, function(v) as.numeric(v)[1], numeric(1))
-    as.numeric(x)
-  }, error = function(e) na)
+# VCF data lines as a data.table via fread - far faster than VariantAnnotation::readVcf,
+# which parses every INFO/FORMAT field; the scripts need only the fixed columns and the
+# tumour AF. .gz is decompressed with gzip (fread's own .gz support needs R.utils).
+read_vcf_dt <- function(path) {
+  src <- if (grepl("\\.gz$", path)) list(cmd = paste("gzip -dc", shQuote(path))) else list(file = path)
+  v <- do.call(fread, c(src, list(skip = "#CHROM", sep = "\t", quote = "", showProgress = FALSE,
+                                  colClasses = list(character = c(1, 3, 4, 5, 7)))))
+  setnames(v, 1, "CHROM")
+  v
 }
 
-# One row per VCF record: chr, pos, ref, alt (first allele in alt1), FILTER, SNV/INDEL, VAF.
+# Value of FORMAT field `key` in one sample column, per record (NA where absent).
+format_field <- function(fmt, values, key) {
+  out <- rep(NA_character_, length(fmt))
+  for (f in unique(fmt)) {
+    k <- match(key, strsplit(f, ":", fixed = TRUE)[[1]])
+    if (is.na(k)) next
+    i <- which(fmt == f)
+    out[i] <- tstrsplit(values[i], ":", fixed = TRUE, fill = NA_character_, keep = k)[[1]]
+  }
+  out
+}
+
+# One row per VCF record: chr, pos, ref, alt (first allele in alt1), FILTER, SNV/INDEL and
+# the tumour VAF from FORMAT/AF (Mutect2, SAGE/PURPLE; NA for Strelka, which has no AF).
 read_vcf_table <- function(path) {
-  vcf  <- readVcf(path)
-  rr   <- rowRanges(vcf)
-  ref  <- as.character(rr$REF)
-  alt  <- vapply(rr$ALT, function(a) paste(as.character(a), collapse = ","), character(1))
-  alt1 <- sub(",.*", "", alt)
-  data.table(chr = as.character(seqnames(rr)), pos = start(rr), ref = ref, alt = alt, alt1 = alt1,
-             filter = as.character(rr$FILTER),
-             type = fifelse(nchar(ref) == 1 & nchar(alt1) == 1, "SNV", "INDEL"),
-             vaf = tumour_vaf(vcf))
+  v    <- read_vcf_dt(path)
+  tcol <- grep(TUMOUR, names(v), fixed = TRUE, value = TRUE)
+  tvaf <- if (length(tcol) == 1 && "FORMAT" %in% names(v))
+            suppressWarnings(as.numeric(sub(",.*", "", format_field(v$FORMAT, v[[tcol]], "AF"))))
+          else rep(NA_real_, nrow(v))
+  out <- v[, .(chr = CHROM, pos = POS, ref = REF, alt = ALT, alt1 = sub(",.*", "", ALT), filter = FILTER)]
+  out[, `:=`(type = fifelse(nchar(ref) == 1 & nchar(alt1) == 1, "SNV", "INDEL"), vaf = tvaf)]
+  out
 }
 
 # SV VCF (Manta, ESVEE): one row per record. NB a translocation / inversion is two BND
 # records (the two breakends), so BND counts are ~2x the number of events.
 read_sv_vcf <- function(path) {
-  vcf <- readVcf(path); rr <- rowRanges(vcf); inf <- info(vcf)
-  data.table(id = names(rr), chr = as.character(seqnames(rr)), pos = start(rr),
-             filter = as.character(rr$FILTER),
-             svtype = if ("SVTYPE" %in% names(inf)) as.character(inf$SVTYPE) else NA_character_)
+  v <- read_vcf_dt(path)
+  v[, .(id = ID, chr = CHROM, pos = POS, filter = FILTER,
+        svtype = fifelse(grepl("(^|;)SVTYPE=", INFO), sub(".*(^|;)SVTYPE=([^;]+).*", "\\2", INFO), NA_character_))]
 }
 
 # ---------------------------------------------------------------------------
