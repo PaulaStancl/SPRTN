@@ -8,8 +8,7 @@
 #   python 01b_sarek_signatures.py --contexts SBS96    # one context only
 #
 # Input  <OUT>/sarek/signatures/input/vcf/<set>.vcf - mutect2 (all PASS), strelka (all PASS),
-#        mutect2_strelka (PASS in both), mutect2_<cluster> (one PyClone-VI cluster each);
-#        each file is one "sample", fitted on its own.
+#        mutect2_strelka (PASS in both); each file is one "sample", fitted on its own.
 # Output <OUT>/sarek/signatures/sigprofiler/
 #   matrix_generator/output/{SBS,DBS,ID}/   SigProfilerMatrixGenerator matrices
 #   SBS96/<set>/ DBS78/<set>/ ID83/<set>/   SigProfilerAssignment cosmic_fit results - one
@@ -107,6 +106,7 @@ for ctx, path in matrices.items():
     m = pd.read_csv(path, sep="\t", index_col=0)
     print(f"{ctx}: mutations per set\n{m.sum().to_string()}")
     acts, stats = [], []
+    shutil.rmtree(os.path.join(FIT_DIR, ctx), ignore_errors=True)   # no fits left from sets of an earlier run
     # one cosmic_fit call per set, on a one-column matrix: each set is fitted on its own and
     # gets its own folder, <context>/<set>/
     for st in m.columns:
