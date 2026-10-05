@@ -1,0 +1,43 @@
+# R environment for 01c_sarek_signatures_organ.R (signature.tools.lib, FitMS), kept apart
+# from r-mutation because of its many Bioconductor dependencies. Create next to the others:
+#   micromamba create -y -p /common/WORK/pstancl/envs/signature-tools -f env_signature_tools.yml
+#   micromamba activate /common/WORK/pstancl/envs/signature-tools
+# then, once (pulls NNLM and indelsig.tools.lib from GitHub too, see its DESCRIPTION):
+#   Rscript -e 'remotes::install_github("Nik-Zainal-Group/signature.tools.lib", upgrade = "never")'
+name: signature-tools
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base>=4.3
+  - r-data.table
+  - r-remotes
+  - compilers            # NNLM and gmp are compiled from source
+  - make
+  - gmp
+  - r-rcpp
+  - r-rcpparmadillo
+  - r-rcppprogress
+  - r-nmf
+  - r-foreach
+  - r-doparallel
+  - r-dorng
+  - r-lpsolve
+  - r-nnls
+  - r-gmp
+  - r-plyr
+  - r-rcircos
+  - r-scales
+  - r-readr
+  - r-combinat
+  - r-limsolve
+  - r-getopt
+  - r-circlize
+  - r-cluster
+  - bioconductor-variantannotation
+  - bioconductor-summarizedexperiment
+  - bioconductor-genomicranges
+  - bioconductor-genomeinfodb
+  - bioconductor-bsgenome
+  - bioconductor-bsgenome.hsapiens.ucsc.hg38
+  - bioconductor-bsgenome.hsapiens.1000genomes.hs37d5   # required by the package even for hg38
