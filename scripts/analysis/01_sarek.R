@@ -26,7 +26,8 @@ calls <- rbindlist(list(
   load_calls(files, "mutect2", "mutect2"),
   load_calls(files, c("strelka_snv", "strelka_indel"), "strelka")      # NULL (skipped) if not found
 ), fill = TRUE)                                                         # the callers' metric columns differ
-calls_pass <- snv_indel_summary(calls, od)
+qd <- file.path(od, "qc_vcf"); dir.create(qd, showWarnings = FALSE)   # SNV/indel QC + qcVCF outputs
+calls_pass <- snv_indel_summary(calls, qd)
 
 # ---- 3. structural variants: Manta ---------------------------------------------
 if ("manta" %in% names(files)) {
@@ -46,7 +47,6 @@ print(purity); fwrite(purity, file.path(od, "ascat_purity_ploidy.csv"))
 # add_mutational_type(), which only knows SNV / INDEL and would call Mutect2's MNVs indels.
 if (HAVE_QCVCF) {
   library(qcVCF)
-  qd <- file.path(od, "qc_vcf"); dir.create(qd, showWarnings = FALSE)   # qcVCF plots / tables
   qc <- calls_pass[, .(CHROM, POS, REF, ALT = ALT1, subjectID = PATIENT, tool = CALLER,
                        mutType = fcase(TYPE == "SNV", "SNV", TYPE == "MNV", "MNV",
                                        TYPE == "INDEL" & nchar(ALT1) > nchar(REF), "INS",
@@ -77,7 +77,7 @@ if (HAVE_QCVCF) {
   shared <- unique(ov[, .(CHROM, POS, REF, ALT, tool = tool.x, shared_status)])
   calls_pass[shared, on = .(CHROM, POS, REF, ALT1 = ALT, CALLER = tool), QC_SHARED := i.shared_status]
   print(calls_pass[, .N, by = .(CALLER, TYPE, QC_SHARED)])
-  fwrite(calls_pass, file.path(od, "snv_indel_pass.csv"))      # now with QC_SHARED
+  fwrite(calls_pass, file.path(qd, "snv_indel_pass.csv"))      # now with QC_SHARED
 
   # Not used: plot96_matrix() needs each SNV's trinucleotide context (NC_3), which sarek's
   # VCFs do not carry - SAGE's TNC field has it, so it fits 02_oncoanalyser.R instead.

@@ -215,7 +215,10 @@ snv_indel_summary <- function(calls, od) {
     concord <- concord[, .(callers = paste(sort(CALLER), collapse = "+")), by = .(key, TYPE)]
     concord <- concord[, .(n = .N), by = .(TYPE, callers)]
     print(concord); fwrite(concord, file.path(od, "snv_indel_concordance.csv"))
-    save_plot(ggplot(concord, aes(reorder(callers, n), n, fill = TYPE)) + geom_col(position = "dodge") +
+    save_plot(ggplot(concord, aes(reorder(callers, n), n, fill = TYPE)) +
+                geom_col(position = position_dodge(width = 0.9)) +
+                geom_text(aes(label = n), position = position_dodge(width = 0.9), hjust = -0.15, size = 3.5) +
+                scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +      # room for the labels
                 coord_flip() + labs(x = NULL, y = "PASS calls", title = "Overlap between callers"),
               "snv_indel_concordance", od)
   }
