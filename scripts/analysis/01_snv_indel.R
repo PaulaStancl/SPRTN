@@ -1,9 +1,11 @@
 # ---------------------------------------------------------------------------
 # 01_snv_indel.R - somatic SNVs and indels, RJALS tumour vs normal.
 # Callers: Mutect2 + Strelka2 (sarek) and SAGE/PURPLE (oncoanalyser).
-# Run from this folder:  Rscript 01_snv_indel.R
+# Run:  Rscript 01_snv_indel.R   (or line by line in R - any of the folders above works)
 # ---------------------------------------------------------------------------
-source("00_setup.R")
+# Finds 00_setup.R from this folder, from scripts/, or from the project root.
+source(Filter(file.exists, c("00_setup.R", "analysis/00_setup.R", "scripts/analysis/00_setup.R",
+  "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN/scripts/analysis/00_setup.R"))[1])
 od <- file.path(OUT, "snv_indel"); dir.create(od, recursive = TRUE, showWarnings = FALSE)
 
 # ---- 1. input files ---------------------------------------------------------

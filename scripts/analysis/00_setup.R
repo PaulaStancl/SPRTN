@@ -1,6 +1,5 @@
 # ---------------------------------------------------------------------------
-# 00_setup.R - shared setup for the RJALS mutation analysis. Sourced by 01 / 02;
-# run those from this folder (setwd("scripts/analysis")).
+# 00_setup.R - shared setup for the RJALS mutation analysis. Sourced by 01 / 02.
 #
 # Patient data: the results live on the server and must NOT end up in OneDrive.
 # Run on the server (Rscript / RStudio there), or point SPRTN_RESULTS at a

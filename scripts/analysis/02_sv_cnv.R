@@ -1,9 +1,11 @@
 # ---------------------------------------------------------------------------
 # 02_sv_cnv.R - structural variants and copy number, RJALS tumour vs normal.
 # SVs: Manta (sarek), ESVEE + LINX (oncoanalyser).  CNV: ASCAT (sarek), PURPLE.
-# Run from this folder:  Rscript 02_sv_cnv.R
+# Run:  Rscript 02_sv_cnv.R   (or line by line in R - any of the folders above works)
 # ---------------------------------------------------------------------------
-source("00_setup.R")
+# Finds 00_setup.R from this folder, from scripts/, or from the project root.
+source(Filter(file.exists, c("00_setup.R", "analysis/00_setup.R", "scripts/analysis/00_setup.R",
+  "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN/scripts/analysis/00_setup.R"))[1])
 od <- file.path(OUT, "sv_cnv"); dir.create(od, recursive = TRUE, showWarnings = FALSE)
 
 # ---- 1. input files ---------------------------------------------------------
