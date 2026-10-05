@@ -63,9 +63,9 @@ norm_chr <- function(x) { x <- as.character(x); fifelse(grepl("^chr", x), x, pas
 
 save_plot <- function(p, name, dir, w = 7, h = 4) ggsave(file.path(dir, paste0(name, ".pdf")), p, width = w, height = h)
 
-# VCF data lines as a data.table via fread - far faster than VariantAnnotation::readVcf,
-# which parses every INFO/FORMAT field; the scripts need only the fixed columns and the
-# tumour AF. .gz is decompressed with gzip (fread's own .gz support needs R.utils).
+# VCF data lines as a data.table via fread - far faster than VariantAnnotation::readVcf;
+# INFO / FORMAT are split into columns afterwards by vcf_metrics(). .gz is decompressed
+# with gzip (fread's own .gz support needs R.utils).
 read_vcf_dt <- function(path) {
   src <- if (grepl("\\.gz$", path)) list(cmd = paste("gzip -dc", shQuote(path))) else list(file = path)
   v <- do.call(fread, c(src, list(skip = "#CHROM", sep = "\t", quote = "", showProgress = FALSE,
