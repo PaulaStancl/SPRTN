@@ -100,3 +100,103 @@ read_sv_vcf <- function(path) {
              filter = as.character(rr$FILTER),
              svtype = if ("SVTYPE" %in% names(inf)) as.character(inf$SVTYPE) else NA_character_)
 }
+
+# ---------------------------------------------------------------------------
+# Shared analysis steps - used by 01_sarek.R and 02_oncoanalyser.R
+# ---------------------------------------------------------------------------
+
+# Read the VCFs in files[keys] into one table tagged with `label` (NULL if none found).
+load_calls <- function(files, keys, label) {
+  keys <- intersect(keys, names(files))
+  if (!length(keys)) return(NULL)
+  rbindlist(lapply(files[keys], read_vcf_table))[, caller := label]
+}
+
+# calls: table from read_vcf_table() with a `caller` column. Writes counts, caller overlap
+# (when there is more than one caller), the VAF histogram, the substitution spectrum and
+# the PASS calls into od. Returns the PASS calls.
+snv_indel_summary <- function(calls, od) {
+  calls      <- calls[chr %chin% STD_CHR]
+  calls_pass <- calls[filter == "PASS"]
+
+  counts <- calls[, .(total = .N, pass = sum(filter == "PASS")), by = .(caller, type)]
+  print(counts); fwrite(counts, file.path(od, "snv_indel_counts.csv"))
+
+  if (uniqueN(calls_pass$caller) > 1) {
+    # NB indels can be written differently by different callers (normalise with
+    # bcftools norm before trusting the indel overlap).
+    concord <- unique(calls_pass[, .(caller, type, key = paste(chr, pos, ref, alt1, sep = ":"))])
+    concord <- concord[, .(callers = paste(sort(caller), collapse = "+")), by = .(key, type)]
+    concord <- concord[, .(n = .N), by = .(type, callers)]
+    print(concord); fwrite(concord, file.path(od, "snv_indel_concordance.csv"))
+    save_plot(ggplot(concord, aes(reorder(callers, n), n, fill = type)) + geom_col(position = "dodge") +
+                coord_flip() + labs(x = NULL, y = "PASS calls", title = "Overlap between callers"),
+              "snv_indel_concordance", od)
+  }
+
+  vaf_tbl <- calls_pass[!is.na(vaf) & type == "SNV"]
+  if (nrow(vaf_tbl)) save_plot(ggplot(vaf_tbl, aes(vaf)) + geom_histogram(bins = 50) + facet_wrap(~caller) +
+                                 labs(x = "tumour VAF", title = "PASS SNV allele fractions"), "snv_vaf_hist", od)
+
+  # substitution spectrum: 6 classes, pyrimidine reference
+  comp <- c(A = "T", C = "G", G = "C", T = "A")
+  snv  <- calls_pass[type == "SNV" & ref %chin% names(comp) & alt1 %chin% names(comp)]
+  snv[, pyr := ref %chin% c("C", "T")]
+  snv[, class := paste0(fifelse(pyr, ref,  unname(comp[ref])), ">",
+                        fifelse(pyr, alt1, unname(comp[alt1])))]
+  spec <- snv[, .(n = .N), by = .(caller, class)]
+  fwrite(spec, file.path(od, "snv_substitution_spectrum.csv"))
+  save_plot(ggplot(spec, aes(class, n, fill = caller)) + geom_col(position = "dodge") +
+              labs(x = NULL, y = "PASS SNVs", title = "Substitution spectrum"), "snv_spectrum", od)
+
+  fwrite(calls_pass, file.path(od, "snv_indel_pass.csv"))
+  invisible(calls_pass)
+}
+
+# sv: table from read_sv_vcf() with a `caller` column.
+sv_summary <- function(sv, od) {
+  sv <- copy(sv)[chr %chin% STD_CHR]
+  sv[, svtype := fcoalesce(svtype, "unknown")]
+  sv_counts <- sv[, .(total = .N, pass = sum(filter == "PASS")), by = .(caller, svtype)]
+  print(sv_counts); fwrite(sv_counts, file.path(od, "sv_counts.csv"))
+  save_plot(ggplot(sv[filter == "PASS"], aes(svtype, fill = caller)) + geom_bar(position = "dodge") +
+              labs(x = NULL, y = "PASS records", title = "SVs by type (BND = two records per event)"), "sv_types", od)
+  invisible(sv)
+}
+
+# Copy-number segments as one table: source, chr, start, end, cn (total), minor.
+ascat_segments <- function(path) {
+  asc <- fread(path)
+  need_cols(asc, c("chr", "startpos", "endpos", "nMajor", "nMinor"), "ASCAT segments")
+  asc[, .(source = "ASCAT", chr = norm_chr(chr), start = startpos, end = endpos,
+          cn = nMajor + nMinor, minor = nMinor)]
+}
+purple_segments <- function(path) {
+  pur <- fread(path)
+  need_cols(pur, c("chromosome", "start", "end", "copyNumber", "minorAlleleCopyNumber"), "PURPLE cnv")
+  pur[, .(source = "PURPLE", chr = norm_chr(chromosome), start = start, end = end,
+          cn = copyNumber, minor = minorAlleleCopyNumber)]
+}
+
+# Genome-wide copy-number plot, fraction of the autosomal genome per copy-number state, LOH.
+cn_summary <- function(seg, od) {
+  seg <- seg[chr %chin% STD_CHR]
+  seg[, `:=`(x0 = start + unname(CHR_OFFSET[chr]), x1 = end + unname(CHR_OFFSET[chr]))]
+  fwrite(seg, file.path(od, "cn_segments.csv"))
+  save_plot(
+    ggplot(seg, aes(x = x0, xend = x1, y = cn, yend = cn)) +
+      geom_vline(xintercept = CHR_OFFSET, colour = "grey85", linewidth = 0.2) +
+      geom_segment(linewidth = 1) + facet_grid(source ~ .) +
+      scale_x_continuous(breaks = CHR_OFFSET + CHR_LEN / 2, labels = sub("chr", "", STD_CHR), expand = c(0, 0)) +
+      coord_cartesian(ylim = c(0, 8)) + labs(x = "chromosome", y = "total copy number", title = "Copy number"),
+    "cn_genome", od, w = 11, h = 5)
+
+  auto <- seg[!chr %chin% c("chrX", "chrY")]
+  auto[, `:=`(w = end - start + 1, state = pmin(round(cn), 6), loh = round(minor) == 0)]
+  state_frac <- auto[, .(w = sum(w)), by = .(source, state)][, fraction := w / sum(w), by = source][, w := NULL]
+  cn_frac    <- auto[, .(LOH = sum(w[which(loh)]) / sum(w)), by = source]
+  print(state_frac); print(cn_frac)
+  fwrite(state_frac, file.path(od, "cn_state_fraction.csv"))
+  fwrite(cn_frac,    file.path(od, "cn_loh_fraction.csv"))
+  invisible(seg)
+}
