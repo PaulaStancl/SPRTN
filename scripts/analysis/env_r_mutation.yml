@@ -2,7 +2,8 @@
 # run in containers). Create next to the other envs:
 #   micromamba create -y -p /common/WORK/pstancl/envs/r-mutation -f env_r_mutation.yml
 #   micromamba activate /common/WORK/pstancl/envs/r-mutation
-# qcVCF is not here - install it into this env from wherever it lives.
+# qcVCF (private GitHub repo) is installed afterwards with remotes, using a GitHub
+# token in ~/.Renviron (GITHUB_PAT=...):  remotes::install_github("PaulaStancl/qcVCF")
 name: r-mutation
 channels:
   - conda-forge
@@ -11,3 +12,4 @@ dependencies:
   - r-base>=4.3
   - r-data.table
   - r-ggplot2
+  - r-remotes            # to install qcVCF from GitHub
