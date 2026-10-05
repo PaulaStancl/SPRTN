@@ -1,0 +1,10 @@
+# Regions for 05_igv_snapshots.sh: name <TAB> IGV locus (1-based, GRCh38, chr names).
+# Add a line per place you want a picture of. Names become the PNG file names.
+# SPRTN: Ensembl ENSG00000010072, canonical transcript ENST00000295050 (SPRTN-202),
+# + strand, exons padded by 50 bp. The whole gene is chr1:231,337,104-231,375,416.
+SPRTN_transcript	chr1:231338093-231355223
+SPRTN_exon1	chr1:231338243-231338654
+SPRTN_exon2	chr1:231339719-231339918
+SPRTN_exon3	chr1:231347747-231347975
+SPRTN_exon4	chr1:231351254-231351621
+SPRTN_exon5	chr1:231352560-231355073
