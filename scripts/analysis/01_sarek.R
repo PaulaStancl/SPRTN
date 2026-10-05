@@ -55,10 +55,20 @@ if (HAVE_QCVCF) {
   save_plot(plot_mutation_counts(qc, grp_col = "tool", cohort = PATIENT),
             "qcVCF_mutation_counts", od, w = 8, h = 6)
 
-  # % of each caller's mutations also found by the other caller
-  pw <- plot_pairwise_shared_mutations(qc, sample_col = "tool", cohort = PATIENT)
-  fwrite(pw$data, file.path(od, "qcVCF_pairwise_shared.csv"))
-  save_plot(pw$plot, "qcVCF_pairwise_shared", od, w = 7, h = 6)
+  # % of each caller's mutations also found by the other caller, separately for SNVs and
+  # indels (insertions + deletions); MNVs get their own heatmap only if there are any.
+  qc[, varClass := fifelse(mutType %chin% c("INS", "DEL"), "INDEL", mutType)]
+  # qcVCF groups with by = get(...), which data.table rejects when there are only a handful
+  # of mutations (<= ~3 per caller), so a tiny class is skipped rather than stopping the script.
+  pw_all <- rbindlist(lapply(unique(qc$varClass), function(cl) {
+    pw <- tryCatch(plot_pairwise_shared_mutations(qc[varClass == cl], sample_col = "tool",
+                                                  cohort = paste(PATIENT, cl)),
+                   error = function(e) { message("qcVCF pairwise ", cl, " skipped: ", conditionMessage(e)); NULL })
+    if (is.null(pw)) return(NULL)
+    save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", cl), od, w = 7, h = 6)
+    pw$data[, varClass := cl]
+  }))
+  print(pw_all); fwrite(pw_all, file.path(od, "qcVCF_pairwise_shared.csv"))
 
   # Per mutation: shared (found by >1 caller) or unique. mode "any" - "within_subject"
   # calls stringr::str_remove_all(), which qcVCF does not import, so it fails without stringr.
