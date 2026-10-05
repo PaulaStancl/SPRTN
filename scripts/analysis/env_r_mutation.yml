@@ -12,4 +12,5 @@ dependencies:
   - r-base>=4.3
   - r-data.table
   - r-ggplot2
+  - r-cowplot            # qcVCF dependency
   - r-remotes            # to install qcVCF from GitHub
