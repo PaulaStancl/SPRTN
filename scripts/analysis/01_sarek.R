@@ -25,7 +25,7 @@ writeLines(paste(names(files), files, sep = "\t"), file.path(od, "inputs_used.ts
 calls <- rbindlist(list(
   load_calls(files, "mutect2", "mutect2"),
   load_calls(files, c("strelka_snv", "strelka_indel"), "strelka")      # NULL (skipped) if not found
-))
+), fill = TRUE)                                                         # the callers' metric columns differ
 calls_pass <- snv_indel_summary(calls, od)
 
 # ---- 3. structural variants: Manta ---------------------------------------------

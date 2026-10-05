@@ -86,25 +86,104 @@ format_field <- function(fmt, values, key) {
   out
 }
 
-# One row per VCF record: chr, pos, ref, alt (first allele in alt1), FILTER, SNV/INDEL and
-# the tumour VAF from FORMAT/AF (Mutect2, SAGE/PURPLE; NA for Strelka, which has no AF).
+# Column holding a sample: its name if present (Mutect2 RJALS_RJALS_Tm, SAGE RJALS_Tm),
+# else the generic name Strelka uses (TUMOR / NORMAL). NA if neither is there.
+sample_col <- function(v, id, generic) {
+  hit <- grep(id, names(v), fixed = TRUE, value = TRUE)
+  if (length(hit) == 1) return(hit)
+  if (generic %in% names(v)) return(generic)
+  NA_character_
+}
+
+# Numbers where a column is all-numeric, TRUE for flags; "12,30"-style lists stay text.
+convert_types <- function(d) {
+  for (j in names(d)) set(d, j = j, value = type.convert(d[[j]], as.is = TRUE, na.strings = c(".", "NA")))
+  d
+}
+
+# Every INFO key as its own column, prefixed info_ (e.g. info_DP, info_TLOD, info_SomaticEVS,
+# info_TIER). Flags without a value (SOMATIC) become TRUE. NULL if the VCF has no INFO.
+info_fields <- function(info) {
+  n     <- length(info)
+  parts <- strsplit(info, ";", fixed = TRUE)
+  l <- data.table(i = rep(seq_len(n), lengths(parts)), kv = unlist(parts, use.names = FALSE))[kv != "."]
+  if (!nrow(l)) return(NULL)
+  l[, `:=`(key   = sub("=.*", "", kv),
+           value = fifelse(grepl("=", kv, fixed = TRUE), sub("^[^=]*=", "", kv), "TRUE"))]
+  w <- dcast(l, i ~ key, value.var = "value", fun.aggregate = function(x) x[1])
+  w <- w[data.table(i = seq_len(n)), on = "i"][, i := NULL]      # keep records with no INFO
+  setnames(w, paste0("info_", names(w)))
+  convert_types(w)
+}
+
+# Every FORMAT key of one sample column as its own column, prefixed (t_DP, t_AD, n_DP ...).
+sample_fields <- function(fmt, values, prefix) {
+  keys <- unique(unlist(strsplit(unique(fmt), ":", fixed = TRUE)))
+  w <- as.data.table(setNames(lapply(keys, function(k) format_field(fmt, values, k)), paste0(prefix, keys)))
+  convert_types(w)
+}
+
+# INFO + tumour (t_) + normal (n_) FORMAT fields for every record of a VCF read by read_vcf_dt().
+vcf_metrics <- function(v) {
+  tcol <- sample_col(v, TUMOUR, "TUMOR"); ncl <- sample_col(v, NORMAL, "NORMAL")
+  fmt  <- "FORMAT" %in% names(v)
+  parts <- list(
+    if ("INFO" %in% names(v)) info_fields(v$INFO),
+    if (fmt && !is.na(tcol)) sample_fields(v$FORMAT, v[[tcol]], "t_"),
+    if (fmt && !is.na(ncl))  sample_fields(v$FORMAT, v[[ncl]],  "n_"))
+  parts <- Filter(Negate(is.null), parts)
+  if (length(parts)) do.call(cbind, parts) else NULL
+}
+
+# Strelka writes no AF. Tumour VAF from its tier-1 counts, as its documentation recommends:
+# SNVs alt / (ref + alt) from AU/CU/GU/TU, indels TIR / (TAR + TIR).
+strelka_vaf <- function(d) {
+  if (!nrow(d)) return(numeric(0))
+  t1 <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
+  if (all(paste0("t_", c("A", "C", "G", "T"), "U") %in% names(d))) {
+    cnt <- vapply(c("A", "C", "G", "T"), function(b) t1(d[[paste0("t_", b, "U")]]), numeric(nrow(d)))
+    if (is.null(dim(cnt))) cnt <- matrix(cnt, nrow = 1, dimnames = list(NULL, c("A", "C", "G", "T")))
+    r <- cnt[cbind(seq_len(nrow(d)), match(d$ref,  colnames(cnt)))]
+    a <- cnt[cbind(seq_len(nrow(d)), match(d$alt1, colnames(cnt)))]
+    return(a / (r + a))
+  }
+  if (all(c("t_TAR", "t_TIR") %in% names(d))) { r <- t1(d$t_TAR); a <- t1(d$t_TIR); return(a / (r + a)) }
+  rep(NA_real_, nrow(d))
+}
+
+# One row per VCF record: the core columns, then every INFO (info_*), tumour (t_*) and normal
+# (n_*) FORMAT field - depth, quality, strand and position metrics for later artefact work.
+#   alt1      first ALT allele. Mutect2 filters sites with >1 ALT as `multiallelic` (never
+#             PASS); Strelka and SAGE write one ALT per record - see alt_count.
+#   type      SNV, MNV (same-length multi-base, e.g. SAGE), INDEL, or OTHER (symbolic / *)
+#   vaf       tumour VAF: FORMAT/AF (Mutect2, SAGE), or from Strelka's read counts
 read_vcf_table <- function(path) {
-  v    <- read_vcf_dt(path)
-  tcol <- grep(TUMOUR, names(v), fixed = TRUE, value = TRUE)
-  tvaf <- if (length(tcol) == 1 && "FORMAT" %in% names(v))
-            suppressWarnings(as.numeric(sub(",.*", "", format_field(v$FORMAT, v[[tcol]], "AF"))))
-          else rep(NA_real_, nrow(v))
-  out <- v[, .(chr = CHROM, pos = POS, ref = REF, alt = ALT, alt1 = sub(",.*", "", ALT), filter = FILTER)]
-  out[, `:=`(type = fifelse(nchar(ref) == 1 & nchar(alt1) == 1, "SNV", "INDEL"), vaf = tvaf)]
+  v   <- read_vcf_dt(path)
+  out <- v[, .(chr = CHROM, pos = POS, ref = REF, alt = ALT, alt1 = sub(",.*", "", ALT),
+               alt_count = lengths(strsplit(ALT, ",", fixed = TRUE)),
+               filter = FILTER, qual = suppressWarnings(as.numeric(QUAL)))]
+  out[, type := fcase(grepl("^[<*.]", alt1),               "OTHER",
+                      nchar(ref) == 1 & nchar(alt1) == 1, "SNV",
+                      nchar(ref) == nchar(alt1),          "MNV",
+                      default = "INDEL")]
+  m <- vcf_metrics(v)
+  if (!is.null(m)) out <- cbind(out, m)
+  tvaf <- if ("t_AF" %in% names(out)) suppressWarnings(as.numeric(sub(",.*", "", out$t_AF))) else strelka_vaf(out)
+  out[, vaf := tvaf]
+  setcolorder(out, c("chr", "pos", "ref", "alt", "alt1", "alt_count", "type", "filter", "qual", "vaf"))
   out
 }
 
-# SV VCF (Manta, ESVEE): one row per record. NB a translocation / inversion is two BND
-# records (the two breakends), so BND counts are ~2x the number of events.
+# SV VCF (Manta, ESVEE): one row per record plus all INFO / FORMAT metrics, as above.
+# NB a translocation / inversion is two BND records (the two breakends), so BND counts
+# are ~2x the number of events.
 read_sv_vcf <- function(path) {
-  v <- read_vcf_dt(path)
-  v[, .(id = ID, chr = CHROM, pos = POS, filter = FILTER,
-        svtype = fifelse(grepl("(^|;)SVTYPE=", INFO), sub(".*(^|;)SVTYPE=([^;]+).*", "\\2", INFO), NA_character_))]
+  v   <- read_vcf_dt(path)
+  out <- v[, .(id = ID, chr = CHROM, pos = POS, filter = FILTER,
+               svtype = fifelse(grepl("(^|;)SVTYPE=", INFO), sub(".*(^|;)SVTYPE=([^;]+).*", "\\2", INFO), NA_character_))]
+  m <- vcf_metrics(v)
+  if (!is.null(m)) out <- cbind(out, m)
+  out
 }
 
 # ---------------------------------------------------------------------------
@@ -115,7 +194,7 @@ read_sv_vcf <- function(path) {
 load_calls <- function(files, keys, label) {
   keys <- intersect(keys, names(files))
   if (!length(keys)) return(NULL)
-  rbindlist(lapply(files[keys], read_vcf_table))[, caller := label]
+  rbindlist(lapply(files[keys], read_vcf_table), fill = TRUE)[, caller := label]   # callers differ in INFO/FORMAT keys
 }
 
 # calls: table from read_vcf_table() with a `caller` column. Writes counts, caller overlap
