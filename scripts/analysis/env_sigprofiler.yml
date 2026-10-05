@@ -1,0 +1,16 @@
+# Python environment for 01b_sarek_signatures.py (SigProfilerMatrixGenerator +
+# SigProfilerAssignment), kept apart from the R env. Create next to the other envs:
+#   micromamba create -y -p /common/WORK/pstancl/envs/sigprofiler -f env_sigprofiler.yml
+#   micromamba activate /common/WORK/pstancl/envs/sigprofiler
+# then, once, the matrix generator's own GRCh38 (a few GB, into the env's site-packages):
+#   python -c "from SigProfilerMatrixGenerator import install as g; g.install('GRCh38')"
+name: sigprofiler
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pandas
+  - poppler              # pdf2image (SigProfilerAssignment's PDF report) needs pdftoppm
+  - pip:
+      - SigProfilerAssignment>=1.1   # pulls SigProfilerMatrixGenerator + SigProfilerPlotting

@@ -243,8 +243,8 @@ atomize_mnv <- function(calls) {
   rbindlist(list(calls[MUTTYPE != "MNV"], ex), use.names = TRUE)
 }
 
-# Trinucleotide context (NC_3: base before, REF, base after, from the reference) for each
-# SNV, as qcVCF::plot96_matrix() wants it. One samtools faidx call for all positions.
+# Trinucleotide context on the + strand (base before, REF, base after, from the reference)
+# for each SNV - turn it into the pyrimidine-strand class with sbs96(). One samtools faidx call for all positions.
 # Returns NC_3 in the rows' order; NA if FASTA or samtools are missing.
 trinuc_context <- function(d, fasta = FASTA) {
   if (!nrow(d)) return(character(0))
@@ -260,6 +260,22 @@ trinuc_context <- function(d, fasta = FASTA) {
   seqs <- data.table(region = sub("^>", "", fa[hdr]), NC_3 = toupper(fa[which(hdr) + 1L]))
   seqs[d[, .(region = paste0(CHROM, ":", POS - 1L, "-", POS + 1L))], on = "region"]$NC_3
 }
+
+# SBS96 class in SigProfiler / COSMIC notation, e.g. A[C>T]G. nc3 is the + strand context from
+# trinuc_context(); the class is written on the pyrimidine strand, so for a G or A reference
+# the context and the change are reverse-complemented (G>A in CGT -> A[C>T]G), as
+# SigProfilerMatrixGenerator and palimpsest do. NA where nc3 is NA.
+sbs96 <- function(ref, alt, nc3) {
+  rc  <- function(x) chartr("ACGT", "TGCA", x)
+  pur <- ref %chin% c("A", "G")
+  b5  <- fifelse(pur, rc(substr(nc3, 3, 3)), substr(nc3, 1, 1))
+  b3  <- fifelse(pur, rc(substr(nc3, 1, 1)), substr(nc3, 3, 3))
+  out <- paste0(b5, "[", fifelse(pur, rc(ref), ref), ">", fifelse(pur, rc(alt), alt), "]", b3)
+  out[is.na(nc3)] <- NA_character_
+  out
+}
+SBS96_TYPES <- sort(CJ(b5 = c("A", "C", "G", "T"), sub = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"),
+                       b3 = c("A", "C", "G", "T"))[, paste0(b5, "[", sub, "]", b3)], method = "radix")
 
 # All records, PASS and filtered, per caller and mutation type (SNV / MNV / INS / DEL): how
 # many passed, why the rest failed, and how depth, allele fraction and score compare between

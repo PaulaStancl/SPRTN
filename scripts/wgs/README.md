@@ -30,6 +30,7 @@ Run from `scripts/wgs/`. Either submit the steps as PBS jobs (next section) or r
 ./02_run_sarek.sh             # FASTQ -> Mutect2, Strelka, Manta, ASCAT
 ./03_run_oncoanalyser.sh      # FASTQ -> Hartwig WiGiTS + ORANGE report; independent of sarek
 ./04_run_tumourevo.sh         # after 02; builds its sheet from sarek output
+./06_normalize_vcfs.sh        # after 02; bcftools norm on sarek's SNV/indel VCFs for analysis/01_sarek.R
 ```
 
 - **Run directly on lobsang, 02 and 03 must go one after the other,** because each one takes all 8 cores. As PBS jobs they can run at the same time. Either order works; if the patient's sex isn't confirmed yet, start with 03.
