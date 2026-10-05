@@ -21,7 +21,12 @@ writeLines(paste(names(files), files, sep = "\t"), file.path(od, "inputs_used.ts
 
 # ---- 2. SNV / indel: PURPLE-annotated SAGE calls -----------------------------
 calls <- load_calls(files, "purple_somatic", "sage_purple")
-if (!is.null(calls)) calls_pass <- snv_indel_summary(calls, od)
+if (!is.null(calls)) {
+  raw_dir  <- file.path(od, "qc_vcf", "raw");  dir.create(raw_dir,  recursive = TRUE, showWarnings = FALSE)
+  pass_dir <- file.path(od, "qc_vcf", "pass"); dir.create(pass_dir, recursive = TRUE, showWarnings = FALSE)
+  raw_qc(calls, raw_dir)
+  pass <- snv_indel_summary(calls, pass_dir)
+}
 
 # ---- 3. structural variants: ESVEE and LINX ------------------------------------
 if ("esvee" %in% names(files)) {

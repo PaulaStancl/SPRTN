@@ -26,8 +26,14 @@ calls <- rbindlist(list(
   load_calls(files, "mutect2", "mutect2"),
   load_calls(files, c("strelka_snv", "strelka_indel"), "strelka")      # NULL (skipped) if not found
 ), fill = TRUE)                                                         # the callers' metric columns differ
-qd <- file.path(od, "qc_vcf"); dir.create(qd, showWarnings = FALSE)   # SNV/indel QC + qcVCF outputs
-calls_pass <- snv_indel_summary(calls, qd)
+# qc_vcf/raw:  every record, PASS and filtered - FILTER outcome, reasons, depth / VAF / score
+# qc_vcf/pass: PASS calls only - caller overlap, VAF, spectrum, qcVCF plots (section 5)
+raw_dir  <- file.path(od, "qc_vcf", "raw");  dir.create(raw_dir,  recursive = TRUE, showWarnings = FALSE)
+pass_dir <- file.path(od, "qc_vcf", "pass"); dir.create(pass_dir, recursive = TRUE, showWarnings = FALSE)
+raw_qc(calls, raw_dir)
+pass <- snv_indel_summary(calls, pass_dir)
+calls_pass <- pass$pass      # PASS records as the callers wrote them (Mutect2 MNVs whole)
+atom       <- pass$atom      # the same with MNVs split into SNVs - for comparing callers
 
 # ---- 3. structural variants: Manta ---------------------------------------------
 if ("manta" %in% names(files)) {
@@ -43,21 +49,21 @@ print(purity); fwrite(purity, file.path(od, "ascat_purity_ploidy.csv"))
 
 # ---- 5. qcVCF on the PASS calls ----------------------------------------------
 # qcVCF's CHROM / POS / REF / ALT match these tables; ALT is ALT1 (the first allele - PASS
-# calls have one). mutType uses qcVCF's own palette classes (SNV, MNV, INS, DEL) rather than
-# add_mutational_type(), which only knows SNV / INDEL and would call Mutect2's MNVs indels.
+# calls have one). mutType is MUTTYPE (SNV, MNV, INS, DEL - qcVCF's own palette classes)
+# rather than add_mutational_type(), which only knows SNV / INDEL.
+# Counts use the records as called; the caller comparisons use `atom` (MNVs split into
+# SNVs), since Strelka writes a CC>TT as two C>T and would otherwise never match Mutect2.
 if (HAVE_QCVCF) {
   library(qcVCF)
-  qc <- calls_pass[, .(CHROM, POS, REF, ALT = ALT1, subjectID = PATIENT, tool = CALLER,
-                       mutType = fcase(TYPE == "SNV", "SNV", TYPE == "MNV", "MNV",
-                                       TYPE == "INDEL" & nchar(ALT1) > nchar(REF), "INS",
-                                       TYPE == "INDEL", "DEL", default = "INDEL"))]
+  to_qc <- function(x) x[, .(CHROM, POS, REF, ALT = ALT1, subjectID = PATIENT, tool = CALLER, mutType = MUTTYPE)]
 
   # PASS calls per caller and mutation type
-  save_plot(plot_mutation_counts(qc, grp_col = "tool", cohort = PATIENT),
-            "mutation_counts", qd, w = 8, h = 6)
+  save_plot(plot_mutation_counts(to_qc(calls_pass), grp_col = "tool", cohort = PATIENT),
+            "mutation_counts", pass_dir, w = 8, h = 6)
 
-  # % of each caller's mutations also found by the other caller, separately for SNVs and
-  # indels (insertions + deletions); MNVs get their own heatmap only if there are any.
+  # % of each caller's mutations also found by the other caller, separately for SNVs (split
+  # MNVs included) and indels (insertions + deletions).
+  qc <- to_qc(atom)
   qc[, varClass := fifelse(mutType %chin% c("INS", "DEL"), "INDEL", mutType)]
   # qcVCF groups with by = get(...), which data.table rejects when there are only a handful
   # of mutations (<= ~3 per caller), so a tiny class is skipped rather than stopping the script.
@@ -66,20 +72,47 @@ if (HAVE_QCVCF) {
                                                   cohort = paste(PATIENT, cl)),
                    error = function(e) { message("qcVCF pairwise ", cl, " skipped: ", conditionMessage(e)); NULL })
     if (is.null(pw)) return(NULL)
-    save_plot(pw$plot, paste0("pairwise_shared_", cl), qd, w = 7, h = 6)
+    save_plot(pw$plot, paste0("pairwise_shared_", cl), pass_dir, w = 7, h = 6)
     pw$data[, varClass := cl]
   }))
-  print(pw_all); fwrite(pw_all, file.path(qd, "pairwise_shared.csv"))
+  print(pw_all); fwrite(pw_all, file.path(pass_dir, "pairwise_shared.csv"))
 
   # Per mutation: shared (found by >1 caller) or unique. mode "any" - "within_subject"
   # calls stringr::str_remove_all(), which qcVCF does not import, so it fails without stringr.
   ov <- overlap_and_annotate_shared_mutations(qc, sample_col = "tool", mode = "any")
   shared <- unique(ov[, .(CHROM, POS, REF, ALT, tool = tool.x, shared_status)])
-  calls_pass[shared, on = .(CHROM, POS, REF, ALT1 = ALT, CALLER = tool), QC_SHARED := i.shared_status]
-  print(calls_pass[, .N, by = .(CALLER, TYPE, QC_SHARED)])
-  fwrite(calls_pass, file.path(qd, "snv_indel_pass.csv"))      # now with QC_SHARED
+  atom[shared, on = .(CHROM, POS, REF, ALT1 = ALT, CALLER = tool), QC_SHARED := i.shared_status]
+  # back onto the records as called: an MNV is shared / unique if all its bases are,
+  # "partial" if only some are
+  calls_pass[atom[FROM_MNV == FALSE], on = .(CHROM, POS, REF, ALT1, CALLER), QC_SHARED := i.QC_SHARED]
+  if (any(atom$FROM_MNV)) {
+    mnv_sh <- atom[FROM_MNV == TRUE, .(QC_SHARED = if (uniqueN(QC_SHARED) == 1) QC_SHARED[1] else "partial"),
+                   by = .(MNV_KEY, CALLER)]
+    calls_pass[, MNV_KEY := fifelse(MUTTYPE == "MNV", paste0(CHROM, ":", POS, ":", REF, ">", ALT1), NA_character_)]
+    calls_pass[mnv_sh, on = .(MNV_KEY, CALLER), QC_SHARED := i.QC_SHARED][, MNV_KEY := NULL]
+  }
+  print(calls_pass[, .N, by = .(CALLER, MUTTYPE, QC_SHARED)])
+  fwrite(calls_pass, file.path(pass_dir, "snv_indel_pass.csv"))            # now with QC_SHARED
+  fwrite(atom,       file.path(pass_dir, "snv_indel_pass_atomized.csv"))
 
-  # Not used: plot96_matrix() needs each SNV's trinucleotide context (NC_3), which sarek's
-  # VCFs do not carry - SAGE's TNC field has it, so it fits 02_oncoanalyser.R instead.
+  # 96-context profile of the PASS SNVs (split MNVs included), one column per caller, rows
+  # all / shared / unique. sarek's VCFs carry no trinucleotide context, so NC_3 is read from
+  # the reference FASTA (trinuc_context(), samtools faidx). plot96_matrix() returns the
+  # figure(s) without saving; orderplots / showperc / dropempty / dontshowall must be given
+  # as single values (their defaults are vectors, which its if() checks reject).
+  snv96 <- atom[MUTTYPE == "SNV", .(CHROM, POS, REF, ALT = ALT1, tool = CALLER, QC_SHARED)]
+  snv96[, NC_3 := trinuc_context(snv96)]
+  # the middle base must be REF - anything else means a different reference build
+  bad <- snv96[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]
+  if (bad) warning(bad, " SNVs whose REF is not the reference base - is FASTA the genome sarek used?")
+  snv96 <- snv96[!is.na(NC_3) & substr(NC_3, 2, 2) == REF]
+  if (nrow(snv96)) {
+    fwrite(snv96, file.path(pass_dir, "snv_96context.csv"))
+    fig96 <- plot96_matrix(snv96, rowsplit = "QC_SHARED", plotsplitcol = "tool",
+                           orderplots = "no", showperc = "yes", dropempty = "no", dontshowall = "no")
+    for (k in seq_along(fig96))
+      save_plot(fig96[[k]], paste0("snv_96context", if (k > 1) paste0("_", k)), pass_dir,
+                w = 9 * uniqueN(snv96$tool), h = 2 + 1.7 * (uniqueN(snv96$QC_SHARED) + 1))
+  }
 }
 message("done: ", od)

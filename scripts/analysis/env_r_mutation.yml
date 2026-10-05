@@ -13,4 +13,7 @@ dependencies:
   - r-data.table
   - r-ggplot2
   - r-cowplot            # qcVCF dependency
+  - r-stringr            # qcVCF dependency (plot96_matrix, within_subject mode)
+  - r-stringi            # qcVCF dependency (plot96_matrix)
+  - samtools             # faidx: SNV trinucleotide context for the 96-context plots
   - r-remotes            # to install qcVCF from GitHub

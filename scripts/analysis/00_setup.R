@@ -38,6 +38,14 @@ STD_CHR    <- names(CHR_LEN)
 CHR_OFFSET <- setNames(c(0, head(cumsum(CHR_LEN), -1)), STD_CHR)   # for genome-wide plots
 
 # ---- qcVCF -------------------------------------------------------------------
+# GRCh38 FASTA sarek aligned to (iGenomes GATK.GRCh38, with its .fai) - for the SNVs'
+# trinucleotide context, read with samtools faidx (samtools from this env or wgs-tools).
+FASTA <- Sys.getenv("SPRTN_FASTA", file.path("/common/WORK/pstancl/references/igenomes/Homo_sapiens/GATK/GRCh38",
+                                             "Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"))
+SAMTOOLS <- Filter(nzchar, c(Sys.which("samtools"), Sys.getenv("SPRTN_SAMTOOLS"),
+                             if (file.exists("/common/WORK/pstancl/envs/wgs-tools/bin/samtools"))
+                               "/common/WORK/pstancl/envs/wgs-tools/bin/samtools"))[1]
+
 HAVE_QCVCF <- requireNamespace("qcVCF", quietly = TRUE)
 if (!HAVE_QCVCF) message("qcVCF is not installed - the qcVCF sections will be skipped")
 
@@ -140,18 +148,26 @@ vcf_metrics <- function(v) {
 # uses it and this is never called). Tumour VAF from the tier-1 allele-support counts, i.e.
 # the first value of each comma pair: SNVs ALT / (REF + ALT) from AU/CU/GU/TU, indels
 # TIR / (TAR + TIR).
-strelka_vaf <- function(d) {
-  if (!nrow(d)) return(numeric(0))
+# Strelka tier-1 allele-support counts for one sample (prefix "t_" tumour, "n_" normal),
+# as list(ref, alt): SNVs from AU/CU/GU/TU, indels TAR (ref) / TIR (alt). NULL if absent.
+strelka_tier1 <- function(d, prefix = "t_") {
+  if (!nrow(d)) return(NULL)
   t1 <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
-  if (all(paste0("t_", c("A", "C", "G", "T"), "U") %in% names(d))) {
-    cnt <- vapply(c("A", "C", "G", "T"), function(b) t1(d[[paste0("t_", b, "U")]]), numeric(nrow(d)))
-    if (is.null(dim(cnt))) cnt <- matrix(cnt, nrow = 1, dimnames = list(NULL, c("A", "C", "G", "T")))
-    r <- cnt[cbind(seq_len(nrow(d)), match(d$REF,  colnames(cnt)))]
-    a <- cnt[cbind(seq_len(nrow(d)), match(d$ALT1, colnames(cnt)))]
-    return(a / (r + a))
+  base_cols <- paste0(prefix, c("A", "C", "G", "T"), "U")
+  if (all(base_cols %in% names(d))) {
+    cnt <- vapply(base_cols, function(b) t1(d[[b]]), numeric(nrow(d)))
+    if (is.null(dim(cnt))) cnt <- matrix(cnt, nrow = 1)
+    colnames(cnt) <- c("A", "C", "G", "T")
+    return(list(ref = cnt[cbind(seq_len(nrow(d)), match(d$REF,  colnames(cnt)))],
+                alt = cnt[cbind(seq_len(nrow(d)), match(d$ALT1, colnames(cnt)))]))
   }
-  if (all(c("t_TAR", "t_TIR") %in% names(d))) { r <- t1(d$t_TAR); a <- t1(d$t_TIR); return(a / (r + a)) }
-  rep(NA_real_, nrow(d))
+  if (all(paste0(prefix, c("TAR", "TIR")) %in% names(d)))
+    return(list(ref = t1(d[[paste0(prefix, "TAR")]]), alt = t1(d[[paste0(prefix, "TIR")]])))
+  NULL
+}
+strelka_vaf <- function(d, prefix = "t_") {
+  k <- strelka_tier1(d, prefix)
+  if (is.null(k)) rep(NA_real_, nrow(d)) else k$alt / (k$ref + k$alt)
 }
 
 # One row per VCF record: the core columns (VCF names, upper case), then every INFO (info_*), tumour (t_*) and normal
@@ -171,9 +187,19 @@ read_vcf_table <- function(path) {
                       default = "INDEL")]
   m <- vcf_metrics(v)
   if (!is.null(m)) out <- cbind(out, m)
-  tvaf <- if ("t_AF" %in% names(out)) suppressWarnings(as.numeric(sub(",.*", "", out$t_AF))) else strelka_vaf(out)
-  out[, VAF := tvaf]
-  setcolorder(out, c("CHROM", "POS", "REF", "ALT", "ALT1", "ALT_COUNT", "TYPE", "FILTER", "QUAL", "VAF"))
+  out[, MUTTYPE := fcase(TYPE == "INDEL" & nchar(ALT1) > nchar(REF), "INS",
+                         TYPE == "INDEL", "DEL", default = TYPE)]
+  # VAF / N_VAF: FORMAT/AF of the tumour / normal (Mutect2, SAGE), else Strelka's tier-1 counts.
+  # T_ALT: tumour reads supporting ALT - FORMAT/AD's second value, else Strelka's tier-1 count.
+  num1   <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
+  second <- function(x) { x <- as.character(x)
+    suppressWarnings(as.numeric(fifelse(grepl(",", x, fixed = TRUE), sub("^[^,]*,([^,]*).*$", "\\1", x), NA_character_))) }
+  tk <- strelka_tier1(out, "t_")
+  out[, `:=`(VAF   = if ("t_AF" %in% names(out)) num1(out$t_AF) else strelka_vaf(out, "t_"),
+             N_VAF = if ("n_AF" %in% names(out)) num1(out$n_AF) else strelka_vaf(out, "n_"),
+             T_ALT = if ("t_AD" %in% names(out)) second(out$t_AD) else if (!is.null(tk)) tk$alt else NA_real_)]
+  setcolorder(out, c("CHROM", "POS", "REF", "ALT", "ALT1", "ALT_COUNT", "TYPE", "MUTTYPE",
+                     "FILTER", "QUAL", "VAF", "N_VAF", "T_ALT"))
   out
 }
 
@@ -200,20 +226,122 @@ load_calls <- function(files, keys, label) {
   rbindlist(lapply(files[keys], read_vcf_table), fill = TRUE)[, CALLER := label]   # callers differ in INFO/FORMAT keys
 }
 
-# calls: table from read_vcf_table() with a `CALLER` column. Writes counts, caller overlap
-# (when there is more than one caller), the VAF histogram, the substitution spectrum and
-# the PASS calls into od. Returns the PASS calls.
+# PASS calls with each MNV split into its single-base substitutions (as bcftools norm --atomize
+# does), so Mutect2's / SAGE's MNVs can match Strelka's SNVs: Strelka2's somatic output has no
+# MNVs, it writes a CC>TT as two C>T. Split rows keep the MNV's metrics and VAF, are flagged
+# FROM_MNV, and MNV_KEY names the record they came from. Everything else is unchanged.
+atomize_mnv <- function(calls) {
+  calls <- copy(calls)[, `:=`(FROM_MNV = FALSE, MNV_KEY = NA_character_)]
+  mnv <- calls[MUTTYPE == "MNV"]
+  if (!nrow(mnv)) return(calls)
+  mnv[, MNV_KEY := paste0(CHROM, ":", POS, ":", REF, ">", ALT1)]
+  ex <- mnv[rep(seq_len(nrow(mnv)), nchar(REF))]
+  ex[, k := seq_len(.N), by = .(CALLER, MNV_KEY)]
+  ex[, `:=`(POS = POS + k - 1L, REF = substr(REF, k, k), ALT1 = substr(ALT1, k, k))]
+  ex <- ex[REF != ALT1]
+  ex[, `:=`(ALT = ALT1, ALT_COUNT = 1L, TYPE = "SNV", MUTTYPE = "SNV", FROM_MNV = TRUE)][, k := NULL]
+  rbindlist(list(calls[MUTTYPE != "MNV"], ex), use.names = TRUE)
+}
+
+# Trinucleotide context (NC_3: base before, REF, base after, from the reference) for each
+# SNV, as qcVCF::plot96_matrix() wants it. One samtools faidx call for all positions.
+# Returns NC_3 in the rows' order; NA if FASTA or samtools are missing.
+trinuc_context <- function(d, fasta = FASTA) {
+  if (!nrow(d)) return(character(0))
+  if (is.na(SAMTOOLS) || !file.exists(fasta) || !file.exists(paste0(fasta, ".fai"))) {
+    message("no NC_3: need samtools and ", fasta, " (+ .fai) - set SPRTN_FASTA / SPRTN_SAMTOOLS")
+    return(rep(NA_character_, nrow(d)))
+  }
+  reg <- unique(d[, .(region = paste0(CHROM, ":", POS - 1L, "-", POS + 1L))])
+  rf  <- tempfile(fileext = ".txt"); on.exit(unlink(rf))
+  writeLines(reg$region, rf)
+  fa  <- system2(SAMTOOLS, c("faidx", "-r", shQuote(rf), shQuote(fasta)), stdout = TRUE)
+  hdr <- startsWith(fa, ">")                                   # one 3-base sequence line per region
+  seqs <- data.table(region = sub("^>", "", fa[hdr]), NC_3 = toupper(fa[which(hdr) + 1L]))
+  seqs[d[, .(region = paste0(CHROM, ":", POS - 1L, "-", POS + 1L))], on = "region"]$NC_3
+}
+
+# All records, PASS and filtered, per caller and mutation type (SNV / MNV / INS / DEL): how
+# many passed, why the rest failed, and how depth, allele fraction and score compare between
+# PASS and FAIL. Writes pass_fail_counts, filter_reasons, metrics_summary and metric_* to od.
+raw_qc <- function(calls, od) {
+  d <- calls[CHROM %chin% STD_CHR]
+  d[, `:=`(STATUS  = factor(fifelse(FILTER == "PASS", "PASS", "FAIL"), levels = c("PASS", "FAIL")),
+           MUTTYPE = factor(MUTTYPE, levels = intersect(c("SNV", "MNV", "INS", "DEL", "OTHER"), unique(MUTTYPE))))]
+
+  # 1. PASS vs FAIL
+  counts <- d[, .(total = .N, pass = sum(STATUS == "PASS"), fail = sum(STATUS == "FAIL")), by = .(CALLER, MUTTYPE)]
+  counts[, pass_pct := round(100 * pass / total, 1)]
+  setorder(counts, CALLER, MUTTYPE)
+  print(counts); fwrite(counts, file.path(od, "pass_fail_counts.csv"))
+  pf <- d[, .N, by = .(CALLER, MUTTYPE, STATUS)]
+  # share of PASS / FAIL per bar (counts differ by orders of magnitude between types), with the counts on it
+  save_plot(ggplot(pf, aes(MUTTYPE, N, fill = STATUS)) +
+              geom_col(position = "fill") +
+              geom_text(aes(label = N), position = position_fill(vjust = 0.5), size = 3) +
+              scale_y_continuous(labels = function(x) paste0(100 * x, "%"), expand = c(0, 0)) +
+              facet_wrap(~CALLER, scales = "free_x") +
+              labs(x = NULL, y = "share of records (numbers = records)", title = "FILTER outcome per caller and mutation type"),
+            "pass_fail_counts", od, w = 9, h = 5)
+
+  # 2. why records failed - a record failing several filters counts once for each
+  f <- d[STATUS == "FAIL", .(CALLER, MUTTYPE, FILTER)]
+  if (nrow(f)) {
+    parts   <- strsplit(f$FILTER, ";", fixed = TRUE)
+    reasons <- data.table(CALLER  = rep(f$CALLER,  lengths(parts)),
+                          MUTTYPE = rep(f$MUTTYPE, lengths(parts)),
+                          reason  = unlist(parts, use.names = FALSE))[, .N, by = .(CALLER, MUTTYPE, reason)]
+    setorder(reasons, CALLER, -N)
+    fwrite(reasons, file.path(od, "filter_reasons.csv"))
+    save_plot(ggplot(reasons, aes(reorder(reason, N, sum), N, fill = MUTTYPE)) + geom_col() + coord_flip() +
+                facet_wrap(~CALLER, scales = "free") +
+                labs(x = NULL, y = "failed records", title = "Why records failed FILTER"),
+              "filter_reasons", od, w = 10, h = 6)
+  }
+
+  # 3. metrics, PASS vs FAIL. SCORE is each caller's own confidence score - on different
+  #    scales, so compare it within a caller only.
+  num1  <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
+  score <- rep(NA_real_, nrow(d))
+  for (col in c("info_TLOD", "info_SomaticEVS")) if (col %in% names(d)) score <- fcoalesce(score, num1(d[[col]]))
+  d[, SCORE := fcoalesce(score, QUAL)]
+  metrics <- c(t_DP = "tumour depth (DP)", n_DP = "normal depth (DP)", VAF = "tumour VAF",
+               N_VAF = "normal VAF", T_ALT = "tumour reads supporting ALT",
+               SCORE = "caller score (Mutect2 TLOD / Strelka SomaticEVS / SAGE QUAL)")
+  metrics <- metrics[names(metrics) %in% names(d)]
+  for (m in names(metrics)) set(d, j = m, value = suppressWarnings(as.numeric(d[[m]])))
+  long <- melt(d[, c("CALLER", "MUTTYPE", "STATUS", names(metrics)), with = FALSE],
+               id.vars = c("CALLER", "MUTTYPE", "STATUS"), variable.name = "metric",
+               value.name = "value", na.rm = TRUE)
+  summ <- long[, .(n = .N, median = median(value), q25 = quantile(value, 0.25), q75 = quantile(value, 0.75)),
+               by = .(metric, CALLER, MUTTYPE, STATUS)]
+  setorder(summ, metric, CALLER, MUTTYPE, STATUS)
+  print(summ); fwrite(summ, file.path(od, "metrics_summary.csv"))
+  for (m in names(metrics)) {
+    x <- long[metric == m]
+    if (!nrow(x)) next
+    x <- x[, .SD[value <= quantile(value, 0.99)], by = CALLER]      # display only: drop each caller's top 1%
+    save_plot(ggplot(x, aes(MUTTYPE, value, fill = STATUS)) + geom_boxplot(outlier.shape = NA) +
+                facet_wrap(~CALLER, scales = "free") +
+                labs(x = NULL, y = metrics[[m]], title = paste0(metrics[[m]], ": PASS vs FAIL"),
+                     subtitle = "box = median and IQR; outliers not drawn; each caller's top 1% left out"),
+              paste0("metric_", m), od, w = 9, h = 5)
+  }
+  invisible(summ)
+}
+
+# calls: table from read_vcf_table() with a `CALLER` column. PASS calls only: caller overlap
+# (after splitting MNVs, so callers compare like for like), the VAF histogram, the substitution
+# spectrum (split MNVs included), and the PASS tables, written to od. Returns, invisibly,
+# list(pass = PASS records as called, atom = the same with MNVs split - see atomize_mnv()).
 snv_indel_summary <- function(calls, od) {
-  calls      <- calls[CHROM %chin% STD_CHR]
-  calls_pass <- calls[FILTER == "PASS"]
+  calls_pass <- calls[CHROM %chin% STD_CHR & FILTER == "PASS"]
+  atom       <- atomize_mnv(calls_pass)
 
-  counts <- calls[, .(total = .N, pass = sum(FILTER == "PASS")), by = .(CALLER, TYPE)]
-  print(counts); fwrite(counts, file.path(od, "snv_indel_counts.csv"))
-
-  if (uniqueN(calls_pass$CALLER) > 1) {
+  if (uniqueN(atom$CALLER) > 1) {
     # NB indels can be written differently by different callers (normalise with
     # bcftools norm before trusting the indel overlap).
-    concord <- unique(calls_pass[, .(CALLER, TYPE, key = paste(CHROM, POS, REF, ALT1, sep = ":"))])
+    concord <- unique(atom[, .(CALLER, TYPE, key = paste(CHROM, POS, REF, ALT1, sep = ":"))])
     concord <- concord[, .(callers = paste(sort(CALLER), collapse = "+")), by = .(key, TYPE)]
     concord <- concord[, .(n = .N), by = .(TYPE, callers)]
     print(concord); fwrite(concord, file.path(od, "snv_indel_concordance.csv"))
@@ -221,7 +349,7 @@ snv_indel_summary <- function(calls, od) {
                 geom_col(position = position_dodge(width = 0.9)) +
                 geom_text(aes(label = n), position = position_dodge(width = 0.9), hjust = -0.15, size = 3.5) +
                 scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +      # room for the labels
-                coord_flip() + labs(x = NULL, y = "PASS calls", title = "Overlap between callers"),
+                coord_flip() + labs(x = NULL, y = "PASS calls (MNVs split into SNVs)", title = "Overlap between callers"),
               "snv_indel_concordance", od)
   }
 
@@ -229,19 +357,20 @@ snv_indel_summary <- function(calls, od) {
   if (nrow(vaf_tbl)) save_plot(ggplot(vaf_tbl, aes(VAF)) + geom_histogram(bins = 50) + facet_wrap(~CALLER) +
                                  labs(x = "tumour VAF", title = "PASS SNV allele fractions"), "snv_vaf_hist", od)
 
-  # substitution spectrum: 6 classes, pyrimidine reference
+  # substitution spectrum: 6 classes, pyrimidine reference; split MNVs included
   comp <- c(A = "T", C = "G", G = "C", T = "A")
-  snv  <- calls_pass[TYPE == "SNV" & REF %chin% names(comp) & ALT1 %chin% names(comp)]
+  snv  <- atom[TYPE == "SNV" & REF %chin% names(comp) & ALT1 %chin% names(comp)]
   snv[, pyr := REF %chin% c("C", "T")]
   snv[, class := paste0(fifelse(pyr, REF,  unname(comp[REF])), ">",
                         fifelse(pyr, ALT1, unname(comp[ALT1])))]
   spec <- snv[, .(n = .N), by = .(CALLER, class)]
   fwrite(spec, file.path(od, "snv_substitution_spectrum.csv"))
   save_plot(ggplot(spec, aes(class, n, fill = CALLER)) + geom_col(position = "dodge") +
-              labs(x = NULL, y = "PASS SNVs", title = "Substitution spectrum"), "snv_spectrum", od)
+              labs(x = NULL, y = "PASS SNVs (incl. split MNVs)", title = "Substitution spectrum"), "snv_spectrum", od)
 
   fwrite(calls_pass, file.path(od, "snv_indel_pass.csv"))
-  invisible(calls_pass)
+  fwrite(atom,       file.path(od, "snv_indel_pass_atomized.csv"))
+  invisible(list(pass = calls_pass, atom = atom))
 }
 
 # sv: table from read_sv_vcf() with a `CALLER` column.
