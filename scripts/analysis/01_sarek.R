@@ -46,6 +46,7 @@ print(purity); fwrite(purity, file.path(od, "ascat_purity_ploidy.csv"))
 # add_mutational_type(), which only knows SNV / INDEL and would call Mutect2's MNVs indels.
 if (HAVE_QCVCF) {
   library(qcVCF)
+  qd <- file.path(od, "qc_vcf"); dir.create(qd, showWarnings = FALSE)   # qcVCF plots / tables
   qc <- calls_pass[, .(CHROM, POS, REF, ALT = ALT1, subjectID = PATIENT, tool = CALLER,
                        mutType = fcase(TYPE == "SNV", "SNV", TYPE == "MNV", "MNV",
                                        TYPE == "INDEL" & nchar(ALT1) > nchar(REF), "INS",
@@ -53,7 +54,7 @@ if (HAVE_QCVCF) {
 
   # PASS calls per caller and mutation type
   save_plot(plot_mutation_counts(qc, grp_col = "tool", cohort = PATIENT),
-            "qcVCF_mutation_counts", od, w = 8, h = 6)
+            "mutation_counts", qd, w = 8, h = 6)
 
   # % of each caller's mutations also found by the other caller, separately for SNVs and
   # indels (insertions + deletions); MNVs get their own heatmap only if there are any.
@@ -65,10 +66,10 @@ if (HAVE_QCVCF) {
                                                   cohort = paste(PATIENT, cl)),
                    error = function(e) { message("qcVCF pairwise ", cl, " skipped: ", conditionMessage(e)); NULL })
     if (is.null(pw)) return(NULL)
-    save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", cl), od, w = 7, h = 6)
+    save_plot(pw$plot, paste0("pairwise_shared_", cl), qd, w = 7, h = 6)
     pw$data[, varClass := cl]
   }))
-  print(pw_all); fwrite(pw_all, file.path(od, "qcVCF_pairwise_shared.csv"))
+  print(pw_all); fwrite(pw_all, file.path(qd, "pairwise_shared.csv"))
 
   # Per mutation: shared (found by >1 caller) or unique. mode "any" - "within_subject"
   # calls stringr::str_remove_all(), which qcVCF does not import, so it fails without stringr.
