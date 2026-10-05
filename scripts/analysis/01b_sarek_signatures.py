@@ -7,8 +7,8 @@
 #   python 01b_sarek_signatures.py                  # SBS96 + DBS78 + ID83
 #   python 01b_sarek_signatures.py --from-r-matrix  # SBS96 only, from 01_sarek.R's matrix
 #
-# Input  <OUT>/sarek/signatures/input/vcf/<set>.vcf - mutect2, strelka, mutect2_strelka
-#        (PASS in both), mutect2_only, strelka_only; each file is one "sample".
+# Input  <OUT>/sarek/signatures/input/vcf/<set>.vcf - mutect2 (all PASS), strelka (all PASS),
+#        mutect2_strelka (PASS in both); each file is one "sample".
 # Output <OUT>/sarek/signatures/sigprofiler/
 #   matrix_generator/output/{SBS,DBS,ID}/   SigProfilerMatrixGenerator matrices
 #   SBS96/ DBS78/ ID83/                     SigProfilerAssignment cosmic_fit results

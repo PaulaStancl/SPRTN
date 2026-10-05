@@ -139,17 +139,15 @@ if (HAVE_QCVCF) {
 # SigProfilerSingleSample). MNVs are written split: the matrix generator rejoins adjacent
 # SNVs into doublets itself, the same way for both callers. Sets (keys CHROM:POS:REF:ALT):
 #   mutect2 / strelka                 all PASS calls of that caller
-#   mutect2_strelka                   PASS in both callers
-#   mutect2_only / strelka_only       PASS in that caller only
+#   mutect2_strelka                   PASS in both callers (intersection)
 sig_in <- file.path(od, "signatures", "input")
 dir.create(file.path(sig_in, "vcf"), recursive = TRUE, showWarnings = FALSE)
+unlink(list.files(file.path(sig_in, "vcf"), "\\.vcf$", full.names = TRUE))   # no sets left over from an earlier run
 atom[, CALLERS := paste(sort(unique(CALLER)), collapse = "+"), by = .(CHROM, POS, REF, ALT1)]
 sets <- rbindlist(list(
   mutect2         = atom[CALLER == "mutect2"],
   strelka         = atom[CALLER == "strelka"],
-  mutect2_strelka = atom[CALLER == "mutect2" & CALLERS == "mutect2+strelka"],
-  mutect2_only    = atom[CALLER == "mutect2" & CALLERS == "mutect2"],
-  strelka_only    = atom[CALLER == "strelka" & CALLERS == "strelka"]
+  mutect2_strelka = atom[CALLER == "mutect2" & CALLERS == "mutect2+strelka"]
 ), idcol = "SET")[, .(SET, CHROM, POS, REF, ALT = ALT1, MUTTYPE, FROM_MNV, CALLERS, NC_3, SBS96)]
 sets <- unique(sets, by = c("SET", "CHROM", "POS", "REF", "ALT"))
 sets <- sets[order(SET, match(CHROM, STD_CHR), POS)]
