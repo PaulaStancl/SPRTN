@@ -106,8 +106,11 @@ if (HAVE_QCVCF) {
   bad <- snv96[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]
   if (bad) warning(bad, " SNVs whose REF is not the reference base - is FASTA the genome sarek used?")
   snv96 <- snv96[!is.na(NC_3) & substr(NC_3, 2, 2) == REF]
-  if (nrow(snv96)) {
-    fwrite(snv96, file.path(pass_dir, "snv_96context.csv"))
+  # plot96_matrix() also needs these, which qcVCF does not declare - skip the plot, not the script
+  miss96 <- Filter(function(pk) !requireNamespace(pk, quietly = TRUE), c("cowplot", "stringr", "stringi", "ggtext"))
+  if (length(miss96)) message("96-context plot skipped - install: ", paste(miss96, collapse = ", "))
+  if (nrow(snv96)) fwrite(snv96, file.path(pass_dir, "snv_96context.csv"))
+  if (nrow(snv96) && !length(miss96)) {
     fig96 <- plot96_matrix(snv96, rowsplit = "QC_SHARED", plotsplitcol = "tool",
                            orderplots = "no", showperc = "yes", dropempty = "no", dontshowall = "no")
     for (k in seq_along(fig96))
