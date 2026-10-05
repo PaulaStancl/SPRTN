@@ -136,8 +136,10 @@ vcf_metrics <- function(v) {
   if (length(parts)) do.call(cbind, parts) else NULL
 }
 
-# Strelka writes no AF. Tumour VAF from its tier-1 counts, as its documentation recommends:
-# SNVs alt / (ref + alt) from AU/CU/GU/TU, indels TIR / (TAR + TIR).
+# Native Strelka2 somatic output has no AF (some wrappers add one - if so, read_vcf_table()
+# uses it and this is never called). Tumour VAF from the tier-1 allele-support counts, i.e.
+# the first value of each comma pair: SNVs ALT / (REF + ALT) from AU/CU/GU/TU, indels
+# TIR / (TAR + TIR).
 strelka_vaf <- function(d) {
   if (!nrow(d)) return(numeric(0))
   t1 <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
@@ -157,7 +159,7 @@ strelka_vaf <- function(d) {
 #   ALT1      first ALT allele. Mutect2 filters sites with >1 ALT as `multiallelic` (never
 #             PASS); Strelka and SAGE write one ALT per record - see ALT_COUNT.
 #   TYPE      SNV, MNV (same-length multi-base, e.g. SAGE), INDEL, or OTHER (symbolic / *)
-#   VAF       tumour VAF: FORMAT/AF (Mutect2, SAGE), or from Strelka's read counts
+#   VAF       tumour VAF: FORMAT/AF (Mutect2, SAGE), or Strelka's tier-1 allele-support counts
 read_vcf_table <- function(path) {
   v   <- read_vcf_dt(path)
   out <- v[, .(CHROM, POS, REF, ALT, ALT1 = sub(",.*", "", ALT),
