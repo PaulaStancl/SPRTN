@@ -9,6 +9,7 @@
 suppressPackageStartupMessages({
   library(dplyr); library(tidyr); library(readr); library(stringr)
   library(ggplot2); library(VariantAnnotation); library(GenomicRanges)
+  library(data.table)    # loaded last: masks dplyr's between / first / last (not used here)
 })
 
 # ---- paths ------------------------------------------------------------------

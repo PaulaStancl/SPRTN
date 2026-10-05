@@ -19,17 +19,17 @@ files <- files[!is.na(files)]
 writeLines(paste(names(files), files, sep = "\t"), file.path(od, "inputs_used.tsv"))
 
 # ---- 2. load into one table (one row per record, tagged with the caller) -----
-load_caller <- function(keys, caller) {
+load_caller <- function(keys, label) {
   keys <- intersect(keys, names(files))
   if (!length(keys)) return(NULL)
-  bind_rows(lapply(files[keys], read_vcf_table)) |> mutate(caller = caller)
+  rbindlist(lapply(files[keys], read_vcf_table))[, caller := label]
 }
-calls <- bind_rows(
+calls <- rbindlist(list(                      # rbindlist() skips NULL (a caller that was not found)
   load_caller("mutect2", "mutect2"),
   load_caller(c("strelka_snv", "strelka_indel"), "strelka"),
   load_caller("purple", "sage_purple")
-) |> filter(chr %in% STD_CHR)
-calls_pass <- filter(calls, filter == "PASS")
+))[chr %in% STD_CHR]
+calls_pass <- calls[filter == "PASS"]
 
 # ---- 3. counts per caller ----------------------------------------------------
 counts <- calls |> group_by(caller, type) |>
