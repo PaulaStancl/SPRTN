@@ -5,6 +5,7 @@
 #
 #   ./04_run_tumourevo.sh
 #   TEVO_TOOLS=tinc,mobster,viber,pyclone-vi,sparsesignatures ./04_run_tumourevo.sh
+#   TEVO_FILTER=true ./04_run_tumourevo.sh    # clonality on CNAqc-PASS segments only
 #
 # tumourevo does NOT accept oncoanalyser/PURPLE output (CNA callers: ASCAT,
 # sequenza, Battenberg, facets), so sarek is its only input here.
@@ -22,8 +23,15 @@ activate_env
 make_dirs
 
 TEVO_TOOLS="${TEVO_TOOLS:-tinc,mobster,viber,pyclone-vi}"
+# --filter: true = subclonal / signature deconvolution only on segments that pass CNAqc
+# (purity + copy number fit the mutations' VAF peaks); false (tumourevo's default) = all.
+# A filtered run gets its own outdir, so the two can be compared; with -resume only the
+# steps after CNAqc run again (while work/wgs/tumourevo_RJALS still exists).
+TEVO_FILTER="${TEVO_FILTER:-false}"
+[[ "$TEVO_FILTER" == true || "$TEVO_FILTER" == false ]] || die "TEVO_FILTER must be true or false"
 SAREK_OUT="$RESULTS_BASE/sarek/$DATASET"
 OUT="$RESULTS_BASE/tumourevo/$DATASET"
+[[ "$TEVO_FILTER" == true ]] && OUT="$RESULTS_BASE/tumourevo/${DATASET}_cnaqcPASS"
 PAIR="${TUMOUR_ID}_vs_${NORMAL_ID}"
 FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
 
@@ -76,6 +84,7 @@ mkdir -p "$(dirname "$TUNING")"
 } > "$TUNING"
 log "task time: 240 h (tumourevo's default is 2 h)"
 log "tools    : $TEVO_TOOLS"
+log "filter   : $TEVO_FILTER (true = CNAqc-PASS segments only)"
 log "outdir   : $OUT"
 
 # tumourevo dev still uses pre-strict syntax; Nextflow 26.04 parses strict by default.
@@ -87,6 +96,7 @@ nf_run "tumourevo_${DATASET}" "$NXF_PROFILE" nf-core/tumourevo -r "$TUMOUREVO_RE
     --genome GRCh38 \
     --fasta "$FASTA" \
     --tools "$TEVO_TOOLS" \
+    --filter "$TEVO_FILTER" \
     --download_cache_vep false \
     --vep_cache "$VEP_CACHE" \
     --vep_cache_version "$VEP_CACHE_VERSION" \
