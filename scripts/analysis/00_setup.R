@@ -7,9 +7,8 @@
 #   SPRTN_RESULTS   results/wgs folder     SPRTN_OUT   where tables/plots go
 # ---------------------------------------------------------------------------
 suppressPackageStartupMessages({
-  library(dplyr); library(tidyr); library(readr); library(stringr)
+  library(data.table)
   library(ggplot2); library(VariantAnnotation); library(GenomicRanges)
-  library(data.table)    # loaded last: masks dplyr's between / first / last (not used here)
 })
 
 # ---- paths ------------------------------------------------------------------
@@ -61,7 +60,7 @@ need_cols <- function(df, cols, what) {
                                  paste(miss, collapse = ", "), paste(names(df), collapse = ", ")), call. = FALSE)
 }
 
-norm_chr <- function(x) ifelse(grepl("^chr", x), x, paste0("chr", x))
+norm_chr <- function(x) { x <- as.character(x); fifelse(grepl("^chr", x), x, paste0("chr", x)) }
 
 save_plot <- function(p, name, dir, w = 7, h = 4) ggsave(file.path(dir, paste0(name, ".pdf")), p, width = w, height = h)
 
@@ -87,17 +86,17 @@ read_vcf_table <- function(path) {
   ref  <- as.character(rr$REF)
   alt  <- vapply(rr$ALT, function(a) paste(as.character(a), collapse = ","), character(1))
   alt1 <- sub(",.*", "", alt)
-  tibble(chr = as.character(seqnames(rr)), pos = start(rr), ref = ref, alt = alt, alt1 = alt1,
-         filter = as.character(rr$FILTER),
-         type = if_else(nchar(ref) == 1 & nchar(alt1) == 1, "SNV", "INDEL"),
-         vaf = tumour_vaf(vcf))
+  data.table(chr = as.character(seqnames(rr)), pos = start(rr), ref = ref, alt = alt, alt1 = alt1,
+             filter = as.character(rr$FILTER),
+             type = fifelse(nchar(ref) == 1 & nchar(alt1) == 1, "SNV", "INDEL"),
+             vaf = tumour_vaf(vcf))
 }
 
 # SV VCF (Manta, ESVEE): one row per record. NB a translocation / inversion is two BND
 # records (the two breakends), so BND counts are ~2x the number of events.
 read_sv_vcf <- function(path) {
   vcf <- readVcf(path); rr <- rowRanges(vcf); inf <- info(vcf)
-  tibble(id = names(rr), chr = as.character(seqnames(rr)), pos = start(rr),
-         filter = as.character(rr$FILTER),
-         svtype = if ("SVTYPE" %in% names(inf)) as.character(inf$SVTYPE) else NA_character_)
+  data.table(id = names(rr), chr = as.character(seqnames(rr)), pos = start(rr),
+             filter = as.character(rr$FILTER),
+             svtype = if ("SVTYPE" %in% names(inf)) as.character(inf$SVTYPE) else NA_character_)
 }

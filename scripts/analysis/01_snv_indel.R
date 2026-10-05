@@ -32,36 +32,33 @@ calls <- rbindlist(list(                      # rbindlist() skips NULL (a caller
 calls_pass <- calls[filter == "PASS"]
 
 # ---- 3. counts per caller ----------------------------------------------------
-counts <- calls |> group_by(caller, type) |>
-  summarise(total = n(), pass = sum(filter == "PASS"), .groups = "drop")
-print(counts); write_csv(counts, file.path(od, "counts_per_caller.csv"))
+counts <- calls[, .(total = .N, pass = sum(filter == "PASS")), by = .(caller, type)]
+print(counts); fwrite(counts, file.path(od, "counts_per_caller.csv"))
 
 # ---- 4. caller concordance (PASS calls) --------------------------------------
 # NB indels can be written differently by different callers (normalise with
 # bcftools norm before trusting the indel overlap).
-concord <- calls_pass |> mutate(key = paste(chr, pos, ref, alt1, sep = ":")) |>
-  distinct(caller, key, type) |>
-  group_by(key, type) |> summarise(callers = paste(sort(caller), collapse = "+"), .groups = "drop") |>
-  count(type, callers)
-print(concord); write_csv(concord, file.path(od, "caller_concordance.csv"))
+concord <- unique(calls_pass[, .(caller, type, key = paste(chr, pos, ref, alt1, sep = ":"))])
+concord <- concord[, .(callers = paste(sort(caller), collapse = "+")), by = .(key, type)]
+concord <- concord[, .(n = .N), by = .(type, callers)]
+print(concord); fwrite(concord, file.path(od, "caller_concordance.csv"))
 save_plot(ggplot(concord, aes(reorder(callers, n), n, fill = type)) + geom_col(position = "dodge") +
             coord_flip() + labs(x = NULL, y = "PASS calls", title = "Overlap between callers"),
           "caller_concordance", od)
 
 # ---- 5. tumour allele-fraction distribution ----------------------------------
-vaf <- filter(calls_pass, !is.na(vaf), type == "SNV")
-if (nrow(vaf)) save_plot(ggplot(vaf, aes(vaf)) + geom_histogram(bins = 50) + facet_wrap(~caller) +
-                           labs(x = "tumour VAF", title = "PASS SNV allele fractions"), "vaf_hist", od)
+vaf_tbl <- calls_pass[!is.na(vaf) & type == "SNV"]
+if (nrow(vaf_tbl)) save_plot(ggplot(vaf_tbl, aes(vaf)) + geom_histogram(bins = 50) + facet_wrap(~caller) +
+                               labs(x = "tumour VAF", title = "PASS SNV allele fractions"), "vaf_hist", od)
 
 # ---- 6. substitution spectrum (6 classes, pyrimidine reference) ---------------
 comp <- c(A = "T", C = "G", G = "C", T = "A")
-spec <- calls_pass |> filter(type == "SNV", ref %in% names(comp), alt1 %in% names(comp)) |>
-  mutate(pyr = ref %in% c("C", "T"),
-         r = if_else(pyr, ref,  unname(comp[ref])),
-         a = if_else(pyr, alt1, unname(comp[alt1])),
-         class = paste0(r, ">", a)) |>
-  count(caller, class)
-write_csv(spec, file.path(od, "substitution_spectrum.csv"))
+snv <- calls_pass[type == "SNV" & ref %chin% names(comp) & alt1 %chin% names(comp)]
+snv[, pyr := ref %chin% c("C", "T")]
+snv[, class := paste0(fifelse(pyr, ref,  unname(comp[ref])), ">",
+                      fifelse(pyr, alt1, unname(comp[alt1])))]
+spec <- snv[, .(n = .N), by = .(caller, class)]
+fwrite(spec, file.path(od, "substitution_spectrum.csv"))
 save_plot(ggplot(spec, aes(class, n, fill = caller)) + geom_col(position = "dodge") +
             labs(x = NULL, y = "PASS SNVs", title = "Substitution spectrum"), "spectrum", od)
 
@@ -78,5 +75,5 @@ if (HAVE_QCVCR) {
   # qc <- qcVCR::<function>(files[["mutect2"]])
 }
 
-write_csv(calls_pass, file.path(od, "calls_pass.csv"))
+fwrite(calls_pass, file.path(od, "calls_pass.csv"))
 message("done: ", od)

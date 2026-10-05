@@ -11,5 +11,5 @@ dependencies:
   - r-base>=4.3
   - bioconductor-variantannotation
   - bioconductor-genomicranges
-  - r-tidyverse          # dplyr, tidyr, readr, stringr, ggplot2
   - r-data.table
+  - r-ggplot2

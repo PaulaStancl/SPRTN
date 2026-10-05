@@ -23,35 +23,36 @@ files <- files[!is.na(files)]
 writeLines(paste(names(files), files, sep = "\t"), file.path(od, "inputs_used.tsv"))
 
 # ---- 2. structural variants --------------------------------------------------
-sv <- bind_rows(lapply(intersect(c("manta", "esvee"), names(files)), function(k)
-  read_sv_vcf(files[[k]]) |> mutate(caller = k))) |>
-  mutate(svtype = coalesce(svtype, "unknown")) |> filter(chr %in% STD_CHR)
-sv_counts <- sv |> group_by(caller, svtype) |>
-  summarise(total = n(), pass = sum(filter == "PASS"), .groups = "drop")
-print(sv_counts); write_csv(sv_counts, file.path(od, "sv_counts.csv"))
-save_plot(ggplot(filter(sv, filter == "PASS"), aes(svtype, fill = caller)) + geom_bar(position = "dodge") +
+sv_keys <- intersect(c("manta", "esvee"), names(files))
+if (!length(sv_keys)) stop("no SV VCF found (manta / esvee) - check the patterns in section 1", call. = FALSE)
+sv <- rbindlist(lapply(sv_keys, function(k) read_sv_vcf(files[[k]])[, caller := k]))
+sv[, svtype := fcoalesce(svtype, "unknown")]
+sv <- sv[chr %chin% STD_CHR]
+sv_counts <- sv[, .(total = .N, pass = sum(filter == "PASS")), by = .(caller, svtype)]
+print(sv_counts); fwrite(sv_counts, file.path(od, "sv_counts.csv"))
+save_plot(ggplot(sv[filter == "PASS"], aes(svtype, fill = caller)) + geom_bar(position = "dodge") +
             labs(x = NULL, y = "PASS records", title = "SVs by type (BND = two records per event)"), "sv_types", od)
 
 # TODO: match Manta and ESVEE breakpoints (StructuralVariantAnnotation) for a real overlap.
 if ("linx_svs" %in% names(files)) {
-  linx <- read_tsv(files[["linx_svs"]], show_col_types = FALSE)
-  if ("type" %in% names(linx)) print(count(linx, type))     # LINX's classification of each SV
+  linx <- fread(files[["linx_svs"]])
+  if ("type" %in% names(linx)) print(linx[, .N, by = type])    # LINX's classification of each SV
 }
 
 # ---- 3. copy number: ASCAT vs PURPLE -----------------------------------------
-asc <- read_tsv(files[["ascat_seg"]], show_col_types = FALSE)
+asc <- fread(files[["ascat_seg"]])
 need_cols(asc, c("chr", "startpos", "endpos", "nMajor", "nMinor"), "ASCAT segments")
-pur <- read_tsv(files[["purple_cnv"]], show_col_types = FALSE)
+pur <- fread(files[["purple_cnv"]])
 need_cols(pur, c("chromosome", "start", "end", "copyNumber", "minorAlleleCopyNumber"), "PURPLE cnv")
 
-seg <- bind_rows(
-  transmute(asc, source = "ASCAT",  chr = norm_chr(chr), start = startpos, end = endpos,
-            cn = nMajor + nMinor, minor = nMinor),
-  transmute(pur, source = "PURPLE", chr = norm_chr(chromosome), start = start, end = end,
-            cn = copyNumber, minor = minorAlleleCopyNumber)
-) |> filter(chr %in% STD_CHR) |>
-  mutate(x0 = start + unname(CHR_OFFSET[chr]), x1 = end + unname(CHR_OFFSET[chr]))
-write_csv(seg, file.path(od, "cn_segments.csv"))
+seg <- rbindlist(list(
+  asc[, .(source = "ASCAT",  chr = norm_chr(chr),        start = startpos, end = endpos,
+          cn = nMajor + nMinor, minor = nMinor)],
+  pur[, .(source = "PURPLE", chr = norm_chr(chromosome), start = start,    end = end,
+          cn = copyNumber,      minor = minorAlleleCopyNumber)]
+))[chr %chin% STD_CHR]
+seg[, `:=`(x0 = start + unname(CHR_OFFSET[chr]), x1 = end + unname(CHR_OFFSET[chr]))]
+fwrite(seg, file.path(od, "cn_segments.csv"))
 
 save_plot(
   ggplot(seg, aes(x = x0, xend = x1, y = cn, yend = cn)) +
@@ -62,24 +63,21 @@ save_plot(
   "copy_number", od, w = 11, h = 5)
 
 # Fraction of the autosomal genome per copy-number state, and LOH.
-cn_frac <- seg |> filter(!chr %in% c("chrX", "chrY")) |>
-  mutate(w = end - start + 1, loh = round(minor) == 0) |>
-  group_by(source) |> summarise(LOH = sum(w[loh]) / sum(w), .groups = "drop")
-state_frac <- seg |> filter(!chr %in% c("chrX", "chrY")) |>
-  mutate(w = end - start + 1, state = pmin(round(cn), 6)) |>
-  group_by(source, state) |> summarise(w = sum(w), .groups = "drop") |>
-  group_by(source) |> mutate(fraction = w / sum(w)) |> ungroup() |> select(-w)
+auto <- seg[!chr %chin% c("chrX", "chrY")]
+auto[, `:=`(w = end - start + 1, state = pmin(round(cn), 6), loh = round(minor) == 0)]
+state_frac <- auto[, .(w = sum(w)), by = .(source, state)][, fraction := w / sum(w), by = source][, w := NULL]
+cn_frac    <- auto[, .(LOH = sum(w[which(loh)]) / sum(w)), by = source]
 print(state_frac); print(cn_frac)
-write_csv(state_frac, file.path(od, "cn_state_fraction.csv"))
-write_csv(cn_frac, file.path(od, "loh_fraction.csv"))
+fwrite(state_frac, file.path(od, "cn_state_fraction.csv"))
+fwrite(cn_frac,    file.path(od, "loh_fraction.csv"))
 
 # ---- 4. purity / ploidy, side by side ----------------------------------------
-a  <- read_table(files[["ascat_pp"]], show_col_types = FALSE)
-pp <- read_tsv(files[["purple_pur"]], show_col_types = FALSE)
-purity <- tibble(source = c("ASCAT", "PURPLE"),
-                 purity = c(a$AberrantCellFraction[1], pp$purity[1]),
-                 ploidy = c(a$Ploidy[1], pp$ploidy[1]))
-print(purity); write_csv(purity, file.path(od, "purity_ploidy.csv"))
+a  <- fread(files[["ascat_pp"]])
+pp <- fread(files[["purple_pur"]])
+purity <- data.table(source = c("ASCAT", "PURPLE"),
+                     purity = c(a$AberrantCellFraction[1], pp$purity[1]),
+                     ploidy = c(a$Ploidy[1], pp$ploidy[1]))
+print(purity); fwrite(purity, file.path(od, "purity_ploidy.csv"))
 
 # ---- 5. qcVCR -----------------------------------------------------------------
 # TODO(Paula): call your qcVCR functions here and tell me what they take.
