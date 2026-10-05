@@ -144,34 +144,34 @@ strelka_vaf <- function(d) {
   if (all(paste0("t_", c("A", "C", "G", "T"), "U") %in% names(d))) {
     cnt <- vapply(c("A", "C", "G", "T"), function(b) t1(d[[paste0("t_", b, "U")]]), numeric(nrow(d)))
     if (is.null(dim(cnt))) cnt <- matrix(cnt, nrow = 1, dimnames = list(NULL, c("A", "C", "G", "T")))
-    r <- cnt[cbind(seq_len(nrow(d)), match(d$ref,  colnames(cnt)))]
-    a <- cnt[cbind(seq_len(nrow(d)), match(d$alt1, colnames(cnt)))]
+    r <- cnt[cbind(seq_len(nrow(d)), match(d$REF,  colnames(cnt)))]
+    a <- cnt[cbind(seq_len(nrow(d)), match(d$ALT1, colnames(cnt)))]
     return(a / (r + a))
   }
   if (all(c("t_TAR", "t_TIR") %in% names(d))) { r <- t1(d$t_TAR); a <- t1(d$t_TIR); return(a / (r + a)) }
   rep(NA_real_, nrow(d))
 }
 
-# One row per VCF record: the core columns, then every INFO (info_*), tumour (t_*) and normal
+# One row per VCF record: the core columns (VCF names, upper case), then every INFO (info_*), tumour (t_*) and normal
 # (n_*) FORMAT field - depth, quality, strand and position metrics for later artefact work.
-#   alt1      first ALT allele. Mutect2 filters sites with >1 ALT as `multiallelic` (never
-#             PASS); Strelka and SAGE write one ALT per record - see alt_count.
-#   type      SNV, MNV (same-length multi-base, e.g. SAGE), INDEL, or OTHER (symbolic / *)
-#   vaf       tumour VAF: FORMAT/AF (Mutect2, SAGE), or from Strelka's read counts
+#   ALT1      first ALT allele. Mutect2 filters sites with >1 ALT as `multiallelic` (never
+#             PASS); Strelka and SAGE write one ALT per record - see ALT_COUNT.
+#   TYPE      SNV, MNV (same-length multi-base, e.g. SAGE), INDEL, or OTHER (symbolic / *)
+#   VAF       tumour VAF: FORMAT/AF (Mutect2, SAGE), or from Strelka's read counts
 read_vcf_table <- function(path) {
   v   <- read_vcf_dt(path)
-  out <- v[, .(chr = CHROM, pos = POS, ref = REF, alt = ALT, alt1 = sub(",.*", "", ALT),
-               alt_count = lengths(strsplit(ALT, ",", fixed = TRUE)),
-               filter = FILTER, qual = suppressWarnings(as.numeric(QUAL)))]
-  out[, type := fcase(grepl("^[<*.]", alt1),               "OTHER",
-                      nchar(ref) == 1 & nchar(alt1) == 1, "SNV",
-                      nchar(ref) == nchar(alt1),          "MNV",
+  out <- v[, .(CHROM, POS, REF, ALT, ALT1 = sub(",.*", "", ALT),
+               ALT_COUNT = lengths(strsplit(ALT, ",", fixed = TRUE)),
+               FILTER, QUAL = suppressWarnings(as.numeric(QUAL)))]
+  out[, TYPE := fcase(grepl("^[<*.]", ALT1),               "OTHER",
+                      nchar(REF) == 1 & nchar(ALT1) == 1, "SNV",
+                      nchar(REF) == nchar(ALT1),          "MNV",
                       default = "INDEL")]
   m <- vcf_metrics(v)
   if (!is.null(m)) out <- cbind(out, m)
   tvaf <- if ("t_AF" %in% names(out)) suppressWarnings(as.numeric(sub(",.*", "", out$t_AF))) else strelka_vaf(out)
-  out[, vaf := tvaf]
-  setcolorder(out, c("chr", "pos", "ref", "alt", "alt1", "alt_count", "type", "filter", "qual", "vaf"))
+  out[, VAF := tvaf]
+  setcolorder(out, c("CHROM", "POS", "REF", "ALT", "ALT1", "ALT_COUNT", "TYPE", "FILTER", "QUAL", "VAF"))
   out
 }
 
@@ -180,8 +180,8 @@ read_vcf_table <- function(path) {
 # are ~2x the number of events.
 read_sv_vcf <- function(path) {
   v   <- read_vcf_dt(path)
-  out <- v[, .(id = ID, chr = CHROM, pos = POS, filter = FILTER,
-               svtype = fifelse(grepl("(^|;)SVTYPE=", INFO), sub(".*(^|;)SVTYPE=([^;]+).*", "\\2", INFO), NA_character_))]
+  out <- v[, .(ID, CHROM, POS, FILTER,
+               SVTYPE = fifelse(grepl("(^|;)SVTYPE=", INFO), sub(".*(^|;)SVTYPE=([^;]+).*", "\\2", INFO), NA_character_))]
   m <- vcf_metrics(v)
   if (!is.null(m)) out <- cbind(out, m)
   out
@@ -195,57 +195,57 @@ read_sv_vcf <- function(path) {
 load_calls <- function(files, keys, label) {
   keys <- intersect(keys, names(files))
   if (!length(keys)) return(NULL)
-  rbindlist(lapply(files[keys], read_vcf_table), fill = TRUE)[, caller := label]   # callers differ in INFO/FORMAT keys
+  rbindlist(lapply(files[keys], read_vcf_table), fill = TRUE)[, CALLER := label]   # callers differ in INFO/FORMAT keys
 }
 
-# calls: table from read_vcf_table() with a `caller` column. Writes counts, caller overlap
+# calls: table from read_vcf_table() with a `CALLER` column. Writes counts, caller overlap
 # (when there is more than one caller), the VAF histogram, the substitution spectrum and
 # the PASS calls into od. Returns the PASS calls.
 snv_indel_summary <- function(calls, od) {
-  calls      <- calls[chr %chin% STD_CHR]
-  calls_pass <- calls[filter == "PASS"]
+  calls      <- calls[CHROM %chin% STD_CHR]
+  calls_pass <- calls[FILTER == "PASS"]
 
-  counts <- calls[, .(total = .N, pass = sum(filter == "PASS")), by = .(caller, type)]
+  counts <- calls[, .(total = .N, pass = sum(FILTER == "PASS")), by = .(CALLER, TYPE)]
   print(counts); fwrite(counts, file.path(od, "snv_indel_counts.csv"))
 
-  if (uniqueN(calls_pass$caller) > 1) {
+  if (uniqueN(calls_pass$CALLER) > 1) {
     # NB indels can be written differently by different callers (normalise with
     # bcftools norm before trusting the indel overlap).
-    concord <- unique(calls_pass[, .(caller, type, key = paste(chr, pos, ref, alt1, sep = ":"))])
-    concord <- concord[, .(callers = paste(sort(caller), collapse = "+")), by = .(key, type)]
-    concord <- concord[, .(n = .N), by = .(type, callers)]
+    concord <- unique(calls_pass[, .(CALLER, TYPE, key = paste(CHROM, POS, REF, ALT1, sep = ":"))])
+    concord <- concord[, .(callers = paste(sort(CALLER), collapse = "+")), by = .(key, TYPE)]
+    concord <- concord[, .(n = .N), by = .(TYPE, callers)]
     print(concord); fwrite(concord, file.path(od, "snv_indel_concordance.csv"))
-    save_plot(ggplot(concord, aes(reorder(callers, n), n, fill = type)) + geom_col(position = "dodge") +
+    save_plot(ggplot(concord, aes(reorder(callers, n), n, fill = TYPE)) + geom_col(position = "dodge") +
                 coord_flip() + labs(x = NULL, y = "PASS calls", title = "Overlap between callers"),
               "snv_indel_concordance", od)
   }
 
-  vaf_tbl <- calls_pass[!is.na(vaf) & type == "SNV"]
-  if (nrow(vaf_tbl)) save_plot(ggplot(vaf_tbl, aes(vaf)) + geom_histogram(bins = 50) + facet_wrap(~caller) +
+  vaf_tbl <- calls_pass[!is.na(VAF) & TYPE == "SNV"]
+  if (nrow(vaf_tbl)) save_plot(ggplot(vaf_tbl, aes(VAF)) + geom_histogram(bins = 50) + facet_wrap(~CALLER) +
                                  labs(x = "tumour VAF", title = "PASS SNV allele fractions"), "snv_vaf_hist", od)
 
   # substitution spectrum: 6 classes, pyrimidine reference
   comp <- c(A = "T", C = "G", G = "C", T = "A")
-  snv  <- calls_pass[type == "SNV" & ref %chin% names(comp) & alt1 %chin% names(comp)]
-  snv[, pyr := ref %chin% c("C", "T")]
-  snv[, class := paste0(fifelse(pyr, ref,  unname(comp[ref])), ">",
-                        fifelse(pyr, alt1, unname(comp[alt1])))]
-  spec <- snv[, .(n = .N), by = .(caller, class)]
+  snv  <- calls_pass[TYPE == "SNV" & REF %chin% names(comp) & ALT1 %chin% names(comp)]
+  snv[, pyr := REF %chin% c("C", "T")]
+  snv[, class := paste0(fifelse(pyr, REF,  unname(comp[REF])), ">",
+                        fifelse(pyr, ALT1, unname(comp[ALT1])))]
+  spec <- snv[, .(n = .N), by = .(CALLER, class)]
   fwrite(spec, file.path(od, "snv_substitution_spectrum.csv"))
-  save_plot(ggplot(spec, aes(class, n, fill = caller)) + geom_col(position = "dodge") +
+  save_plot(ggplot(spec, aes(class, n, fill = CALLER)) + geom_col(position = "dodge") +
               labs(x = NULL, y = "PASS SNVs", title = "Substitution spectrum"), "snv_spectrum", od)
 
   fwrite(calls_pass, file.path(od, "snv_indel_pass.csv"))
   invisible(calls_pass)
 }
 
-# sv: table from read_sv_vcf() with a `caller` column.
+# sv: table from read_sv_vcf() with a `CALLER` column.
 sv_summary <- function(sv, od) {
-  sv <- copy(sv)[chr %chin% STD_CHR]
-  sv[, svtype := fcoalesce(svtype, "unknown")]
-  sv_counts <- sv[, .(total = .N, pass = sum(filter == "PASS")), by = .(caller, svtype)]
+  sv <- copy(sv)[CHROM %chin% STD_CHR]
+  sv[, SVTYPE := fcoalesce(SVTYPE, "unknown")]
+  sv_counts <- sv[, .(total = .N, pass = sum(FILTER == "PASS")), by = .(CALLER, SVTYPE)]
   print(sv_counts); fwrite(sv_counts, file.path(od, "sv_counts.csv"))
-  save_plot(ggplot(sv[filter == "PASS"], aes(svtype, fill = caller)) + geom_bar(position = "dodge") +
+  save_plot(ggplot(sv[FILTER == "PASS"], aes(SVTYPE, fill = CALLER)) + geom_bar(position = "dodge") +
               labs(x = NULL, y = "PASS records", title = "SVs by type (BND = two records per event)"), "sv_types", od)
   invisible(sv)
 }

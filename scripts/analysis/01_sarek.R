@@ -30,7 +30,7 @@ calls_pass <- snv_indel_summary(calls, od)
 
 # ---- 3. structural variants: Manta ---------------------------------------------
 if ("manta" %in% names(files)) {
-  sv <- read_sv_vcf(files[["manta"]])[, caller := "manta"]
+  sv <- read_sv_vcf(files[["manta"]])[, CALLER := "manta"]
   sv_summary(sv, od)
 }
 
