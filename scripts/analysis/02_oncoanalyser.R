@@ -41,10 +41,10 @@ pp <- fread(files[["purple_pur"]])
 purity <- data.table(field = names(pp), value = unlist(lapply(pp[1], as.character)))   # transposed: one row per field
 print(purity); fwrite(purity, file.path(od, "purple_purity.csv"))
 
-# ---- 5. qcVCR -----------------------------------------------------------------
-# TODO(Paula): call your qcVCR functions here and tell me what they take.
-if (HAVE_QCVCR) {
-  library(qcVCR)
-  # qc <- qcVCR::<function>(files[["purple_somatic"]])
+# ---- 5. qcVCF -----------------------------------------------------------------
+# TODO(Paula): call your qcVCF functions here and tell me what they take.
+if (HAVE_QCVCF) {
+  library(qcVCF)
+  # qc <- qcVCF::<function>(files[["purple_somatic"]])
 }
 message("done: ", od)

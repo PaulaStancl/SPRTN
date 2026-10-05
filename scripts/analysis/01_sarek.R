@@ -40,11 +40,11 @@ cn_summary(seg, od)
 purity <- fread(files[["ascat_pp"]])
 print(purity); fwrite(purity, file.path(od, "ascat_purity_ploidy.csv"))
 
-# ---- 5. qcVCR -----------------------------------------------------------------
-# TODO(Paula): call your qcVCR functions here and tell me what they take (a VCF
+# ---- 5. qcVCF -----------------------------------------------------------------
+# TODO(Paula): call your qcVCF functions here and tell me what they take (a VCF
 # path? a data frame?) so I can wire them in.
-if (HAVE_QCVCR) {
-  library(qcVCR)
-  # qc <- qcVCR::<function>(files[["mutect2"]])
+if (HAVE_QCVCF) {
+  library(qcVCF)
+  # qc <- qcVCF::<function>(files[["mutect2"]])
 }
 message("done: ", od)

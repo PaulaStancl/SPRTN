@@ -37,9 +37,9 @@ CHR_LEN <- c(chr1 = 248956422, chr2 = 242193529, chr3 = 198295559, chr4 = 190214
 STD_CHR    <- names(CHR_LEN)
 CHR_OFFSET <- setNames(c(0, head(cumsum(CHR_LEN), -1)), STD_CHR)   # for genome-wide plots
 
-# ---- qcVCR -------------------------------------------------------------------
-HAVE_QCVCR <- requireNamespace("qcVCR", quietly = TRUE)
-if (!HAVE_QCVCR) message("qcVCR is not installed - the qcVCR sections will be skipped")
+# ---- qcVCF -------------------------------------------------------------------
+HAVE_QCVCF <- requireNamespace("qcVCF", quietly = TRUE)
+if (!HAVE_QCVCF) message("qcVCF is not installed - the qcVCF sections will be skipped")
 
 theme_set(theme_bw(base_size = 11))
 
