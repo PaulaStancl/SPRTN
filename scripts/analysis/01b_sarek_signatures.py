@@ -11,9 +11,10 @@
 #        mutect2_strelka (PASS in both); each file is one "sample".
 # Output <OUT>/sarek/signatures/sigprofiler/
 #   matrix_generator/output/{SBS,DBS,ID}/   SigProfilerMatrixGenerator matrices
-#   SBS96/ DBS78/ ID83/                     SigProfilerAssignment cosmic_fit results
-#   activities_<context>.csv                signature, mutations assigned, fraction - per set
-#   fit_stats_<context>.csv                 cosine similarity etc. of each reconstruction
+#   SBS96/<set>/ DBS78/<set>/ ID83/<set>/   SigProfilerAssignment cosmic_fit results - one
+#                                           cosmic_fit call per set, so each is fitted on its own
+#   activities_<context>.csv                signature, mutations assigned, fraction - all sets
+#   fit_stats_<context>.csv                 cosine similarity etc. of each set's reconstruction
 #   sbs96_crosscheck.csv                    matrix generator vs 01_sarek.R SBS96 counts
 #
 # cosmic_fit is SigProfilerAssignment's single-sample refitting (the SigProfilerSingleSample
@@ -101,36 +102,46 @@ for ctx, path in matrices.items():
         print(f"{ctx}: no matrix ({path}) - skipped")
         continue
     m = pd.read_csv(path, sep="\t", index_col=0)
-    m = m.loc[:, m.sum() > 0]                  # an empty set (e.g. no doublets) would stop cosmic_fit
-    if m.empty:
-        print(f"{ctx}: no mutations in any set - skipped")
-        continue
     print(f"{ctx}: mutations per set\n{m.sum().to_string()}")
-    m_path = os.path.join(FIT_DIR, f"{PATIENT}.{ctx}.input.txt")
-    m.to_csv(m_path, sep="\t")
-    out = os.path.join(FIT_DIR, ctx)
-    kw = dict(samples=m_path, output=out, input_type="matrix", genome_build="GRCh38", exome=False,
-              make_plots=True, cpu=args.cpu)
-    if args.cosmic_version:
-        kw["cosmic_version"] = args.cosmic_version
-    if args.exclude_subgroups:
-        kw["exclude_signature_subgroups"] = [s.strip() for s in args.exclude_subgroups.split(",")]
-    Analyze.cosmic_fit(**kw)
+    acts, stats = [], []
+    # one cosmic_fit call per set, on a one-column matrix: each set is fitted on its own and
+    # gets its own folder, <context>/<set>/
+    for st in m.columns:
+        if m[st].sum() == 0:                   # e.g. no doublets in a set - cosmic_fit would stop
+            print(f"{ctx} {st}: no mutations - skipped")
+            continue
+        out = os.path.join(FIT_DIR, ctx, st)
+        os.makedirs(out, exist_ok=True)
+        m_path = os.path.join(out, f"{PATIENT}.{ctx}.{st}.input.txt")
+        m[[st]].to_csv(m_path, sep="\t")
+        kw = dict(samples=m_path, output=out, input_type="matrix", genome_build="GRCh38", exome=False,
+                  make_plots=True, cpu=args.cpu)
+        if args.cosmic_version:
+            kw["cosmic_version"] = args.cosmic_version
+        if args.exclude_subgroups:
+            kw["exclude_signature_subgroups"] = [s.strip() for s in args.exclude_subgroups.split(",")]
+        Analyze.cosmic_fit(**kw)
 
-    # activities (mutations assigned to each signature) as one long table per context
-    act = glob.glob(os.path.join(out, "**", "*Activities.txt"), recursive=True)
-    act = [f for f in act if "Activities" in os.path.basename(f) and "Assignment_Solution" in f]
-    if act:
-        a = pd.read_csv(act[0], sep="\t", index_col=0)
-        long = a.reset_index().melt(id_vars=a.index.name or "index", var_name="signature", value_name="mutations")
-        long.columns = ["set", "signature", "mutations"]
-        long = long[long["mutations"] > 0]
+        # activities: mutations assigned to each signature
+        act = [f for f in glob.glob(os.path.join(out, "**", "*Activities.txt"), recursive=True)
+               if "Assignment_Solution" in f]
+        if act:
+            a = pd.read_csv(act[0], sep="\t", index_col=0)
+            long = a.reset_index().melt(id_vars=a.index.name or "index", var_name="signature", value_name="mutations")
+            long.columns = ["set", "signature", "mutations"]
+            acts.append(long[long["mutations"] > 0])
+        sf = glob.glob(os.path.join(out, "**", "*Samples_Stats.txt"), recursive=True)
+        if sf:
+            stats.append(pd.read_csv(sf[0], sep="\t"))
+
+    # all sets of this context in one table each
+    if acts:
+        long = pd.concat(acts)
         long["fraction"] = long["mutations"] / long.groupby("set")["mutations"].transform("sum")
         long = long.sort_values(["set", "mutations"], ascending=[True, False])
         long.to_csv(os.path.join(FIT_DIR, f"activities_{ctx}.csv"), index=False)
         print(long.to_string(index=False))
-    stats = glob.glob(os.path.join(out, "**", "*Samples_Stats.txt"), recursive=True)
     if stats:
-        pd.read_csv(stats[0], sep="\t").to_csv(os.path.join(FIT_DIR, f"fit_stats_{ctx}.csv"), index=False)
+        pd.concat(stats).to_csv(os.path.join(FIT_DIR, f"fit_stats_{ctx}.csv"), index=False)
 
 print(f"done: {FIT_DIR}")
