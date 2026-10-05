@@ -1,0 +1,14 @@
+# R environment for the 01/02 mutation analysis scripts (not the pipelines, which
+# run in containers). Create next to the other envs:
+#   micromamba create -y -p /common/WORK/pstancl/envs/r-analysis -f env_r_analysis.yml
+#   micromamba activate /common/WORK/pstancl/envs/r-analysis
+# qcVCR is not here - install it into this env from wherever it lives.
+name: r-analysis
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base>=4.3
+  - bioconductor-variantannotation
+  - bioconductor-genomicranges
+  - r-tidyverse          # dplyr, tidyr, readr, stringr, ggplot2
