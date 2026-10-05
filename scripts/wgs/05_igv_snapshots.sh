@@ -10,8 +10,8 @@
 # Run it in an interactive job (qsub -I ... mem=16gb), not on the login node.
 # Output: $RESULTS_BASE/igv/<pipeline>/<region>.png, plus the IGV batch files.
 #
-# IGV has no headless mode: it is run under xvfb-run (a virtual display). IGV
-# itself (with its bundled Java) is downloaded once to $PROGRAMS_DIR if missing.
+# IGV has no headless mode: it is run under xvfb-run (a virtual display). An IGV
+# already in one of the envs is used; otherwise it is downloaded once.
 # Each pipeline is shown on its own reference: a CRAM can only be decoded with
 # the FASTA it was written against, and the HMF FASTA is masked, unlike GATK's.
 # ---------------------------------------------------------------------------
@@ -23,24 +23,32 @@ REGIONS="${REGIONS:-$WGS_SCRIPTS/igv_regions.tsv}"
 TRACKS="${TRACKS:-$WGS_SCRIPTS/igv_SPRTN_exons.bed}"        # extra feature tracks, space-separated
 OUT_IGV="$RESULTS_BASE/igv"
 IGV_VERSION="${IGV_VERSION:-2.19.8}"
-IGV_DIR="$PROGRAMS_DIR/IGV_Linux_${IGV_VERSION}"
 
 SAREK_FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
 
 # ---- IGV and a display -------------------------------------------------------
-if [[ ! -x "$IGV_DIR/igv.sh" ]]; then
-    log "IGV $IGV_VERSION not found - downloading to $PROGRAMS_DIR"
+# First IGV found: $IGV (set it to force one), any env in $ENV_ROOT (bioconda's
+# `igv`), an unzipped IGV in $PROGRAMS_DIR; only if none, download IGV once.
+find_first() { local f; for f in "$@"; do [[ -x "$f" ]] && { echo "$f"; return; }; done; }
+IGV="${IGV:-$(find_first "$ENV_ROOT"/*/bin/igv "$ENV_ROOT"/*/bin/igv.sh "$PROGRAMS_DIR"/IGV_Linux_*/igv.sh)}"
+if [[ -z "$IGV" ]]; then
+    log "no IGV in $ENV_ROOT or $PROGRAMS_DIR - downloading $IGV_VERSION to $PROGRAMS_DIR"
     zip="$TMPDIR/IGV_Linux_${IGV_VERSION}_WithJava.zip"
     wget -q -O "$zip" "https://data.broadinstitute.org/igv/projects/downloads/${IGV_VERSION%.*}/IGV_Linux_${IGV_VERSION}_WithJava.zip" \
         || die "download failed (no internet on this node? run once on the login node)"
     unzip -q -o "$zip" -d "$PROGRAMS_DIR" && rm -f "$zip"
-    [[ -x "$IGV_DIR/igv.sh" ]] || die "unexpected zip layout - no $IGV_DIR/igv.sh"
+    IGV="$PROGRAMS_DIR/IGV_Linux_${IGV_VERSION}/igv.sh"
+    [[ -x "$IGV" ]] || die "unexpected zip layout - no $IGV"
 fi
-ok "IGV: $IGV_DIR"
+ok "IGV: $IGV"
 
-if command -v xvfb-run >/dev/null 2>&1; then RUN=(xvfb-run --auto-servernum --server-args="-screen 0 1600x1200x24")
-elif [[ -n "${DISPLAY:-}" ]];              then RUN=(); warn "no xvfb-run - using your display $DISPLAY (X forwarding)"
-else die "neither xvfb-run nor a DISPLAY on $(hostname) - ask IT for xorg-x11-server-Xvfb, or ssh -X and rerun"; fi
+# xvfb-run from PATH or from any env (conda-forge ships it with Xvfb).
+XVFB_RUN="$(command -v xvfb-run || find_first "$ENV_ROOT"/*/bin/xvfb-run || true)"
+if   [[ -n "$XVFB_RUN" ]]; then
+    export PATH="$(dirname "$XVFB_RUN"):$PATH"                    # its Xvfb sits next to it
+    RUN=("$XVFB_RUN" --auto-servernum --server-args="-screen 0 1600x1200x24"); ok "display: $XVFB_RUN"
+elif [[ -n "${DISPLAY:-}" ]]; then RUN=(); warn "no xvfb-run - using your display $DISPLAY (X forwarding)"
+else die "neither xvfb-run nor a DISPLAY on $(hostname) - ssh -X and rerun, or install xvfb-run"; fi
 
 # ---- regions -----------------------------------------------------------------
 # name<TAB>locus lines; loci given as arguments are named after the locus.
@@ -117,7 +125,7 @@ for pl in $PIPELINES; do
     } > "$batch"
 
     log "running IGV ($pl) - batch: $batch"
-    ${RUN[@]+"${RUN[@]}"} "$IGV_DIR/igv.sh" --batch "$batch" > "$od/igv.log" 2>&1 \
+    ${RUN[@]+"${RUN[@]}"} "$IGV" --batch "$batch" > "$od/igv.log" 2>&1 \
         || { tail -20 "$od/igv.log"; die "IGV failed for $pl - see $od/igv.log"; }
     n=$(find "$od" -maxdepth 1 -name '*.png' -newer "$batch" | wc -l | tr -d " ")
     (( n == ${#regions[@]} )) && ok "$n snapshot(s) in $od" \
