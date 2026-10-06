@@ -28,6 +28,8 @@ Run from `scripts/wgs/`. Either submit the steps as PBS jobs (next section) or r
 ```bash
 ./01_make_samplesheets.sh     # sarek + oncoanalyser sheets (sarek's only once SEX is set)
 ./02_run_sarek.sh             # FASTQ -> Mutect2, Strelka, Manta, ASCAT
+SAREK_STEP=variant_calling SAREK_TOOLS=muse,msisensorpro ./02_run_sarek.sh
+                              # after 02; extra callers from the recalibrated CRAMs -> results/wgs/sarek/RJALS_vc
 ./03_run_oncoanalyser.sh      # FASTQ -> Hartwig WiGiTS + ORANGE report; independent of sarek
 ./04_run_tumourevo.sh         # after 02; builds its sheet from sarek output
 ./06_normalize_vcfs.sh        # after 02; bcftools norm on sarek's SNV/indel VCFs for analysis/01_sarek.R

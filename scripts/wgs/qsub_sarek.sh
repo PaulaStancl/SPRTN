@@ -4,6 +4,9 @@
 #
 #   cd scripts/wgs && qsub qsub_sarek.sh
 #
+# Extra callers on the finished run, from its recalibrated CRAMs (no realignment):
+#   qsub -N sarek_RJALS_vc -v SAREK_STEP=variant_calling,SAREK_TOOLS=muse,msisensorpro qsub_sarek.sh
+#
 # Nextflow uses the local executor inside this job, capped at the job's
 # allocation: NCPUS comes from PBS, JOB_MEMORY_GB below must equal mem= above.
 # Out of walltime? qsub again - the run resumes from the last finished task.

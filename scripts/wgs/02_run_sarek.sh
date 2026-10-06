@@ -6,6 +6,12 @@
 #
 #   ./02_run_sarek.sh
 #   SAREK_TOOLS=strelka,manta,ascat ./02_run_sarek.sh    # faster, no Mutect2
+#   SAREK_STEP=variant_calling SAREK_TOOLS=muse,msisensorpro ./02_run_sarek.sh
+#
+# SAREK_STEP=variant_calling adds callers to a finished run without realigning:
+# it starts from that run's recalibrated CRAMs (csv/recalibrated.csv) and writes
+# to its own outdir (<dataset>_vc) and launch dir, so the main run's MultiQC,
+# csv/ and resume history stay untouched.
 #
 # Tools: mutect2 + ascat are what tumourevo (04) consumes; strelka + manta are
 # the second SNV/indel caller and the SV caller. Mutect2 is the slowest step.
@@ -20,10 +26,20 @@ make_dirs
 check_data
 
 SAREK_TOOLS="${SAREK_TOOLS:-mutect2,strelka,manta,ascat}"
-SHEET="$SAMPLESHEET_DIR/sarek_${DATASET}.csv"
-OUT="$RESULTS_BASE/sarek/$DATASET"
-
-[[ -f "$SHEET" ]] || die "missing $SHEET - set SEX in 00_config.sh, then run ./01_make_samplesheets.sh"
+SAREK_STEP="${SAREK_STEP:-mapping}"
+case "$SAREK_STEP" in
+    mapping)
+        RUN="sarek_${DATASET}"
+        SHEET="$SAMPLESHEET_DIR/sarek_${DATASET}.csv"
+        OUT="$RESULTS_BASE/sarek/$DATASET"
+        [[ -f "$SHEET" ]] || die "missing $SHEET - set SEX in 00_config.sh, then run ./01_make_samplesheets.sh" ;;
+    variant_calling)
+        RUN="sarek_${DATASET}_vc"
+        SHEET="$RESULTS_BASE/sarek/$DATASET/csv/recalibrated.csv"
+        OUT="$RESULTS_BASE/sarek/${DATASET}_vc"
+        [[ -f "$SHEET" ]] || die "missing $SHEET - the main sarek run (SAREK_STEP=mapping) has to finish first" ;;
+    *)  die "SAREK_STEP must be mapping or variant_calling, not '$SAREK_STEP'" ;;
+esac
 # A sheet written before SEX was changed would start a run with the wrong sex -
 # and fixing that later restarts every task.
 sheet_sex=$(awk -F, 'NR > 1 { print $2 }' "$SHEET" | sort -u | tr '\n' ' ')
@@ -43,7 +59,7 @@ sheet_sex=$(awk -F, 'NR > 1 { print $2 }' "$SHEET" | sort -u | tr '\n' ' ')
 #    and the rest idle through the whole alignment. Give it half the job instead.
 #
 # Neither changes a task's command line, so a resume still reuses finished tasks.
-TUNING="$NXF_WORK_BASE/sarek_${DATASET}/sarek_tuning.config"
+TUNING="$NXF_WORK_BASE/$RUN/sarek_tuning.config"
 mkdir -p "$(dirname "$TUNING")"
 {
     echo "// Written by 02_run_sarek.sh at $(date '+%F %T')."
@@ -60,11 +76,13 @@ mkdir -p "$(dirname "$TUNING")"
 log "task time: 240 h (sarek's default is 8 h - it killed markdup twice)"
 (( ${NCPUS:-0} >= 32 )) && log "bwa-mem2 : $(( NCPUS / 2 )) cpus per chunk, two chunks at a time"
 log "sex      : $SEX"
+log "step     : $SAREK_STEP   (sheet: $SHEET)"
 log "tools    : $SAREK_TOOLS"
 log "outdir   : $OUT"
 
-nf_run "sarek_${DATASET}" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
+nf_run "$RUN" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
     --input "$SHEET" \
+    --step "$SAREK_STEP" \
     --outdir "$OUT" \
     --genome GATK.GRCh38 \
     --igenomes_base "$IGENOMES_BASE" \
@@ -73,4 +91,8 @@ nf_run "sarek_${DATASET}" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
     -c "$TUNING"
 
 log "sarek done: $OUT"
-log "Next:  ./04_run_tumourevo.sh   (then: rm -rf $NXF_WORK_BASE/sarek_${DATASET})"
+if [[ "$SAREK_STEP" == mapping ]]; then
+    log "Next:  ./04_run_tumourevo.sh   (then: rm -rf $NXF_WORK_BASE/$RUN)"
+else
+    log "Work dir no longer needed: rm -rf $NXF_WORK_BASE/$RUN"
+fi
