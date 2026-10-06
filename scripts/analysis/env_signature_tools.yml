@@ -2,8 +2,11 @@
 # from r-mutation because of its many Bioconductor dependencies. Create next to the others:
 #   micromamba create -y -p /common/WORK/pstancl/envs/signature-tools -f env_signature_tools.yml
 #   micromamba activate /common/WORK/pstancl/envs/signature-tools
-# then, once (pulls NNLM and indelsig.tools.lib from GitHub too, see its DESCRIPTION):
-#   Rscript -e 'remotes::install_github("Nik-Zainal-Group/signature.tools.lib", upgrade = "never")'
+# then, once, the two GitHub-only dependencies and the package itself, into this env's own
+# library (not R_LIBS_USER from ~/.Renviron, which other R versions share):
+#   L=$CONDA_PREFIX/lib/R/library
+#   Rscript -e "for (r in c('linxihui/NNLM', 'Nik-Zainal-Group/indelsig.tools.lib', 'Nik-Zainal-Group/signature.tools.lib'))
+#                  remotes::install_github(r, lib = '$L', upgrade = 'never', dependencies = FALSE)"
 name: signature-tools
 channels:
   - conda-forge
@@ -41,3 +44,14 @@ dependencies:
   - bioconductor-bsgenome
   - bioconductor-bsgenome.hsapiens.ucsc.hg38
   - bioconductor-bsgenome.hsapiens.1000genomes.hs37d5   # required by the package even for hg38
+  # indelsig.tools.lib (GitHub-only dependency of signature.tools.lib)
+  - bioconductor-bsgenome.hsapiens.ucsc.hg19
+  - bioconductor-genomicfeatures
+  - bioconductor-biostrings
+  - r-factoextra
+  - r-reshape2
+  - r-gridextra
+  - r-stringr
+  - r-ggplot2
+  - r-rlang
+  - r-biocmanager
