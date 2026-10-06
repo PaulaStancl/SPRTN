@@ -48,8 +48,15 @@ XVFB_RUN="$(command -v xvfb-run || find_first "$ENV_ROOT"/*/bin/xvfb-run || true
 if   [[ -n "$XVFB_RUN" ]]; then
     export PATH="$(dirname "$XVFB_RUN"):$PATH"                    # its Xvfb sits next to it
     RUN=("$XVFB_RUN" --auto-servernum --server-args="-screen 0 1600x1200x24"); ok "display: $XVFB_RUN"
-elif [[ -n "${DISPLAY:-}" ]]; then RUN=(); warn "no xvfb-run - using your display $DISPLAY (X forwarding)"
-else die "neither xvfb-run nor a DISPLAY on $(hostname) - ssh -X and rerun, or install xvfb-run"; fi
+elif XVFB="$(command -v Xvfb || find_first "$ENV_ROOT"/*/bin/Xvfb /usr/bin/Xvfb || true)"; [[ -n "$XVFB" ]]; then
+    # Xvfb without the xvfb-run wrapper: start it on a free display number ourselves
+    for n in $(seq 99 140); do [[ -e /tmp/.X$n-lock ]] || break; done
+    "$XVFB" ":$n" -screen 0 1600x1200x24 -nolisten tcp >/dev/null 2>&1 &
+    XVFB_PID=$!; trap 'kill $XVFB_PID 2>/dev/null || true' EXIT
+    sleep 2; kill -0 "$XVFB_PID" 2>/dev/null || die "Xvfb did not start ($XVFB :$n)"
+    export DISPLAY=":$n"; RUN=(); ok "display: $XVFB on :$n"
+elif [[ -n "${DISPLAY:-}" ]]; then RUN=(); warn "no xvfb-run / Xvfb - using your display $DISPLAY (X forwarding)"
+else die "no xvfb-run, no Xvfb and no DISPLAY on $(hostname) - install Xvfb (see README) or connect with ssh -X and rerun"; fi
 
 # ---- regions -----------------------------------------------------------------
 # name<TAB>locus lines; loci given as arguments are named after the locus.
