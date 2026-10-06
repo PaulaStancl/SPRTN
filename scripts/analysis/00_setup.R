@@ -225,7 +225,6 @@ read_sv_vcf <- function(path) {
 # Shared analysis steps - used by 01_sarek.R and 02_oncoanalyser.R
 # ---------------------------------------------------------------------------
 
-# Read the VCFs in files[keys] into one table tagged with `label` (NULL if none found).
 # Somatic SNV / indel VCFs of every caller that ran, one or more files per caller:
 #   sarek main run + extra-callers run (RJALS_vc): mutect2, strelka (snvs + indels), muse,
 #   freebayes, lofreq;  oncoanalyser: sage (PURPLE's final VCF).
@@ -253,6 +252,7 @@ find_caller_vcfs <- function() {
   hits
 }
 
+# Read the VCFs in files[keys] into one table tagged with `label` (NULL if none found).
 load_calls <- function(files, keys, label) {
   keys <- intersect(keys, names(files))
   if (!length(keys)) return(NULL)
