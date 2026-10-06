@@ -189,14 +189,20 @@ read_vcf_table <- function(path) {
   if (!is.null(m)) out <- cbind(out, m)
   out[, MUTTYPE := fcase(TYPE == "INDEL" & nchar(ALT1) > nchar(REF), "INS",
                          TYPE == "INDEL", "DEL", default = TYPE)]
-  # VAF / N_VAF: FORMAT/AF of the tumour / normal (Mutect2, SAGE), else Strelka's tier-1 counts.
+  # VAF / N_VAF: FORMAT/AF of the tumour / normal (Mutect2, SAGE), else Strelka's tier-1 counts,
+  # else FORMAT/AD as ALT / (REF + ALT) (MuSE, which has no AF).
   # T_ALT: tumour reads supporting ALT - FORMAT/AD's second value, else Strelka's tier-1 count.
   num1   <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
   second <- function(x) { x <- as.character(x)
     suppressWarnings(as.numeric(fifelse(grepl(",", x, fixed = TRUE), sub("^[^,]*,([^,]*).*$", "\\1", x), NA_character_))) }
   tk <- strelka_tier1(out, "t_")
-  out[, `:=`(VAF   = if ("t_AF" %in% names(out)) num1(out$t_AF) else strelka_vaf(out, "t_"),
-             N_VAF = if ("n_AF" %in% names(out)) num1(out$n_AF) else strelka_vaf(out, "n_"),
+  ad_vaf <- function(x) { a <- second(x); a / (num1(x) + a) }       # REF,ALT[,...] -> ALT / (REF + ALT)
+  af <- function(p) if (paste0(p, "AF") %in% names(out)) num1(out[[paste0(p, "AF")]])
+                    else if (!is.null(strelka_tier1(out, p))) strelka_vaf(out, p)
+                    else if (paste0(p, "AD") %in% names(out)) ad_vaf(out[[paste0(p, "AD")]])
+                    else rep(NA_real_, nrow(out))
+  out[, `:=`(VAF   = af("t_"),
+             N_VAF = af("n_"),
              T_ALT = if ("t_AD" %in% names(out)) second(out$t_AD) else if (!is.null(tk)) tk$alt else NA_real_)]
   setcolorder(out, c("CHROM", "POS", "REF", "ALT", "ALT1", "ALT_COUNT", "TYPE", "MUTTYPE",
                      "FILTER", "QUAL", "VAF", "N_VAF", "T_ALT"))
@@ -220,6 +226,33 @@ read_sv_vcf <- function(path) {
 # ---------------------------------------------------------------------------
 
 # Read the VCFs in files[keys] into one table tagged with `label` (NULL if none found).
+# Somatic SNV / indel VCFs of every caller that ran, one or more files per caller:
+#   sarek main run + extra-callers run (RJALS_vc): mutect2, strelka (snvs + indels), muse,
+#   freebayes, lofreq;  oncoanalyser: sage (PURPLE's final VCF).
+# The bcftools-normalised copy (scripts/wgs/06_normalize_vcfs.sh) is used when it exists.
+# Returns a data.table: CALLER, file, normalised.
+find_caller_vcfs <- function() {
+  vc_dirs <- file.path(RESULTS, "sarek", paste0(PATIENT, c("", "_vc")), "variant_calling")
+  norm_s  <- file.path(SAREK, "normalized_bcftools", PAIR)
+  norm_o  <- file.path(RESULTS, "oncoanalyser", PATIENT, "normalized_bcftools")
+  known <- data.table(CALLER  = c("mutect2", "strelka", "strelka", "muse", "freebayes", "lofreq"),
+                      pattern = paste0("^", PAIR, c("\\.mutect2\\.filtered", "\\.strelka\\.somatic_snvs",
+                                                    "\\.strelka\\.somatic_indels", "\\.muse", "\\.freebayes", ".*lofreq.*")))
+  hits <- rbindlist(lapply(seq_len(nrow(known)), function(i) {
+    raw <- unlist(lapply(vc_dirs[dir.exists(vc_dirs)], list.files, pattern = paste0(known$pattern[i], "\\.vcf\\.gz$"),
+                         recursive = TRUE, full.names = TRUE))
+    raw <- raw[grepl(paste0("/", PAIR, "/"), raw)][1]                # main run first, then RJALS_vc
+    nrm <- if (dir.exists(norm_s)) list.files(norm_s, paste0(known$pattern[i], "\\.norm\\.vcf\\.gz$"), full.names = TRUE)[1] else NA
+    f <- if (!is.na(nrm)) nrm else raw
+    if (is.na(f)) NULL else data.table(CALLER = known$CALLER[i], file = f, normalised = !is.na(nrm))
+  }))
+  pv <- if (dir.exists(norm_o)) list.files(norm_o, "\\.purple\\.somatic\\.norm\\.vcf\\.gz$", full.names = TRUE)[1] else NA
+  pr <- list.files(file.path(ONCO, "purple"), "\\.purple\\.somatic\\.vcf\\.gz$", full.names = TRUE)[1]
+  if (!is.na(pv) || !is.na(pr))
+    hits <- rbind(hits, data.table(CALLER = "sage", file = if (!is.na(pv)) pv else pr, normalised = !is.na(pv)))
+  hits
+}
+
 load_calls <- function(files, keys, label) {
   keys <- intersect(keys, names(files))
   if (!length(keys)) return(NULL)

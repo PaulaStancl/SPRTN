@@ -32,7 +32,7 @@ SAREK_STEP=variant_calling SAREK_TOOLS=muse,msisensorpro ./02_run_sarek.sh
                               # after 02; extra callers from the recalibrated CRAMs -> results/wgs/sarek/RJALS_vc
 ./03_run_oncoanalyser.sh      # FASTQ -> Hartwig WiGiTS + ORANGE report; independent of sarek
 ./04_run_tumourevo.sh         # after 02; builds its sheet from sarek output
-./06_normalize_vcfs.sh        # after 02; bcftools norm on sarek's SNV/indel VCFs for analysis/01_sarek.R
+./06_normalize_vcfs.sh        # after 02/03 (+ extra callers); bcftools norm of every caller's SNV/indel VCF, for analysis/01 and 03
 ```
 
 - **Run directly on lobsang, 02 and 03 must go one after the other,** because each one takes all 8 cores. As PBS jobs they can run at the same time. Either order works; if the patient's sex isn't confirmed yet, start with 03.
