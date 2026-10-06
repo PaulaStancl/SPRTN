@@ -19,7 +19,7 @@
 #   n_callers_per_caller.csv/.pdf  of each caller's calls, how many callers found them
 #   pairwise_overlap.csv, pairwise_overlap_<SNV|INDEL>.pdf   % of row caller's calls in column caller
 #   support_by_vaf.csv/.pdf        share of each caller's calls confirmed by >= 1 other, by VAF
-#   vaf_agreement.csv/.pdf         VAF of shared SNVs, caller vs caller
+#   vaf_agreement.csv/.pdf         tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
 #   consensus_summary.csv          union, >= 2 callers, all callers - per type
 #   snv_vaf_hist.pdf, snv_spectrum.pdf, snv_substitution_spectrum.csv, snv_indel_pass*.csv
 # ---------------------------------------------------------------------------
@@ -117,11 +117,16 @@ if (length(vc) >= 2) {
   va <- rbindlist(lapply(prs, function(p) mut[TYPE == "SNV" & !is.na(get(p[1])) & !is.na(get(p[2])),
     .(pair = paste(sub("VAF_", "", p), collapse = " vs "), x = get(p[1]), y = get(p[2]))]))
   if (nrow(va)) {
-    agr <- va[, .(n = .N, spearman = round(cor(x, y, method = "spearman"), 3), median_diff = round(median(y - x), 4)), by = pair]
+    agr <- va[, .(n = .N, pearson = round(cor(x, y), 3), spearman = round(cor(x, y, method = "spearman"), 3),
+                  median_diff = round(median(y - x), 4)), by = pair]
     print(agr); fwrite(agr, file.path(od, "vaf_agreement.csv"))
+    agr[, label := sprintf("n = %d\nPearson r = %.2f\nSpearman rho = %.2f", n, pearson, spearman)]
     save_plot(ggplot(va, aes(x, y)) + geom_point(size = 0.3, alpha = 0.3) + geom_abline(colour = "red", linetype = 2) +
+                geom_text(data = agr, aes(x = 0.02, y = 0.98, label = label), hjust = 0, vjust = 1, size = 3,
+                          inherit.aes = FALSE) +
                 facet_wrap(~pair) + coord_equal(xlim = c(0, 1), ylim = c(0, 1)) +
-                labs(x = "VAF, first caller", y = "VAF, second caller", title = "VAF of SNVs found by both callers"),
+                labs(x = "tumour VAF, first caller", y = "tumour VAF, second caller",
+                     title = "Tumour VAF of SNVs found by both callers", subtitle = "red: y = x"),
               "vaf_agreement", od, w = 9, h = 7)
   }
 }
