@@ -22,7 +22,8 @@
 #   vaf_agreement.csv/.pdf         tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
 #   consensus_summary.csv          union, >= 2 callers, all callers - per type
 #   concordance_groups.csv/.pdf    exact combinations + summary bars two_plus and all_callers
-#   snv_96context.pdf/.csv         96-context profile of all / two_plus / all_callers SNVs
+#   snv_96context_groups.pdf/.csv  96-context profile of two_plus / all_callers SNVs (callers named)
+#   snv_96context_per_caller.pdf/.csv  per caller: all / shared / unique SNVs
 #   sbs96_groups.txt               the same counts, SigProfiler matrix format
 #   snv_vaf_hist.pdf, snv_spectrum.pdf, snv_substitution_spectrum.csv, snv_indel_pass*.csv
 # ---------------------------------------------------------------------------
@@ -68,14 +69,18 @@ cons[able, on = "TYPE", `:=`(n_callers = lengths(i.callers), callers = vapply(i.
 mut[cons, on = "TYPE", n_able := i.n_callers]
 cons[mut[, .(all_callers = sum(N_CALLERS == n_able)), by = TYPE], on = "TYPE", all_callers := i.all_callers]
 mut[, n_able := NULL]
+# labels for plots: "sage" is SAGE's calls as in PURPLE's final VCF
+disp <- function(x) gsub("\\bsage\\b", "sage/purple", x)
+cons[, `:=`(two_plus_label    = paste0("two_plus: >= 2 of ", disp(gsub("+", ", ", callers, fixed = TRUE))),
+            all_callers_label = paste0("all_callers: ", disp(callers)))]
 print(cons); fwrite(cons, file.path(od, "consensus_summary.csv"))
 
 # concordance bars: every exact combination of callers (each mutation once, in the set of
 # callers that found it) plus two summary groups - found by >= 2 callers (two_plus) and by
 # every caller of that type (all_callers); the summary bars overlap the combination bars
-cg <- rbind(mut[, .(n = .N), by = .(TYPE, group = CALLERS)][, kind := "exact combination"],
-            cons[, .(TYPE, group = "two_plus (>= 2 callers)", n = two_plus, kind = "summary")],
-            cons[, .(TYPE, group = paste0("all_callers (", callers, ")"), n = all_callers, kind = "summary")])
+cg <- rbind(mut[, .(n = .N), by = .(TYPE, group = disp(CALLERS))][, kind := "exact combination"],
+            cons[, .(TYPE, group = two_plus_label, n = two_plus, kind = "summary")],
+            cons[, .(TYPE, group = all_callers_label, n = all_callers, kind = "summary")])
 fwrite(cg[order(TYPE, kind, -n)], file.path(od, "concordance_groups.csv"))
 # summary bars on top, combinations below them by size
 # (ordered within each panel: the label carries the type, stripped again on the axis)
@@ -153,24 +158,32 @@ if (length(vc) >= 2) {
               "vaf_agreement", od, w = 9, h = 7)
   }
 }
-# ---- 7. 96-context profiles: all PASS SNVs, two_plus, all_callers ---------------------------
-# Each SNV once per group (not once per caller); groups overlap (all >= two_plus >= all_callers).
-# Context from the GATK GRCh38 FASTA (add_sbs96(), as in 01/02); SBS96 counts per group also
-# written in SigProfiler's matrix format (sbs96_groups.txt).
+# ---- 7. 96-context profiles: two_plus and all_callers SNVs --------------------------------
+# Each SNV once per group (not once per caller); all_callers is a subset of two_plus. The plot
+# names the callers of each group; sbs96_groups.txt (SigProfiler matrix format) uses the short
+# names two_plus / all_callers. Context from the GATK GRCh38 FASTA (add_sbs96(), as in 01/02).
+unlink(file.path(od, c("snv_96context.pdf", "snv_96context.csv")))     # the earlier all/two_plus/all_callers version
 snv <- mut[TYPE == "SNV", .(CHROM, POS, REF, ALT1 = ALT, MUTTYPE = "SNV", N_CALLERS)]
 add_sbs96(snv)
-n_snv_callers <- cons[TYPE == "SNV", n_callers]
+sc  <- cons[TYPE == "SNV"]
 grp <- rbindlist(list(
-  all         = snv,
   two_plus    = snv[N_CALLERS >= 2],
-  all_callers = snv[N_CALLERS == n_snv_callers]), idcol = "CALLER")    # CALLER = group: one plot column each
-grp[, CALLER := factor(CALLER, levels = c("all", "two_plus", "all_callers"))]
-print(grp[, .(snvs = .N, with_context = sum(!is.na(SBS96))), by = CALLER])
-m96 <- dcast(grp[!is.na(SBS96)], SBS96 ~ CALLER, fun.aggregate = length, value.var = "POS", drop = FALSE)
+  all_callers = snv[N_CALLERS == sc$n_callers]), idcol = "GROUP")
+grp[, GROUP := factor(GROUP, levels = c("two_plus", "all_callers"))]
+print(grp[, .(snvs = .N, with_context = sum(!is.na(SBS96))), by = GROUP])
+m96 <- dcast(grp[!is.na(SBS96)], SBS96 ~ GROUP, fun.aggregate = length, value.var = "POS", drop = FALSE)
 m96 <- m96[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
 for (cl in setdiff(names(m96), "SBS96")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
 setnames(m96, "SBS96", "MutationType")
 fwrite(m96, file.path(od, "sbs96_groups.txt"), sep = "\t")
-grp[, CALLER := as.character(CALLER)]
-plot_96context(grp, od)                                  # snv_96context.pdf / .csv, one column per group
+# plot_96context() draws one column per CALLER: here the group, labelled with its callers
+grp[, CALLER := fifelse(GROUP == "two_plus", sc$two_plus_label, sc$all_callers_label)]
+plot_96context(grp, od, name = "snv_96context_groups")  # snv_96context_groups.pdf / .csv
+
+# per caller, as in 01: one column per caller, rows all SNVs / shared (PASS in >= 1 other
+# caller) / unique (this caller only)
+add_sbs96(atom)
+atom[, QC_SHARED := fifelse(N_CALLERS >= 2, "shared", "unique")]
+pc <- atom[, .(CHROM, POS, REF, ALT1, SBS96, QC_SHARED, CALLER = disp(CALLER))]
+plot_96context(pc, od, rowsplit = "QC_SHARED", name = "snv_96context_per_caller")
 message("done: ", od)

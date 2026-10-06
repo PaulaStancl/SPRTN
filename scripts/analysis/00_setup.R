@@ -327,20 +327,20 @@ add_sbs96 <- function(atom) {
 # flip it itself, so it gets SBS96's bases, not the + strand NC_3. It returns the figure(s)
 # without saving; orderplots / showperc / dropempty / dontshowall must be single values (their
 # defaults are vectors, which its if() checks reject). Needs packages qcVCF does not declare.
-plot_96context <- function(atom, od, rowsplit = NULL) {
+plot_96context <- function(atom, od, rowsplit = NULL, name = "snv_96context") {
   cols <- c("CHROM", "POS", "REF", "ALT1", "CALLER", "SBS96", rowsplit)
   snv96 <- atom[!is.na(SBS96), ..cols]
   setnames(snv96, c("ALT1", "CALLER"), c("ALT", "tool"))
   snv96[, NC_3 := paste0(substr(SBS96, 1, 1), substr(SBS96, 3, 3), substr(SBS96, 7, 7))][, SBS96 := NULL]
   if (!nrow(snv96)) return(invisible(NULL))
-  fwrite(snv96, file.path(od, "snv_96context.csv"))
+  fwrite(snv96, file.path(od, paste0(name, ".csv")))
   miss <- Filter(function(pk) !requireNamespace(pk, quietly = TRUE), c("qcVCF", "cowplot", "stringr", "stringi", "ggtext"))
   if (length(miss)) { message("96-context plot skipped - install: ", paste(miss, collapse = ", ")); return(invisible(NULL)) }
   fig96 <- qcVCF::plot96_matrix(snv96, rowsplit = rowsplit, plotsplitcol = "tool", orderplots = "no", showperc = "yes",
                                 dropempty = "no", dontshowall = if (is.null(rowsplit)) "yes" else "no")
   nrow96 <- if (is.null(rowsplit)) 1 else uniqueN(snv96[[rowsplit]]) + 1
   for (k in seq_along(fig96))
-    save_plot(fig96[[k]], paste0("snv_96context", if (k > 1) paste0("_", k)), od,
+    save_plot(fig96[[k]], paste0(name, if (k > 1) paste0("_", k)), od,
               w = 9 * uniqueN(snv96$tool), h = 2 + 1.7 * nrow96)
   invisible(snv96)
 }
