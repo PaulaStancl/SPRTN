@@ -28,6 +28,7 @@ Run from `scripts/wgs/`. Either submit the steps as PBS jobs (next section) or r
 ```bash
 ./01_make_samplesheets.sh     # sarek + oncoanalyser sheets (sarek's only once SEX is set)
 ./02_run_sarek.sh             # FASTQ -> Mutect2, Strelka, Manta, ASCAT
+./07_msisensorpro_scan.sh     # once, before msisensorpro: microsatellite list sarek's msisensor-pro can read
 SAREK_STEP=variant_calling SAREK_TOOLS=muse,msisensorpro ./02_run_sarek.sh
                               # after 02; extra callers from the recalibrated CRAMs -> results/wgs/sarek/RJALS_vc
 ./03_run_oncoanalyser.sh      # FASTQ -> Hartwig WiGiTS + ORANGE report; independent of sarek

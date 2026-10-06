@@ -78,6 +78,18 @@ log "task time: 240 h (sarek's default is 8 h - it killed markdup twice)"
 log "sex      : $SEX"
 log "step     : $SAREK_STEP   (sheet: $SHEET)"
 log "tools    : $SAREK_TOOLS"
+
+# MSIsensor-pro: the microsatellite list from iGenomes was made with an older msisensor-pro,
+# whose format sarek's version no longer reads (it loads 0 sites, then aborts: "Same reference
+# genome file should be used in both scan and msi steps"). 07_msisensorpro_scan.sh builds the
+# list with sarek's own container; it is used automatically once it exists.
+EXTRA=()
+MSISENSORPRO_SCAN="${MSISENSORPRO_SCAN:-$REF_BASE/msisensorpro/Homo_sapiens_assembly38.msisensorpro_scan.list}"
+if [[ ",$SAREK_TOOLS," == *",msisensorpro,"* ]]; then
+    [[ -s "$MSISENSORPRO_SCAN" ]] || die "missing $MSISENSORPRO_SCAN - run ./07_msisensorpro_scan.sh first (iGenomes' list does not work with sarek's msisensor-pro)"
+    EXTRA+=(--msisensorpro_scan "$MSISENSORPRO_SCAN")
+    log "msisensor: $MSISENSORPRO_SCAN"
+fi
 log "outdir   : $OUT"
 
 nf_run "$RUN" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
@@ -88,6 +100,7 @@ nf_run "$RUN" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
     --igenomes_base "$IGENOMES_BASE" \
     --aligner bwa-mem2 \
     --tools "$SAREK_TOOLS" \
+    ${EXTRA[@]+"${EXTRA[@]}"} \
     -c "$TUNING"
 
 log "sarek done: $OUT"
