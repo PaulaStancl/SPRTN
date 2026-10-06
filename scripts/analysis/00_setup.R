@@ -277,6 +277,70 @@ sbs96 <- function(ref, alt, nc3) {
 SBS96_TYPES <- sort(CJ(b5 = c("A", "C", "G", "T"), sub = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"),
                        b3 = c("A", "C", "G", "T"))[, paste0(b5, "[", sub, "]", b3)], method = "radix")
 
+# PASS SNVs of `atom` (MNVs split, from snv_indel_summary()) get their trinucleotide context
+# from the reference FASTA: NC_3 on the + strand, SBS96 the pyrimidine-strand class (A[C>T]G)
+# used by the 96-context plots and SigProfiler. Modifies atom in place.
+add_sbs96 <- function(atom) {
+  atom[MUTTYPE == "SNV", NC_3 := trinuc_context(.SD)]
+  bad <- atom[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]      # middle base must be REF
+  if (bad) warning(bad, " SNVs whose REF is not the reference base - is FASTA the genome the caller used?")
+  atom[MUTTYPE == "SNV" & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT1, NC_3)]
+  invisible(atom)
+}
+
+# qcVCF 96-context plot of the PASS SNVs in atom (split MNVs included): one column per caller;
+# rows all SNVs plus, if `rowsplit` names a column (e.g. QC_SHARED), one row per value.
+# plot96_matrix() wants NC_3 on the pyrimidine strand (as palimpsest writes it) and does not
+# flip it itself, so it gets SBS96's bases, not the + strand NC_3. It returns the figure(s)
+# without saving; orderplots / showperc / dropempty / dontshowall must be single values (their
+# defaults are vectors, which its if() checks reject). Needs packages qcVCF does not declare.
+plot_96context <- function(atom, od, rowsplit = NULL) {
+  cols <- c("CHROM", "POS", "REF", "ALT1", "CALLER", "SBS96", rowsplit)
+  snv96 <- atom[!is.na(SBS96), ..cols]
+  setnames(snv96, c("ALT1", "CALLER"), c("ALT", "tool"))
+  snv96[, NC_3 := paste0(substr(SBS96, 1, 1), substr(SBS96, 3, 3), substr(SBS96, 7, 7))][, SBS96 := NULL]
+  if (!nrow(snv96)) return(invisible(NULL))
+  fwrite(snv96, file.path(od, "snv_96context.csv"))
+  miss <- Filter(function(pk) !requireNamespace(pk, quietly = TRUE), c("qcVCF", "cowplot", "stringr", "stringi", "ggtext"))
+  if (length(miss)) { message("96-context plot skipped - install: ", paste(miss, collapse = ", ")); return(invisible(NULL)) }
+  fig96 <- qcVCF::plot96_matrix(snv96, rowsplit = rowsplit, plotsplitcol = "tool", orderplots = "no", showperc = "yes",
+                                dropempty = "no", dontshowall = if (is.null(rowsplit)) "yes" else "no")
+  nrow96 <- if (is.null(rowsplit)) 1 else uniqueN(snv96[[rowsplit]]) + 1
+  for (k in seq_along(fig96))
+    save_plot(fig96[[k]], paste0("snv_96context", if (k > 1) paste0("_", k)), od,
+              w = 9 * uniqueN(snv96$tool), h = 2 + 1.7 * nrow96)
+  invisible(snv96)
+}
+
+# Signature sets (rows of atom with a SET column, MNVs split) -> signatures/input/ for the
+# SigProfiler script (01b) and FitMS (01c): one minimal VCF per set in vcf/ (one "sample" each;
+# the matrix generator rejoins adjacent SNVs into doublets itself), pass_sets.csv,
+# pass_set_counts.csv, and the SBS96 counts computed here in SigProfiler's matrix format -
+# NOT used for fitting, only to compare with the matrix generator's (sbs96_compare.csv).
+write_signature_sets <- function(sets, sig_in, source_label) {
+  dir.create(file.path(sig_in, "vcf"), recursive = TRUE, showWarnings = FALSE)
+  unlink(list.files(file.path(sig_in, "vcf"), "\\.vcf$", full.names = TRUE))   # no sets left from an earlier run
+  sets <- sets[, .(SET, CHROM, POS, REF, ALT = ALT1, MUTTYPE, FROM_MNV, NC_3, SBS96)]
+  sets <- unique(sets, by = c("SET", "CHROM", "POS", "REF", "ALT"))
+  sets <- sets[order(SET, match(CHROM, STD_CHR), POS)]
+  set_counts <- dcast(sets, SET ~ MUTTYPE, fun.aggregate = length, value.var = "POS")
+  print(set_counts); fwrite(set_counts, file.path(sig_in, "pass_set_counts.csv"))
+  fwrite(sets, file.path(sig_in, "pass_sets.csv"))
+  for (st in unique(sets$SET)) {
+    f <- file.path(sig_in, "vcf", paste0(st, ".vcf"))
+    writeLines(c("##fileformat=VCFv4.2", paste0("##source=", source_label, " PASS set ", st),
+                 "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"), f)
+    fwrite(sets[SET == st, .(CHROM, POS, ID = ".", REF, ALT, QUAL = ".", FILTER = "PASS", INFO = ".")],
+           f, sep = "\t", append = TRUE, col.names = FALSE)
+  }
+  m96 <- dcast(sets[!is.na(SBS96)], SBS96 ~ SET, fun.aggregate = length, value.var = "POS")
+  m96 <- m96[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
+  setnames(m96, "SBS96", "MutationType")
+  for (cl in setdiff(names(m96), "MutationType")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
+  fwrite(m96, file.path(sig_in, paste0(PATIENT, ".SBS96.from_R.txt")), sep = "\t")
+  invisible(sets)
+}
+
 # All records, PASS and filtered, per caller and mutation type (SNV / MNV / INS / DEL): how
 # many passed, why the rest failed, and how depth, allele fraction and score compare between
 # PASS and FAIL. Writes pass_fail_counts, filter_reasons, metrics_summary and metric_* to od.

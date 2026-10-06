@@ -4,12 +4,13 @@
 # Run after 01b_sarek_signatures.py, in the signature-tools env:
 #
 #   micromamba activate /common/WORK/pstancl/envs/signature-tools
-#   Rscript 01c_sarek_signatures_organ.R
+#   Rscript --no-environ 01c_sarek_signatures_organ.R                 # sarek sets
+#   Rscript --no-environ 01c_sarek_signatures_organ.R oncoanalyser    # SAGE set (02_oncoanalyser.R)
 #
-# Input  <OUT>/sarek/signatures/sigprofiler/matrix_generator/output/SBS/RJALS.SBS96.all
-#        - SigProfilerMatrixGenerator's SBS96 matrix (01b); one column per set: mutect2,
-#        strelka, mutect2_strelka.
-# Output <OUT>/sarek/signatures/fitms_liver/
+# Input  <OUT>/<pipeline>/signatures/sigprofiler/matrix_generator/output/SBS/RJALS.SBS96.all
+#        - SigProfilerMatrixGenerator's SBS96 matrix (01b); one column per set (sarek:
+#        mutect2, strelka, mutect2_strelka; oncoanalyser: sage).
+# Output <OUT>/<pipeline>/signatures/fitms_liver/
 #   <set>/                         plotFitMS() plots + FitMS result as JSON, one folder per set
 #   exposures_organ.csv            set, signature (GEL-Liver_common_* or a rare one), mutations, fraction
 #   exposures_refsig.csv           the same in reference signatures (organ-specific -> RefSig)
@@ -32,10 +33,12 @@ if (grepl("OneDrive|CloudStorage|Dropbox|iCloud|Google Drive", normalizePath(OUT
   stop("Refusing to use a cloud-synced folder for patient data: ", OUT, call. = FALSE)
 NCPU    <- max(1L, as.integer(Sys.getenv("NCPUS", "4")))
 NBOOT   <- as.integer(Sys.getenv("SPRTN_NBOOT", "200"))              # package default
-sig_dir <- file.path(OUT, "sarek", "signatures")
+PIPELINE <- commandArgs(TRUE)[1]; if (is.na(PIPELINE)) PIPELINE <- "sarek"
+stopifnot(PIPELINE %in% c("sarek", "oncoanalyser"))
+sig_dir <- file.path(OUT, PIPELINE, "signatures")
 mat_f   <- file.path(sig_dir, "sigprofiler", "matrix_generator", "output", "SBS", paste0(PATIENT, ".SBS96.all"))
 od      <- file.path(sig_dir, "fitms_liver"); dir.create(od, recursive = TRUE, showWarnings = FALSE)
-if (!file.exists(mat_f)) stop("missing ", mat_f, " - run 01b_sarek_signatures.py first", call. = FALSE)
+if (!file.exists(mat_f)) stop("missing ", mat_f, " - run 01b_sarek_signatures.py", if (PIPELINE != "sarek") " --pipeline oncoanalyser", " first", call. = FALSE)
 
 # SigProfiler's SBS96 matrix -> catalogue matrix (channels as rows, sets as columns), rows in
 # the order of the liver signatures (SigProfiler sorts A[C>A]A, A[C>A]C, A[C>G]A ...;

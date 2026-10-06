@@ -45,13 +45,8 @@ pass <- snv_indel_summary(calls, pass_dir)
 calls_pass <- pass$pass      # PASS records as the callers wrote them (Mutect2 MNVs whole)
 atom       <- pass$atom      # the same with MNVs split into SNVs - for comparing callers
 
-# trinucleotide context of every PASS SNV (split MNVs included) from the reference FASTA:
-# NC_3 on the + strand, SBS96 the pyrimidine-strand class (A[C>T]G) used by 96-context
-# plots and SigProfiler
-atom[MUTTYPE == "SNV", NC_3 := trinuc_context(.SD)]
-bad <- atom[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]      # middle base must be REF
-if (bad) warning(bad, " SNVs whose REF is not the reference base - is FASTA the genome sarek used?")
-atom[MUTTYPE == "SNV" & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT1, NC_3)]
+# trinucleotide context of every PASS SNV (NC_3 + strand, SBS96 class) from the FASTA
+add_sbs96(atom)
 # which callers have each PASS mutation (key CHROM:POS:REF:ALT, MNVs split), and the record
 # each row of atom comes from (REC_KEY - an MNV's split bases share their MNV's key)
 atom[, CALLERS := paste(sort(unique(CALLER)), collapse = "+"), by = .(CHROM, POS, REF, ALT1)]
@@ -117,24 +112,8 @@ if (HAVE_QCVCF) {
   fwrite(calls_pass, file.path(pass_dir, "snv_indel_pass.csv"))            # now with QC_SHARED
   fwrite(atom,       file.path(pass_dir, "snv_indel_pass_atomized.csv"))
 
-  # 96-context profile of the PASS SNVs (split MNVs included), one column per caller, rows
-  # all / shared / unique. plot96_matrix() wants NC_3 on the pyrimidine strand (as palimpsest
-  # writes it) and does not flip it itself, so it gets SBS96's bases, not the + strand NC_3.
-  # It returns the figure(s) without saving; orderplots / showperc / dropempty / dontshowall
-  # must be given as single values (their defaults are vectors, which its if() checks reject).
-  snv96 <- atom[!is.na(SBS96), .(CHROM, POS, REF, ALT = ALT1, tool = CALLER, QC_SHARED,
-                                 NC_3 = paste0(substr(SBS96, 1, 1), substr(SBS96, 3, 3), substr(SBS96, 7, 7)))]
-  # plot96_matrix() also needs these, which qcVCF does not declare - skip the plot, not the script
-  miss96 <- Filter(function(pk) !requireNamespace(pk, quietly = TRUE), c("cowplot", "stringr", "stringi", "ggtext"))
-  if (length(miss96)) message("96-context plot skipped - install: ", paste(miss96, collapse = ", "))
-  if (nrow(snv96)) fwrite(snv96, file.path(pass_dir, "snv_96context.csv"))
-  if (nrow(snv96) && !length(miss96)) {
-    fig96 <- plot96_matrix(snv96, rowsplit = "QC_SHARED", plotsplitcol = "tool",
-                           orderplots = "no", showperc = "yes", dropempty = "no", dontshowall = "no")
-    for (k in seq_along(fig96))
-      save_plot(fig96[[k]], paste0("snv_96context", if (k > 1) paste0("_", k)), pass_dir,
-                w = 9 * uniqueN(snv96$tool), h = 2 + 1.7 * (uniqueN(snv96$QC_SHARED) + 1))
-  }
+  # 96-context profile, one column per caller, rows all / shared / unique
+  plot_96context(atom, pass_dir, rowsplit = "QC_SHARED")
 }
 # ---- 6. clonal vs subclonal: PyClone-VI clusters (tumourevo) on the Mutect2 calls ----
 # tumourevo ran PyClone-VI on sarek's Mutect2 PASS calls (autosomes; copy number and purity
@@ -225,33 +204,11 @@ if (!is.na(py_fit)) {
 #   mutect2 / strelka                 all PASS calls of that caller
 #   mutect2_strelka                   PASS in both callers (intersection)
 sig_in <- file.path(od, "signatures", "input")
-dir.create(file.path(sig_in, "vcf"), recursive = TRUE, showWarnings = FALSE)
-unlink(list.files(file.path(sig_in, "vcf"), "\\.vcf$", full.names = TRUE))   # no sets left over from an earlier run
-sets <- rbindlist(list(
+write_signature_sets(rbindlist(list(
   mutect2         = atom[CALLER == "mutect2"],
   strelka         = atom[CALLER == "strelka"],
   mutect2_strelka = atom[CALLER == "mutect2" & CALLERS == "mutect2+strelka"]
-), idcol = "SET")[, .(SET, CHROM, POS, REF, ALT = ALT1, MUTTYPE, FROM_MNV, CALLERS, NC_3, SBS96)]
-sets <- unique(sets, by = c("SET", "CHROM", "POS", "REF", "ALT"))
-sets <- sets[order(SET, match(CHROM, STD_CHR), POS)]
-set_counts <- dcast(sets, SET ~ MUTTYPE, fun.aggregate = length, value.var = "POS")
-print(set_counts); fwrite(set_counts, file.path(sig_in, "pass_set_counts.csv"))
-fwrite(sets, file.path(sig_in, "pass_sets.csv"))
-for (st in unique(sets$SET)) {
-  f <- file.path(sig_in, "vcf", paste0(st, ".vcf"))
-  writeLines(c("##fileformat=VCFv4.2", paste0("##source=01_sarek.R PASS set ", st),
-               "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"), f)
-  fwrite(sets[SET == st, .(CHROM, POS, ID = ".", REF, ALT, QUAL = ".", FILTER = "PASS", INFO = ".")],
-         f, sep = "\t", append = TRUE, col.names = FALSE)
-}
-# The same SBS96 counts computed here (+ strand context from the GATK FASTA -> sbs96()), in
-# SigProfiler's matrix format - NOT used for fitting, only to compare with the matrix
-# generator's (01b writes sbs96_compare.csv, class by class).
-m96 <- dcast(sets[!is.na(SBS96)], SBS96 ~ SET, fun.aggregate = length, value.var = "POS")
-m96 <- m96[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
-setnames(m96, "SBS96", "MutationType")
-for (cl in setdiff(names(m96), "MutationType")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
-fwrite(m96, file.path(sig_in, paste0(PATIENT, ".SBS96.from_R.txt")), sep = "\t")
-message("signature inputs: ", sig_in, "  ->  python 01b_sarek_signatures.py")
+), idcol = "SET"), sig_in, "01_sarek.R")
+message("signature inputs: ", sig_in, "  ->  python 01b_sarek_signatures.py; Rscript 01c_sarek_signatures_organ.R")
 
 message("done: ", od)
