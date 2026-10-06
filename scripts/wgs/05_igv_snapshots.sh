@@ -29,7 +29,8 @@ SAREK_FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/H
 # ---- IGV and a display -------------------------------------------------------
 # First IGV found: $IGV (set it to force one), any env in $ENV_ROOT (bioconda's
 # `igv`), an unzipped IGV in $PROGRAMS_DIR; only if none, download IGV once.
-find_first() { local f; for f in "$@"; do [[ -x "$f" ]] && { echo "$f"; return; }; done; }
+# (returns 0 even when nothing is found - with set -e a failing $(...) would end the script silently)
+find_first() { local f; for f in "$@"; do [[ -x "$f" ]] && { echo "$f"; return 0; }; done; return 0; }
 IGV="${IGV:-$(find_first "$ENV_ROOT"/*/bin/igv "$ENV_ROOT"/*/bin/igv.sh "$PROGRAMS_DIR"/IGV_Linux_*/igv.sh)}"
 if [[ -z "$IGV" ]]; then
     log "no IGV in $ENV_ROOT or $PROGRAMS_DIR - downloading $IGV_VERSION to $PROGRAMS_DIR"
