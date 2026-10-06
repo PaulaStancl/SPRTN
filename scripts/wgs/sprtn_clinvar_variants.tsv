@@ -1,0 +1,56 @@
+# SPRTN small variants in ClinVar (GRCh38), pathogenic / likely pathogenic / uncertain / conflicting.
+# Retrieved 2026-10-06 via NCBI E-utilities (esearch/esummary, db=clinvar, SPRTN[gene]); transcript NM_032018.7.
+chrom	start	end	classification	variant	clinvar	condition
+chr1	231338390	231338390	Uncertain significance	c.7G>C (p.Asp3His)	VCV004632077	Inborn genetic diseases
+chr1	231338429	231338429	Uncertain significance	c.46A>T (p.Asn16Tyr)	VCV004632078	Inborn genetic diseases
+chr1	231338454	231338454	Uncertain significance	c.71A>G (p.His24Arg)	VCV003448852	Inborn genetic diseases
+chr1	231338466	231338466	Uncertain significance	c.83C>T (p.Ser28Phe)	VCV003448853	Inborn genetic diseases
+chr1	231338507	231338507	Uncertain significance	c.124A>T (p.Thr42Ser)	VCV002406303	Inborn genetic diseases
+chr1	231338571	231338571	Uncertain significance	c.188C>T (p.Ala63Val)	VCV003800967	Inborn genetic diseases
+chr1	231339786	231339786	Uncertain significance	c.239G>A (p.Ser80Asn)	VCV002223556	Inborn genetic diseases
+chr1	231339815	231339815	Uncertain significance	c.268A>C (p.Ile90Leu)	VCV002474462	Inborn genetic diseases
+chr1	231347825	231347825	Pathogenic	c.350A>G (p.Tyr117Cys)	VCV000143916	Progeroid features-hepatocellular carcinoma predisposition syndrome
+chr1	231347852	231347852	Uncertain significance	c.377A>G (p.Asp126Gly)	VCV002541453	Inborn genetic diseases
+chr1	231347918	231347918	Uncertain significance	c.443A>G (p.Asn148Ser)	VCV002240852	Inborn genetic diseases
+chr1	231351323	231351323	Uncertain significance	c.470A>G (p.Asp157Gly)	VCV002261030	Inborn genetic diseases
+chr1	231351341	231351341	Uncertain significance	c.488G>A (p.Arg163Gln)	VCV004632080	Inborn genetic diseases
+chr1	231351344	231351344	Uncertain significance	c.491G>A (p.Arg164Gln)	VCV004632072	Inborn genetic diseases
+chr1	231351355	231351355	Uncertain significance	c.502C>T (p.Arg168Cys)	VCV004632070	Inborn genetic diseases
+chr1	231351368	231351368	Uncertain significance	c.515C>G (p.Pro172Arg)	VCV004632075	Inborn genetic diseases
+chr1	231351398	231351398	Uncertain significance	c.545A>T (p.Tyr182Phe)	VCV003800966	Inborn genetic diseases
+chr1	231351404	231351404	Uncertain significance	c.551A>G (p.Lys184Arg)	VCV004174123	Inborn genetic diseases
+chr1	231351421	231351421	Uncertain significance	c.568G>A (p.Glu190Lys)	VCV004174125	Inborn genetic diseases
+chr1	231351442	231351442	Uncertain significance	c.589T>C (p.Trp197Arg)	VCV003961457	Inborn genetic diseases
+chr1	231351481	231351481	Uncertain significance	c.628A>G (p.Ile210Val)	VCV002508396	Inborn genetic diseases
+chr1	231351529	231351529	Uncertain significance	c.676G>C (p.Ala226Pro)	VCV002593976	Inborn genetic diseases
+chr1	231351564	231351564	Uncertain significance	c.711G>T (p.Glu237Asp)	VCV004174126	Inborn genetic diseases
+chr1	231351571	231351574	Pathogenic	c.718_718+3del	VCV000143915	not provided
+chr1	231352612	231352612	Pathogenic	c.723del (p.Lys241fs)	VCV000162628	Progeroid features-hepatocellular carcinoma predisposition syndrome
+chr1	231352669	231352669	Uncertain significance	c.778C>G (p.Leu260Val)	VCV004632071	Inborn genetic diseases
+chr1	231352708	231352708	Uncertain significance	c.817A>T (p.Ile273Phe)	VCV004632074	Inborn genetic diseases
+chr1	231352710	231352710	Uncertain significance	c.819C>G (p.Ile273Met)	VCV002411751	Inborn genetic diseases
+chr1	231352718	231352718	Uncertain significance	c.827A>C (p.His276Pro)	VCV004174128	Inborn genetic diseases
+chr1	231352737	231352737	Uncertain significance	c.846A>C (p.Gln282His)	VCV004174121	Inborn genetic diseases
+chr1	231352771	231352771	Uncertain significance	c.880G>A (p.Val294Ile)	VCV003961458	Inborn genetic diseases
+chr1	231352829	231352829	Uncertain significance	c.938C>A (p.Ser313Tyr)	VCV003961453	Inborn genetic diseases
+chr1	231352832	231352832	Uncertain significance	c.941A>C (p.His314Pro)	VCV004632076	Inborn genetic diseases
+chr1	231352833	231352833	Uncertain significance	c.942T>A (p.His314Gln)	VCV003169409	Inborn genetic diseases
+chr1	231352853	231352853	Uncertain significance	c.962G>C (p.Ser321Thr)	VCV003961454	Inborn genetic diseases
+chr1	231352853	231352853	Uncertain significance	c.962G>T (p.Ser321Ile)	VCV002600049	Inborn genetic diseases
+chr1	231352894	231352894	Uncertain significance	c.1003G>A (p.Val335Ile)	VCV003169407	Inborn genetic diseases
+chr1	231352942	231352942	Uncertain significance	c.1051A>G (p.Arg351Gly)	VCV003169408	Inborn genetic diseases
+chr1	231352943	231352943	Uncertain significance	c.1052G>A (p.Arg351Lys)	VCV004174127	Inborn genetic diseases
+chr1	231352957	231352957	Uncertain significance	c.1066G>C (p.Val356Leu)	VCV003448850	Inborn genetic diseases
+chr1	231353000	231353000	Uncertain significance	c.1109G>A (p.Arg370Lys)	VCV002493594	Inborn genetic diseases
+chr1	231353032	231353032	Uncertain significance	c.1141A>C (p.Asn381His)	VCV002369023	Inborn genetic diseases
+chr1	231353117	231353117	Uncertain significance	c.1226C>T (p.Pro409Leu)	VCV003961456	Inborn genetic diseases
+chr1	231353128	231353128	Uncertain significance	c.1237G>A (p.Asp413Asn)	VCV003448849	Inborn genetic diseases
+chr1	231353134	231353134	Uncertain significance	c.1243A>G (p.Thr415Ala)	VCV004632079	Inborn genetic diseases
+chr1	231353136	231353137	Likely pathogenic	c.1246_1247del (p.Val416fs)	VCV003239648	Oligospermia; Reduced sperm motility; Abnormal sperm morphology
+chr1	231353167	231353167	Uncertain significance	c.1276C>A (p.Gln426Lys)	VCV002372932	Inborn genetic diseases
+chr1	231353192	231353192	Uncertain significance	c.1301C>T (p.Pro434Leu)	VCV002395737	Inborn genetic diseases
+chr1	231353207	231353207	Uncertain significance	c.1316C>T (p.Thr439Ile)	VCV002569622	Inborn genetic diseases
+chr1	231353251	231353251	Uncertain significance	c.1360G>A (p.Val454Ile)	VCV004632073	Inborn genetic diseases
+chr1	231353284	231353284	Uncertain significance	c.1393G>A (p.Glu465Lys)	VCV003032049	SPRTN-related disorder
+chr1	231353292	231353292	Uncertain significance	c.1401G>C (p.Gln467His)	VCV003448855	Inborn genetic diseases
+chr1	231353347	231353347	Uncertain significance	c.1456G>A (p.Glu486Lys)	VCV003448851	Inborn genetic diseases

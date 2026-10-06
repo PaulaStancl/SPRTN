@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# 10 - igv-reports: interactive HTML pages (igv.js) of the reads at SPRTN, tumour and
+# 10 - igv-reports: interactive HTML pages (igv.js) of the reads in SPRTN, tumour and
 #      normal from both pipelines. Runs on the server; no IGV, no display needed.
 #
 #   micromamba create -y -p /common/WORK/pstancl/envs/igvreports -c conda-forge -c bioconda igv-reports   # once
-#   ./09_igv_slices.sh                                            # slices for Y117C
-#   NAME=SPRTN_gene PAD=200 ./09_igv_slices.sh <gene + exon loci>   # slices for the gene (see 09)
+#   NAME=SPRTN_gene PAD=200 ./09_igv_slices.sh chr1:231337104-231375416 \
+#       chr1:231338243-231338654 chr1:231339719-231339918 chr1:231347747-231347975 \
+#       chr1:231351254-231351621 chr1:231352560-231355073          # slices of the whole gene
 #   ./10_igv_reports.sh
 #
 # Output: $RESULTS_BASE/igv_reports/
-#   SPRTN_Y117C.html   the Y117C site (chr1:231347825 A>G), as called in the normal by
-#                      Strelka2 germline - its genotype and read counts are in the table
-#   SPRTN_gene.html    the whole gene and each exon (regions from 09's sites.tsv)
-# Tracks: 09's slices (RJALS_Tm / RJALS_N x sarek / oncoanalyser) + the SPRTN exon track.
+#   SPRTN_patient_variants.html   every PASS variant the patient carries in SPRTN: germline
+#                                 (Strelka2, normal; GT / AD / DP in the table) and somatic
+#                                 (Mutect2, Strelka2, SAGE/PURPLE), each a row
+#   SPRTN_clinvar_pathogenic.html ClinVar pathogenic / likely pathogenic SPRTN variants
+#                                 (sprtn_clinvar_variants.tsv): Y117C, c.723del (p.Lys241fs,
+#                                 the C-terminal truncation), c.718_718+3del, c.1246_1247del -
+#                                 the reads at each position, carried or not
+#   SPRTN_clinvar_vus.html        the same for ClinVar's variants of uncertain significance
+#   SPRTN_gene.html               the whole gene and each exon
+# Tracks: 09's SPRTN_gene slices (RJALS_Tm / RJALS_N x sarek / oncoanalyser) + exon track.
 # The HTML files embed the patient's reads: keep them local, outside synced folders.
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -24,45 +31,72 @@ umask 077
 IGVR="${IGVR:-$ENV_ROOT/igvreports/bin/create_report}"
 [[ -x "$IGVR" ]] || die "no create_report at $IGVR - micromamba create -y -p $ENV_ROOT/igvreports -c conda-forge -c bioconda igv-reports"
 FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
-SLICES="$RESULTS_BASE/igv_slices"
+GENE="chr1:231337104-231375416"                      # SPRTN, Ensembl ENSG00000010072
+SL="$RESULTS_BASE/igv_slices/SPRTN_gene"
 OUT="$RESULTS_BASE/igv_reports"; mkdir -p "$OUT"
-GERM="$RESULTS_BASE/sarek/$DATASET/variant_calling/strelka/$NORMAL_ID/$NORMAL_ID.strelka.variants.vcf.gz"
+TMP="$OUT/tmp"; mkdir -p "$TMP"
+CLINVAR="$WGS_SCRIPTS/sprtn_clinvar_variants.tsv"
 EXONS="$WGS_SCRIPTS/igv_SPRTN_exons.bed"
+VC="$RESULTS_BASE/sarek/$DATASET/variant_calling"
+PAIR="${TUMOUR_ID}_vs_${NORMAL_ID}"
 
-tracks() {     # <slice dir> -> the four slice BAMs (+ exon track), tumour first
-    local d="$1" s pl
-    for s in "$TUMOUR_ID" "$NORMAL_ID"; do for pl in sarek oncoanalyser; do
-        [[ -f "$d/${s}_${pl}.slice.bam" ]] || die "missing $d/${s}_${pl}.slice.bam - run ./09_igv_slices.sh first"
-        echo "$d/${s}_${pl}.slice.bam"
-    done; done
-    [[ -f "$EXONS" ]] && grep -v '^track' "$EXONS" > "$OUT/SPRTN_exons.bed" && echo "$OUT/SPRTN_exons.bed"
-    return 0
+# ---- tracks: the four whole-gene slices (tumour first) + exons ------------------------------
+TRACKS=()
+for s in "$TUMOUR_ID" "$NORMAL_ID"; do for pl in sarek oncoanalyser; do
+    f="$SL/${s}_${pl}.slice.bam"
+    [[ -f "$f" ]] || die "missing $f - run NAME=SPRTN_gene PAD=200 ./09_igv_slices.sh <gene + exon loci> first (see header)"
+    TRACKS+=("$f")
+done; done
+[[ -f "$EXONS" ]] && { grep -v '^track' "$EXONS" > "$TMP/SPRTN_exons.bed"; TRACKS+=("$TMP/SPRTN_exons.bed"); }
+report() {     # <sites> <output name> <title> [extra create_report options...]
+    local sites="$1" name="$2" title="$3"; shift 3
+    "$IGVR" "$sites" --fasta "$FASTA" --tracks "${TRACKS[@]}" --flanking 100 --title "$title" "$@" \
+        --output "$OUT/$name.html"
+    ok "$OUT/$name.html"
 }
 
-# ---- 1. Y117C: the germline call itself as the site (genotype, AD, DP in the table) -------
-d="$SLICES/SPRTN_Y117C"
-if [[ -d "$d" ]]; then
-    [[ -f "$GERM" ]] || die "missing $GERM"
-    bcftools view -r chr1:231347825 "$GERM" -Oz -o "$OUT/SPRTN_Y117C.site.vcf.gz"
-    bcftools index -t -f "$OUT/SPRTN_Y117C.site.vcf.gz"
-    (( $(bcftools view -H "$OUT/SPRTN_Y117C.site.vcf.gz" | wc -l) )) || die "Y117C not in $GERM"
-    mapfile -t tr < <(tracks "$d")
-    "$IGVR" "$OUT/SPRTN_Y117C.site.vcf.gz" --fasta "$FASTA" --tracks "${tr[@]}" \
-        --flanking 100 --sample-columns GT AD DP --title "SPRTN p.Tyr117Cys (c.350A>G, rs527236213) - RJALS" \
-        --output "$OUT/SPRTN_Y117C.html"
-    ok "$OUT/SPRTN_Y117C.html"
-else warn "no slices in $d - ./09_igv_slices.sh first; Y117C report skipped"; fi
+# ---- 1. every PASS variant the patient carries in SPRTN ----------------------------------------
+# germline: Strelka2 on the normal; somatic: Mutect2, Strelka2, SAGE/PURPLE (none expected in
+# SPRTN so far, but shown if there are any). One VCF per origin, as igv-reports takes one file.
+GERM="$VC/strelka/$NORMAL_ID/$NORMAL_ID.strelka.variants.vcf.gz"
+[[ -f "$GERM" ]] || die "missing $GERM"
+bcftools view -f PASS -r "$GENE" "$GERM" -Oz -o "$TMP/germline.vcf.gz"; bcftools index -t -f "$TMP/germline.vcf.gz"
+n=$(bcftools view -H "$TMP/germline.vcf.gz" | wc -l)
+log "germline PASS variants in SPRTN (Strelka2, normal): $n"
+(( n )) && report "$TMP/germline.vcf.gz" SPRTN_patient_variants \
+    "SPRTN - germline PASS variants of RJALS (Strelka2, normal $NORMAL_ID)" --sample-columns GT AD DP
 
-# ---- 2. the whole gene + each exon, from 09's sites.tsv ---------------------------------------
-d="$SLICES/SPRTN_gene"
-if [[ -d "$d" ]]; then
-    awk -F'\t' 'NR > 1 { printf "%s\t%d\t%d\tsite%s %s\n", $3, $4 - 1, $5, $1, $2 }' "$d/sites.tsv" > "$OUT/SPRTN_gene.sites.bed"
-    mapfile -t tr < <(tracks "$d")
-    "$IGVR" "$OUT/SPRTN_gene.sites.bed" --fasta "$FASTA" --tracks "${tr[@]}" \
-        --flanking 50 --title "SPRTN gene and exons - RJALS" --output "$OUT/SPRTN_gene.html"
-    ok "$OUT/SPRTN_gene.html"
-else warn "no slices in $d - NAME=SPRTN_gene ./09_igv_slices.sh ... first; gene report skipped"; fi
+som=()
+for f in "$VC/mutect2/$PAIR/$PAIR.mutect2.filtered.vcf.gz" \
+         "$VC/strelka/$PAIR/$PAIR.strelka.somatic_snvs.vcf.gz" "$VC/strelka/$PAIR/$PAIR.strelka.somatic_indels.vcf.gz" \
+         "$RESULTS_BASE/oncoanalyser/$DATASET/$DATASET/purple/$TUMOUR_ID.purple.somatic.vcf.gz"; do
+    [[ -f "$f" ]] || continue
+    k=$(bcftools view -H -f PASS -r "$GENE" "$f" | wc -l)
+    log "somatic PASS in SPRTN, $(basename "$f"): $k"
+    (( k )) && som+=("$f")
+done
+if (( ${#som[@]} )); then
+    : > "$TMP/somatic.bed"
+    for f in "${som[@]}"; do
+        bcftools query -i 'FILTER="PASS"' -r "$GENE" -f '%CHROM\t%POS0\t%END\tsomatic %REF>%ALT ('"$(basename "$f" .vcf.gz)"')\n' "$f" >> "$TMP/somatic.bed"
+    done
+    report "$TMP/somatic.bed" SPRTN_somatic_variants "SPRTN - somatic PASS variants (tumour $TUMOUR_ID)"
+fi
 
-ls -lh "$OUT"/*.html 2>/dev/null || true
+# ---- 2. ClinVar positions: pathogenic / likely pathogenic, and uncertain -----------------------
+[[ -f "$CLINVAR" ]] || die "missing $CLINVAR"
+awk -F'\t' '!/^#/ && $1 != "chrom" && $4 ~ /athogenic/ {printf "%s\t%d\t%d\t%s: %s %s\n", $1, $2 - 1, $3, $4, $5, $6}' "$CLINVAR" > "$TMP/clinvar_plp.bed"
+awk -F'\t' '!/^#/ && $1 != "chrom" && $4 !~ /athogenic/ {printf "%s\t%d\t%d\t%s: %s %s\n", $1, $2 - 1, $3, $4, $5, $6}' "$CLINVAR" > "$TMP/clinvar_vus.bed"
+log "ClinVar sites: $(wc -l < "$TMP/clinvar_plp.bed") pathogenic/likely pathogenic, $(wc -l < "$TMP/clinvar_vus.bed") uncertain"
+report "$TMP/clinvar_plp.bed" SPRTN_clinvar_pathogenic \
+    "SPRTN - ClinVar pathogenic / likely pathogenic positions (Y117C, p.Lys241fs = C-terminal truncation, ...) - RJALS reads"
+[[ -s "$TMP/clinvar_vus.bed" ]] && report "$TMP/clinvar_vus.bed" SPRTN_clinvar_vus \
+    "SPRTN - ClinVar variants of uncertain significance - RJALS reads"
+
+# ---- 3. the whole gene and each exon ------------------------------------------------------------
+awk -F'\t' 'NR > 1 { printf "%s\t%d\t%d\tsite%s %s\n", $3, $4 - 1, $5, $1, $2 }' "$SL/sites.tsv" > "$TMP/gene.bed"
+report "$TMP/gene.bed" SPRTN_gene "SPRTN gene and exons - RJALS"
+
+ls -lh "$OUT"/*.html
 log "copy to your laptop (a local folder, NOT OneDrive/iCloud - the pages embed patient reads):"
-echo "  rsync -av pstancl@ssi-access.chem.pmf.hr:$OUT/*.html ~/igv_RJALS/"
+echo "  rsync -av \"pstancl@ssi-access.chem.pmf.hr:$OUT/*.html\" ~/igv_RJALS/"
