@@ -14,8 +14,7 @@
 # Output: $REF_BASE/msisensorpro/Homo_sapiens_assembly38.msisensorpro_scan.list
 # ---------------------------------------------------------------------------
 set -euo pipefail
-cd "${PBS_O_WORKDIR:-$(dirname "${BASH_SOURCE[0]}")}"
-[[ -f 00_config.sh ]] || cd "$(dirname "${BASH_SOURCE[0]}")"
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"     # the script's own folder, wherever it is started from
 source ./00_config.sh
 
 FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
