@@ -63,9 +63,9 @@ find_aln() {   # <dir> <pattern...>  (first pattern with exactly one hit wins)
 slice() {      # <pipeline> <sample> <alignment>
     local pl="$1" s="$2" aln="$3" out="$OUT/${2}_${1}.slice.bam" bed="$OUT/regions.bed" first
     ok "$pl $s: $aln"
-    # chr1 or 1? Match the BED to the file's own contig names. awk, not head -1: head
-    # would stop reading, samtools would get SIGPIPE and pipefail + set -e end the script.
-    first=$(samtools view -H "$aln" | awk '$1 == "@SQ" { sub(/^SN:/, "", $2); print $2; exit }')
+    # chr1 or 1? Match the BED to the file's own contig names. awk reading to the end (no
+    # head -1, no awk exit): stopping early, samtools would get SIGPIPE and pipefail + set -e end the script.
+    first=$(samtools view -H "$aln" | awk '$1 == "@SQ" && !done { sub(/^SN:/, "", $2); print $2; done = 1 }')
     if [[ "$first" != chr* ]]; then sed 's/^chr//' "$OUT/regions.bed" > "$OUT/regions.nochr.bed"; bed="$OUT/regions.nochr.bed"; fi
     # -T: the reference to decode a CRAM (ignored for BAM); -M: regions may overlap
     samtools view -b -h -M -T "$SAREK_FASTA" -L "$bed" -o "$out" "$aln"
