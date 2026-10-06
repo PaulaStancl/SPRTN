@@ -49,8 +49,16 @@ for x in "chr1:231352600-231352620 p.Lys241fs" "chr1:231351560-231351580 c.718_7
     set -- $x
     for s in "$NORMAL_ID" "$TUMOUR_ID"; do
         samtools mpileup -Q 20 -q 20 -f "$FA" -r "$1" "$S/${s}_sarek.slice.bam" 2>/dev/null \
-          | awk -v v="$2" -v s="$s" '{n = gsub(/-[0-9]+[ACGTNacgtn]+/, "", $5); if (n > 0) { printf "  %-16s %-9s %s:%s  depth %d  deletion reads %d\n", v, s, $1, $2, $4, n; hit = 1 } }
-                                     END { if (!hit) printf "  %-16s %-9s no deletion reads\n", v, s }'
+          | awk -v v="$2" -v s="$s" '{
+                b = $5; n = 0; delete c
+                while (match(b, /-[0-9]+/)) {                     # each -<len><bases> in the pileup
+                    len = substr(b, RSTART + 1, RLENGTH - 1) + 0
+                    seq = toupper(substr(b, RSTART + RLENGTH, len)); c[len "bp " seq]++; n++
+                    b = substr(b, RSTART + RLENGTH + len)
+                }
+                if (n > 0) { out = ""; for (k in c) out = out " " k "=" c[k]
+                    printf "  %-16s %-9s %s:%s  depth %d  deletion reads %d  (deleted:%s)\n", v, s, $1, $2, $4, n, out; hit = 1 } }
+              END { if (!hit) printf "  %-16s %-9s no deletion reads\n", v, s }'
     done
 done
 
@@ -59,10 +67,20 @@ echo "#    every lane of a sample should give a similar VAF; one deviating lane 
 for s in "$NORMAL_ID" "$TUMOUR_ID"; do
     f="$S/${s}_sarek.slice.bam"
     for rg in $(samtools view -H "$f" | awk '$1 == "@RG" { for (i = 2; i <= NF; i++) if ($i ~ /^ID:/) print substr($i, 4) }'); do
-        samtools view -b -r "$rg" "$f" | samtools mpileup -Q 20 -q 20 -f "$FA" -r chr1:231347825-231347825 - 2>/dev/null \
-          | awk -v s="$s" -v rg="$rg" '{b = toupper($5); r = gsub(/[.,]/, "", b); g = gsub(/G/, "", b)
+        # region query on the indexed slice first; piped input has no index, so no -r in mpileup
+        samtools view -b -r "$rg" "$f" chr1:231347825-231347825 | samtools mpileup -Q 20 -q 20 -f "$FA" - 2>/dev/null \
+          | awk -v s="$s" -v rg="$rg" '$2 == 231347825 {b = toupper($5); r = gsub(/[.,]/, "", b); g = gsub(/G/, "", b)
                                       printf "  %-9s %-34s A=%-4d G=%-4d VAF=%.2f\n", s, rg, r, g, (r + g ? g / (r + g) : 0) }'
     done
+done
+
+echo; echo "## 3b. both variants, all lanes: normal vs tumour (VAF shifts + LOH -> phase) --------"
+for s in "$NORMAL_ID" "$TUMOUR_ID"; do
+    samtools mpileup -Q 20 -q 20 -f "$FA" -r chr1:231347825-231347825 "$S/${s}_sarek.slice.bam" 2>/dev/null \
+      | awk -v s="$s" '{b = toupper($5); r = gsub(/[.,]/, "", b); g = gsub(/G/, "", b)
+                        printf "  Y117C          %-9s A=%-4d G=%-4d VAF=%.2f\n", s, r, g, (r + g ? g / (r + g) : 0) }'
+    samtools mpileup -Q 20 -q 20 -f "$FA" -r chr1:231351569-231351569 "$S/${s}_sarek.slice.bam" 2>/dev/null \
+      | awk -v s="$s" '{n = gsub(/-[0-9]+[ACGTNacgtn]+/, "", $5); printf "  c.718_718+3del %-9s deletion %d of %d reads, VAF=%.2f\n", s, n, $4, ($4 ? n / $4 : 0) }'
 done
 
 echo; echo "## 4. PURPLE copy number of SPRTN (tumour) -----------------------------------------"
