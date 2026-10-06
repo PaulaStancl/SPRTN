@@ -61,7 +61,8 @@ for (st in colnames(cat)) {
                nparallel = NCPU, randomSeed = 1, verbose = FALSE)
   sd <- file.path(od, st); unlink(sd, recursive = TRUE); dir.create(sd)
   plotFitMS(res, outdir = paste0(sd, "/"))
-  writeFitResultsToJSON(fitObj = res, filename = file.path(sd, paste0(st, "_FitMS.json")))   # gzipped
+  # uncompressed: compress = TRUE calls R's zip(), which needs R_ZIPCMD - empty in the conda R
+  writeFitResultsToJSON(fitObj = res, compress = FALSE, filename = file.path(sd, paste0(st, "_FitMS.json")))
 
   e  <- res$exposures[st, ]                                       # signatures + "unassigned"
   exp_org[[st]] <- data.table(set = st, signature = names(e), mutations = as.numeric(e),
