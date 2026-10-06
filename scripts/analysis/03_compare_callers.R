@@ -21,6 +21,9 @@
 #   support_by_vaf.csv/.pdf        share of each caller's calls confirmed by >= 1 other, by VAF
 #   vaf_agreement.csv/.pdf         tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
 #   consensus_summary.csv          union, >= 2 callers, all callers - per type
+#   concordance_groups.csv/.pdf    exact combinations + summary bars two_plus and all_callers
+#   snv_96context.pdf/.csv         96-context profile of all / two_plus / all_callers SNVs
+#   sbs96_groups.txt               the same counts, SigProfiler matrix format
 #   snv_vaf_hist.pdf, snv_spectrum.pdf, snv_substitution_spectrum.csv, snv_indel_pass*.csv
 # ---------------------------------------------------------------------------
 source(Filter(file.exists, c("00_setup.R", "analysis/00_setup.R", "scripts/analysis/00_setup.R",
@@ -66,6 +69,26 @@ mut[cons, on = "TYPE", n_able := i.n_callers]
 cons[mut[, .(all_callers = sum(N_CALLERS == n_able)), by = TYPE], on = "TYPE", all_callers := i.all_callers]
 mut[, n_able := NULL]
 print(cons); fwrite(cons, file.path(od, "consensus_summary.csv"))
+
+# concordance bars: every exact combination of callers (each mutation once, in the set of
+# callers that found it) plus two summary groups - found by >= 2 callers (two_plus) and by
+# every caller of that type (all_callers); the summary bars overlap the combination bars
+cg <- rbind(mut[, .(n = .N), by = .(TYPE, group = CALLERS)][, kind := "exact combination"],
+            cons[, .(TYPE, group = "two_plus (>= 2 callers)", n = two_plus, kind = "summary")],
+            cons[, .(TYPE, group = paste0("all_callers (", callers, ")"), n = all_callers, kind = "summary")])
+fwrite(cg[order(TYPE, kind, -n)], file.path(od, "concordance_groups.csv"))
+# summary bars on top, combinations below them by size
+# (ordered within each panel: the label carries the type, stripped again on the axis)
+setorder(cg, TYPE, -kind, n)
+cg[, group_f := factor(paste0(group, "___", TYPE), levels = paste0(group, "___", TYPE))]
+save_plot(ggplot(cg, aes(group_f, n, fill = kind)) + geom_col() +
+            geom_text(aes(label = n), hjust = -0.15, size = 3.2) + coord_flip() +
+            facet_wrap(~TYPE, scales = "free") + scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
+            scale_x_discrete(labels = function(x) sub("___.*$", "", x)) +
+            scale_fill_manual(values = c("exact combination" = "grey55", summary = "steelblue")) +
+            labs(x = NULL, y = "PASS mutations (MNVs split)", fill = NULL,
+                 title = "Concordance: exact caller combinations and summary groups"),
+          "concordance_groups", od, w = 11, h = 6)
 
 # of each caller's calls, how many callers found them (1 = this caller only)
 nc <- atom[, .N, by = .(CALLER, TYPE, N_CALLERS)][, pct := round(100 * N / sum(N), 1), by = .(CALLER, TYPE)]
@@ -130,4 +153,24 @@ if (length(vc) >= 2) {
               "vaf_agreement", od, w = 9, h = 7)
   }
 }
+# ---- 7. 96-context profiles: all PASS SNVs, two_plus, all_callers ---------------------------
+# Each SNV once per group (not once per caller); groups overlap (all >= two_plus >= all_callers).
+# Context from the GATK GRCh38 FASTA (add_sbs96(), as in 01/02); SBS96 counts per group also
+# written in SigProfiler's matrix format (sbs96_groups.txt).
+snv <- mut[TYPE == "SNV", .(CHROM, POS, REF, ALT1 = ALT, MUTTYPE = "SNV", N_CALLERS)]
+add_sbs96(snv)
+n_snv_callers <- cons[TYPE == "SNV", n_callers]
+grp <- rbindlist(list(
+  all         = snv,
+  two_plus    = snv[N_CALLERS >= 2],
+  all_callers = snv[N_CALLERS == n_snv_callers]), idcol = "CALLER")    # CALLER = group: one plot column each
+grp[, CALLER := factor(CALLER, levels = c("all", "two_plus", "all_callers"))]
+print(grp[, .(snvs = .N, with_context = sum(!is.na(SBS96))), by = CALLER])
+m96 <- dcast(grp[!is.na(SBS96)], SBS96 ~ CALLER, fun.aggregate = length, value.var = "POS", drop = FALSE)
+m96 <- m96[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
+for (cl in setdiff(names(m96), "SBS96")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
+setnames(m96, "SBS96", "MutationType")
+fwrite(m96, file.path(od, "sbs96_groups.txt"), sep = "\t")
+grp[, CALLER := as.character(CALLER)]
+plot_96context(grp, od)                                  # snv_96context.pdf / .csv, one column per group
 message("done: ", od)
