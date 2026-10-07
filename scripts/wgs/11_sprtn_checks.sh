@@ -8,7 +8,7 @@
 #
 # Needs 08_region_variants.sh (same folder) and 09's whole-gene slices:
 #   NAME=SPRTN_gene PAD=200 ./09_igv_slices.sh <gene + exon loci>   (see 10's header)
-# Output: $RESULTS_BASE/region_variants/SPRTN_checks.txt  (+ one <name>.txt per 08 search)
+# Output: $RESULTS_BASE/analysis/region_variants/SPRTN_checks.txt  (+ one <name>.txt per 08 search)
 #   1. every VCF record at the ClinVar truncation positions and in the whole gene (08)
 #   2. reads with a deletion starting near each truncation, normal and tumour (pileup)
 #   3. Y117C reads per lane (read group), normal and tumour - a mixed-up lane would differ
@@ -22,9 +22,9 @@ source ./00_config.sh
 activate_tools
 umask 077
 
-OUT_DIR="$RESULTS_BASE/region_variants"; mkdir -p "$OUT_DIR"
+OUT_DIR="$RESULTS_BASE/analysis/region_variants"; mkdir -p "$OUT_DIR"
 REPORT="$OUT_DIR/SPRTN_checks.txt"
-S="$RESULTS_BASE/igv_slices/SPRTN_gene"
+S="$RESULTS_BASE/analysis/igv_slices/SPRTN_gene"
 FA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
 CNV_GENE="$RESULTS_BASE/oncoanalyser/$DATASET/$DATASET/purple/$TUMOUR_ID.purple.cnv.gene.tsv"
 for s in "$NORMAL_ID" "$TUMOUR_ID"; do

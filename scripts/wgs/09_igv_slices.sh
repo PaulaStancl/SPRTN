@@ -10,7 +10,7 @@
 # For each pipeline (sarek CRAMs, oncoanalyser BAMs) and sample (tumour, normal):
 # reads within PAD bp of the sites -> <sample>_<pipeline>.slice.bam + .bai. sarek's
 # CRAMs are written out as BAM, so IGV needs no reference FASTA to read them.
-# Output: $RESULTS_BASE/igv_slices/<NAME>/
+# Output: $RESULTS_BASE/analysis/igv_slices/<NAME>/
 #   *.slice.bam(.bai)   4 slices (tumour/normal x sarek/oncoanalyser)
 #   sites.tsv           the sites, IGV loci
 #   regions.bed         the sliced regions (0-based, padded)
@@ -28,7 +28,7 @@ umask 077
 PAD="${PAD:-500}"
 NAME="${NAME:-SPRTN_Y117C}"
 (( $# )) || set -- chr1:231347825                     # SPRTN c.350A>G, p.Tyr117Cys (rs527236213)
-OUT="$RESULTS_BASE/igv_slices/$NAME"; mkdir -p "$OUT"
+OUT="$RESULTS_BASE/analysis/igv_slices/$NAME"; mkdir -p "$OUT"
 SAREK_FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
 command -v samtools >/dev/null || die "samtools not in $TOOLS_PREFIX/bin"
 [[ -f "$SAREK_FASTA.fai" ]] || die "missing $SAREK_FASTA(.fai) - needed to decode sarek's CRAMs"

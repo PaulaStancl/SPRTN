@@ -13,7 +13,7 @@
 # the two variants + the heterozygous PASS germline SNPs/indels between them (Strelka2,
 # normal) - nothing else - and the report shows only the two variants.
 # Reads: normal alone, and normal + tumour (germline variants are in both; more linking reads). Docs: https://whatshap.readthedocs.io/en/latest/guide.html
-# Output: $RESULTS_BASE/phasing/SPRTN/ input.vcf.gz, {normal_only,normal_tumour}/ phased.vcf.gz, whatshap.log, result.txt
+# Output: $RESULTS_BASE/analysis/phasing/SPRTN/ input.vcf.gz, {normal_only,normal_tumour}/ phased.vcf.gz, whatshap.log, result.txt
 #   same PS (phase set) and opposite haplotypes (0|1 vs 1|0)  -> in trans
 #   same PS and same haplotype (both 0|1 or both 1|0)          -> in cis
 #   different PS, or a variant left unphased                   -> the reads cannot tell
@@ -32,14 +32,14 @@ FA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapie
 GERM="$RESULTS_BASE/sarek/$DATASET/variant_calling/strelka/$NORMAL_ID/$NORMAL_ID.strelka.variants.vcf.gz"
 # reads: 09's whole-gene slices of sarek's CRAMs - every read in SPRTN, and fast (the full CRAMs
 # would make WhatsHap read through much of chr1)
-SL="$RESULTS_BASE/igv_slices/SPRTN_gene"
+SL="$RESULTS_BASE/analysis/igv_slices/SPRTN_gene"
 CRAM="$SL/${NORMAL_ID}_sarek.slice.bam"
 TCRAM="$SL/${TUMOUR_ID}_sarek.slice.bam"
 [[ -f "$GERM" ]] || die "missing $GERM"
 for f in "$CRAM" "$TCRAM"; do
     [[ -f "$f" ]] || die "missing $f - run NAME=SPRTN_gene PAD=200 ./09_igv_slices.sh <gene + exon loci> first (see 10's header)"
 done
-OUT="$RESULTS_BASE/phasing/SPRTN"; mkdir -p "$OUT"
+OUT="$RESULTS_BASE/analysis/phasing/SPRTN"; mkdir -p "$OUT"
 
 Y117C=231347825                       # A>G
 DEL_ANCHOR=231351569                  # deletion of the 4 bases after it (AGGT), VCF-style

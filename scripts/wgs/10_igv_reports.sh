@@ -9,7 +9,7 @@
 #       chr1:231351254-231351621 chr1:231352560-231355073          # slices of the whole gene
 #   ./10_igv_reports.sh
 #
-# Output: $RESULTS_BASE/igv_reports/
+# Output: $RESULTS_BASE/analysis/igv_reports/
 #   SPRTN_patient_variants.html   every PASS variant the patient carries in SPRTN: germline
 #                                 (Strelka2, normal; GT / AD / DP in the table) and somatic
 #                                 (Mutect2, Strelka2, SAGE/PURPLE), each a row
@@ -33,8 +33,8 @@ IGVR="${IGVR:-$ENV_ROOT/igvreports/bin/create_report}"
 [[ -x "$IGVR" ]] || die "no create_report at $IGVR - micromamba create -y -p $ENV_ROOT/igvreports -c conda-forge -c bioconda igv-reports"
 FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
 GENE="chr1:231337104-231375416"                      # SPRTN, Ensembl ENSG00000010072
-SL="$RESULTS_BASE/igv_slices/SPRTN_gene"
-OUT="$RESULTS_BASE/igv_reports"; mkdir -p "$OUT"
+SL="$RESULTS_BASE/analysis/igv_slices/SPRTN_gene"
+OUT="$RESULTS_BASE/analysis/igv_reports"; mkdir -p "$OUT"
 TMP="$OUT/tmp"; mkdir -p "$TMP"
 CLINVAR="$WGS_SCRIPTS/sprtn_clinvar_variants.tsv"
 EXONS="$WGS_SCRIPTS/igv_SPRTN_exons.bed"
