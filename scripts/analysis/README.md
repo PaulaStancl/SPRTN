@@ -134,6 +134,22 @@ and rarely confirmed - the features of deamination-*type* orientation artefacts.
 fresh-frozen, not FFPE; single-strand damage also arises from DNA handling, shearing and heat in
 library prep (Chen et al. 2017), so "deamination-type", not "FFPE", artefacts.
 
+## Status and next steps (end of 2026-10-07)
+
+Done and checked on the server:
+- sarek VEP 116 annotation of all callers finished: `results/wgs/sarek/RJALS_annotate/annotation/<caller>/<vcf name>/*_VEP.ann.vcf.gz`; record counts equal to the inputs, CSQ present (MuSE 5,606; Mutect2 1,254,943; Strelka2 indels 165,820 / SNVs 1,007,172; Manta 406).
+- qcVCF reinstalled in r-mutation from `/common/WORK/pstancl/tools/qcVCF` (HTTPS clone; `remotes::install_local`).
+- `01` ROQ analysis run: ROQ < 20 = 2,100 Mutect2 PASS SNVs, artefact-like (see Method decisions); per-bin table in `qc_vcf/pass/mutect2_roq_cutoff_bins.csv`.
+- `06` run with ClinVar (release 2026-10-04): 1 somatic row annotated; germline table 42 rows with a VCV ID.
+
+Next:
+1. Germline table too long (42 rows): it takes every PASS germline variant in a PURPLE germline-catalogue gene, probably including benign polymorphisms. Check (`cut -d, -f1,2,7 drivers/drivers_germline_table.csv`, count "benign"); if so, keep only PURPLE-reported variants or ClinVar Pathogenic / Likely pathogenic / conflicting (+ SPRTN).
+2. Compare the ROQ check on sarek's original Mutect2 VCF (`roq_original_mutect2.log`, `qc_vcf/pass/mutect2_original_roq_qc.pdf`) with the analysis-set result, and record it under Method decisions.
+3. Decide Open questions 1 (MNV split vs doublet join) and 2 (ROQ < 30 unless confirmed; then extra tumourevo runs on filtered and consensus calls).
+4. OncoKB (API allowed for this patient's data? not decided) / CIViC for the somatic table's Annotation and Tier columns.
+5. Optional: VEP annotation from the sarek annotate run into `06` (consequences for Strelka2 / MuSE-only candidates).
+6. Not yet confirmed on the server: FitMS (01c) after installing NNLM, and the reruns of 01b / 01c / 05 / 05b after the doublet change (05b should show SIGS 2,124 = SigProfiler 2,124, 96/96 channels).
+
 ## Open questions
 
 **1. Compare callers in single bases (MNVs split) or in events (doublets joined)?** *Open since 2026-10-07.*
