@@ -339,6 +339,49 @@ add_sbs96 <- function(atom, by = intersect("CALLER", names(atom))) {
   invisible(atom)
 }
 
+# Mutect2 read-orientation QC: SNVs split at ROQ < cut (ROQ = Phred-scaled quality that the ALT is
+# NOT a read-orientation artefact). m: Mutect2 PASS SNVs with info_ROQ, VAF, T_ALT, REF, ALT1 and,
+# if known, CALLERS. Six panels: ROQ distribution, VAF and ALT reads per group, ROQ vs VAF,
+# substitution classes per group, % confirmed by another caller. Saved as <name>.pdf in od.
+roq_qc_plot <- function(m, od, name = "mutect2_roq_qc", cut = 20, title = "Mutect2 PASS SNVs: read-orientation QC") {
+  m <- copy(m)[!is.na(info_ROQ)]
+  lv <- c(sprintf("ROQ < %g", cut), sprintf("ROQ >= %g", cut))
+  m[, `:=`(ROQ = as.numeric(info_ROQ), grp = factor(fifelse(as.numeric(info_ROQ) < cut, lv[1], lv[2]), levels = lv))]
+  comp <- c(A = "T", C = "G", G = "C", T = "A")
+  m[, class := fifelse(REF %chin% c("C", "T"), paste0(REF, ">", ALT1), paste0(comp[REF], ">", comp[ALT1]))]
+  m[, cls := fifelse(class %chin% c("C>T", "T>C"), class, "other")]
+  n_lab <- m[, .N, by = grp][, setNames(sprintf("%s (n=%s)", grp, format(N, big.mark = ",")), grp)]
+  m[, grp_n := factor(n_lab[as.character(grp)], levels = n_lab[lv])]
+  gcol <- setNames(c("#d62728", "grey55"), n_lab[lv])
+  th <- theme(legend.position = "bottom", legend.title = element_blank())
+  pA <- ggplot(m, aes(ROQ)) + geom_histogram(bins = 60, fill = "grey40") + geom_vline(xintercept = cut, colour = "#d62728", linetype = 2) +
+    labs(x = "ROQ (Phred)", y = "SNVs", title = "A  ROQ distribution", subtitle = sprintf("dashed: cut-off %g (artefact probability %.1f%%)", cut, 100 * 10^(-cut / 10)))
+  pB <- ggplot(m[!is.na(VAF)], aes(VAF, fill = grp_n)) + geom_histogram(bins = 50, position = "identity", alpha = 0.6) +
+    scale_fill_manual(values = gcol) + labs(x = "tumour VAF", y = "SNVs", title = "B  VAF per group") + th
+  pC <- ggplot(m[!is.na(T_ALT) & T_ALT > 0], aes(grp_n, T_ALT, fill = grp_n)) + geom_boxplot(outlier.size = 0.4) +
+    scale_y_log10() + scale_fill_manual(values = gcol, guide = "none") + labs(x = NULL, y = "tumour ALT reads (log10)", title = "C  ALT read support")
+  pD <- ggplot(m[!is.na(VAF)], aes(VAF, ROQ, colour = cls)) + geom_point(size = 0.5, alpha = 0.4) +
+    geom_hline(yintercept = cut, linetype = 2) + scale_colour_manual(values = c("C>T" = "#E62725", "T>C" = "#A1CF64", other = "grey60")) +
+    labs(x = "tumour VAF", y = "ROQ", colour = NULL, title = "D  ROQ vs VAF") + th + guides(colour = guide_legend(override.aes = list(size = 2, alpha = 1)))
+  sp <- m[, .N, by = .(grp_n, class)][, pct := 100 * N / sum(N), by = grp_n]
+  pE <- ggplot(sp, aes(class, pct, fill = grp_n)) + geom_col(position = position_dodge(preserve = "single"), width = 0.75) +
+    scale_fill_manual(values = gcol) + labs(x = NULL, y = "% of the group's SNVs", title = "E  substitution classes") + th
+  plots <- list(pA, pB, pC, pD, pE)
+  if ("CALLERS" %in% names(m)) {
+    cf <- m[, .(pct = 100 * mean(lengths(strsplit(CALLERS, "+", fixed = TRUE)) > 1)), by = grp_n]
+    plots[[6]] <- ggplot(cf, aes(grp_n, pct, fill = grp_n)) + geom_col(width = 0.6) + geom_text(aes(label = sprintf("%.0f%%", pct)), vjust = -0.3) +
+      scale_fill_manual(values = gcol, guide = "none") + scale_y_continuous(limits = c(0, 105)) +
+      labs(x = NULL, y = "% also PASS in another caller", title = "F  confirmed by another caller")
+  }
+  if (requireNamespace("cowplot", quietly = TRUE)) {
+    g <- cowplot::plot_grid(plotlist = plots, ncol = 3, align = "h")
+    g <- cowplot::plot_grid(cowplot::ggdraw() + cowplot::draw_label(title, fontface = "bold", x = 0.01, hjust = 0), g, ncol = 1, rel_heights = c(0.05, 1))
+    save_plot(g, name, od, w = 16, h = 9)
+  } else for (k in seq_along(plots)) save_plot(plots[[k]], paste0(name, "_", LETTERS[k]), od, w = 6, h = 4.5)
+  invisible(m[, .(n = .N, median_VAF = median(VAF, na.rm = TRUE), median_alt_reads = median(T_ALT, na.rm = TRUE),
+                  pct_VAF_below_0.1 = round(100 * mean(VAF < 0.1, na.rm = TRUE), 1)), by = grp])
+}
+
 # qcVCF 96-context plot of the PASS SNVs in atom (doublet halves left out - see add_sbs96()): one column per caller;
 # rows all SNVs plus, if `rowsplit` names a column (e.g. QC_SHARED), one row per value.
 # plot96_matrix() wants NC_3 on the pyrimidine strand (as palimpsest writes it) and does not
