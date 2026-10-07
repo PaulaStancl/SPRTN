@@ -109,14 +109,21 @@ In RJALS (`01` section 5b; `qc_vcf/pass/mutect2_roq_qc.pdf`, `mutect2_roq_spectr
   Mutect2-only counts, the `mutect2` signature set, and tumourevo (Mutect2 PASS only). See Open
   questions 2.
 
-Literature: Costello et al. 2013, Nucleic Acids Res 41:e67 (8-oxoG C>A/G>T artefacts from
-oxidation during shearing; orientation-based filtering); Chen et al. 2017, Science 355:752-756
-(DNA damage is a pervasive cause of sequencing errors in public data incl. TCGA and 1000 Genomes,
-dominating low-frequency variant calls; detected by strand/read imbalance); Do & Dobrovic 2015,
-Clin Chem 61:64-71 (cytosine deamination -> C>T/G>A artefacts, FFPE and beyond); Benjamin et al.
-2019, bioRxiv 10.1101/861054 (Mutect2 / FilterMutectCalls: F-score threshold, orientation-bias
-model "crucial for good performance on FFPE samples"); GATK documentation for
-LearnReadOrientationModel and FilterMutectCalls.
+Literature. No paper defines "low ROQ" as a deamination signature (ROQ is Mutect2-specific); the
+link is: (1) mechanism - cytosine deamination to uracil is read as T, giving C>T/G>A artefacts
+(Do & Dobrovic 2015, Clin Chem 61:64-71; Arbeithuber et al. 2016, DNA Res 23:547-559, uracil and
+deaminated 5-methylcytosine templates); (2) single-strand damage appears as read 1 vs read 2
+(orientation) imbalance (Chen et al. 2017, Science 355:752-756, GIV score; Costello et al. 2013,
+Nucleic Acids Res 41:e67, 8-oxoG C>A/G>T); (3) the direct link - C>T/G>A deamination artefacts carry
+a read-orientation (FR vs RF) bias that true mutations lack, benchmarked against GATK's
+FilterByOrientationBias / LearnReadOrientationModel (Diossy et al. 2021, Brief Bioinform 22(6),
+SOBDetector; Khan & Shih 2025, Brief Bioinform, doi 10.1093/bib/bbaf631.054); (4) the Mutect2
+filter itself: F-score threshold, orientation-bias model "crucial for good performance on FFPE
+samples" (Benjamin et al. 2019, bioRxiv 10.1101/861054; GATK docs LearnReadOrientationModel,
+FilterMutectCalls). Our inference (from our data): the low-ROQ calls are C>T-enriched, low-VAF
+and rarely confirmed - the features of deamination-*type* orientation artefacts. The samples are
+fresh-frozen, not FFPE; single-strand damage also arises from DNA handling, shearing and heat in
+library prep (Chen et al. 2017), so "deamination-type", not "FFPE", artefacts.
 
 ## Open questions
 
