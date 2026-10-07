@@ -17,6 +17,8 @@
 #   same PS (phase set) and opposite haplotypes (0|1 vs 1|0)  -> in trans
 #   same PS and same haplotype (both 0|1 or both 1|0)          -> in cis
 #   different PS, or a variant left unphased                   -> the reads cannot tell
+# plus haplotype_imbalance.txt: tumour read fractions of the SNPs phased with the deletion (its
+#   parental copy) vs Y117C - with SPRTN gained unequally in the tumour, the two copies differ
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -106,3 +108,72 @@ phase_run() {
 phase_run normal_only "normal $NORMAL_ID" "$CRAM"
 phase_run normal_tumour "normal $NORMAL_ID + tumour $TUMOUR_ID" "$CRAM" "$TCRAM"
 log "results: $OUT/normal_only/result.txt and $OUT/normal_tumour/result.txt"
+
+# ---- haplotype-level allelic imbalance: the deletion's copy in the tumour ------------------------
+# WhatsHap put the deletion and some heterozygous SNPs into one phase block = one parental copy.
+# For each SNP in that block: the fraction of reads carrying the allele that sits on the DELETION's
+# copy (ALT if its GT is oriented like the deletion's, REF otherwise). Normal: ~0.5. Tumour: the
+# deletion's copy is the amplified one (~0.68 expected from PURPLE 4.7 vs 1.9 copies, purity 0.6)
+# or the other one (~0.32). Many SNPs give a firmer answer than the deletion's own VAF (which is
+# under-counted). Y117C's tumour VAF on top: ~0.65 = on the amplified copy.
+# If the deletion's copy is the LESS-amplified one while Y117C is on the amplified one -> in trans.
+P="$OUT/normal_tumour/phased.vcf.gz"
+H="$OUT/haplotype_imbalance.txt"
+dps=$(bcftools query -f '%POS\t%REF\t%ALT\t[%GT]\t[%PS]\n' -r "chr1:$(( DEL_ANCHOR - 4 ))-$(( DEL_ANCHOR + 4 ))" "$P" \
+      | awk -F'\t' 'length($2) > length($3) && !d { print $4 "\t" $5; d = 1 }')
+del_gt="${dps%%$'\t'*}"; del_ps="${dps##*$'\t'}"
+{
+echo "# SPRTN haplotype-level allelic imbalance (phase block of c.718_718+3del, WhatsHap normal + tumour) - $(date '+%F %T')"
+if [[ -z "$dps" || "$del_ps" == "." || "$del_gt" != *"|"* ]]; then
+    echo "# the deletion is not phased - nothing to do"
+else
+    echo "# deletion: GT $del_gt in phase block $del_ps; SNPs of that block:"
+    # SNPs in the block: position, REF, ALT, GT
+    bcftools query -i 'TYPE="snp"' -f '%CHROM\t%POS\t%REF\t%ALT\t[%GT]\t[%PS]\n' "$P" \
+      | awk -F'\t' -v ps="$del_ps" '$6 == ps && $5 ~ /\|/' > "$OUT/block_snps.tsv"
+    cut -f1,2 "$OUT/block_snps.tsv" > "$OUT/block_snps.targets"
+    if [[ ! -s "$OUT/block_snps.tsv" ]]; then
+        echo "# no SNPs in the deletion's phase block"
+    else
+        # REF / ALT read counts at the block's SNPs, one sample at a time (MAPQ, BQ >= 20)
+        ad_counts() {   # <alignment> <out>: POS  ref_reads  alt_reads (for the SNP's own ALT)
+            bcftools mpileup -f "$FA" -T "$OUT/block_snps.targets" -a AD -q 20 -Q 20 -I --max-depth 100000 "$1" 2>/dev/null \
+              | bcftools query -f '%POS\t%ALT\t[%AD]\n' \
+              | awk -F'\t' 'FNR == NR { alt[$2] = $4; next }
+                            ($1 in alt) { n = split($2, A, ","); k = 0; for (i = 1; i <= n; i++) if (A[i] == alt[$1]) k = i
+                                          split($3, D, ","); print $1 "\t" D[1] "\t" (k ? D[k + 1] : 0) }' "$OUT/block_snps.tsv" - > "$2"
+        }
+        ad_counts "$CRAM" "$OUT/block_snps.normal"
+        ad_counts "$TCRAM" "$OUT/block_snps.tumour"
+        y117c_t=$(samtools mpileup -Q 20 -q 20 -f "$FA" -r chr1:231347825-231347825 "$TCRAM" 2>/dev/null \
+                  | awk '{ b = toupper($5); r = gsub(/[.,]/, "", b); g = gsub(/G/, "", b); printf "%.2f", (r + g ? g / (r + g) : 0) }')
+        awk -F'\t' -v dgt="$del_gt" -v y117c_t="$y117c_t" '
+            function med(a, n,   i, j, t) { for (i = 2; i <= n; i++) { t = a[i]; for (j = i - 1; j >= 1 && a[j] > t; j--) a[j + 1] = a[j]; a[j + 1] = t }
+                                          return n % 2 ? a[(n + 1) / 2] : (a[n / 2] + a[n / 2 + 1]) / 2 }
+            FILENAME ~ /block_snps.tsv$/    { ref[$2] = $3; alt[$2] = $4; gt[$2] = $5; order[++np] = $2; next }
+            FILENAME ~ /block_snps.normal$/ { nr[$1] = $2; na[$1] = $3; next }
+            FILENAME ~ /block_snps.tumour$/ { tr[$1] = $2; ta[$1] = $3; next }
+            END {
+                for (q = 1; q <= np; q++) {
+                    p = order[q]
+                    if (nr[p] + na[p] < 10 || tr[p] + ta[p] < 10) continue
+                    same = (substr(gt[p], 1, 1) == substr(dgt, 1, 1))           # ALT on the deletion copy?
+                    cn = same ? na[p] : nr[p]; ct = same ? ta[p] : tr[p]
+                    hn = cn / (nr[p] + na[p]); ht = ct / (tr[p] + ta[p])
+                    printf "  %s  %s>%s  GT %s  deletion-copy reads: normal %d/%d (%.2f)  tumour %d/%d (%.2f)\n",
+                           p, ref[p], alt[p], gt[p], cn, nr[p] + na[p], hn, ct, tr[p] + ta[p], ht
+                    m++; HN[m] = hn; HT[m] = ht
+                }
+                if (!m) { print "# no SNP with enough reads (>= 10 in each sample)"; exit }
+                mn = med(HN, m); mt = med(HT, m)
+                printf "# %d SNPs on the deletion copy: median fraction normal %.2f, tumour %.2f\n", m, mn, mt
+                printf "# Y117C tumour VAF: %s   (expected ~0.68 on the amplified copy, ~0.32 on the other)\n", y117c_t
+                if (mt < 0.45 && y117c_t + 0 > 0.55)      v = "deletion copy LESS amplified, Y117C on the MORE amplified copy -> supports IN TRANS"
+                else if (mt > 0.55 && y117c_t + 0 > 0.55) v = "deletion copy and Y117C both on the MORE amplified copy -> suggests IN CIS"
+                else                                      v = "no clear imbalance - inconclusive"
+                print "# result: " v
+            }' "$OUT/block_snps.tsv" "$OUT/block_snps.normal" "$OUT/block_snps.tumour"
+    fi
+fi
+} | tee "$H"
+log "saved: $H"
