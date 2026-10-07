@@ -47,7 +47,9 @@ if (!any(grepl("^FitMS", names(att))))
   message("no FitMS results under ", file.path(sig, "fitms_liver"), " - run 01c_sarek_signatures_organ.R ", PIPELINE)
 f <- file.path(sig, "fitms_liver", "fit_summary.csv")
 if (file.exists(f)) { x <- fread(f)
-  fq[["FitMS"]] <- x[, .(method = "FitMS liver (as reference signatures)", set, n = snvs, cosine = cosine_similarity,
+  # one FitMS fit per set, on the liver organ signatures; the RefSig view is a conversion of the
+  # same exposures, so this cosine (catalogue vs reconstruction) belongs to both FitMS plots
+  fq[["FitMS"]] <- x[, .(method = "FitMS liver (organ signatures; RefSig view = same fit)", set, n = snvs, cosine = cosine_similarity,
                          unassigned_pct, rare_signature)] }
 if (!length(att)) stop("no signature fits under ", sig, " - run 01b_sarek_signatures.py --pipeline ", PIPELINE,
                        " (and 01c_sarek_signatures_organ.R ", PIPELINE, ") first", call. = FALSE)
@@ -130,7 +132,8 @@ if (length(fq)) {
               geom_hline(yintercept = 0.9, linetype = 2, colour = "grey50") +
               scale_y_continuous(limits = c(min(0.5, min(fq$cosine, na.rm = TRUE)), 1)) +
               labs(x = NULL, y = "cosine similarity (profile vs reconstruction)", colour = NULL,
-                   title = "Signature fit quality per PASS set", subtitle = "dashed: 0.9, a good fit") +
+                   title = "Signature fit quality per PASS set",
+                   subtitle = "dashed: 0.9, a good fit; FitMS: one fit per set (organ signatures), shown in 05 also as RefSig") +
               theme(axis.text.x = element_text(angle = 30, hjust = 1), legend.position = "bottom"),
             "fit_quality", od, w = 3 + 1.1 * uniqueN(fq$SET), h = 5)
 }
