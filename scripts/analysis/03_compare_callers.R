@@ -22,6 +22,7 @@
 #                 consensus_summary.csv            union, >= 2 callers, all callers - per type
 #                 mutation_callers.csv             one row per PASS mutation: callers, n callers, each one's VAF
 #                 set_qc_metrics.pdf, set_qc_score.pdf, set_qc_summary.csv   QC of the >= 2 / all-callers SNV sets per caller
+#                 set_qc_tests.csv                 Wilcoxon this-caller-only vs >= 2 / vs all, BH-adjusted
 #   vaf/          snv_vaf_hist.pdf                 tumour VAF per caller
 #                 support_by_vaf.csv/.pdf          share of each caller's calls confirmed by >= 1 other, by VAF
 #                 vaf_agreement.csv/.pdf           tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
@@ -228,22 +229,49 @@ summ_q <- ql[, .(n = .N, median = median(value), q25 = quantile(value, 0.25), q7
              by = .(metric, CALLER, SET)][order(metric, CALLER, SET)]
 print(summ_q); fwrite(summ_q, file.path(d_ovl, "set_qc_summary.csv"))
 set_cols <- setNames(c("grey70", "#56B4E9", "#0072B2"), unname(set_lab))
+# Statistics: within each caller and metric, "this caller only" vs ">= 2 callers" and vs "all
+# callers" (Wilcoxon rank-sum, two-sided). ">= 2" vs "all" is not tested - "all" is a subset of
+# ">= 2", so the groups are not independent. Tests use ALL values (the top 1% is left out of the
+# plots only); p adjusted for all tests together (Benjamini-Hochberg).
+wt <- function(a, b) if (length(a) < 3 || length(b) < 3) NA_real_ else
+  tryCatch(suppressWarnings(wilcox.test(a, b, exact = FALSE)$p.value), error = function(e) NA_real_)
+tests <- ql[, {
+  ref <- value[SET == set_lab[["only"]]]
+  rbindlist(lapply(c("two", "all"), function(k) { x <- value[SET == set_lab[[k]]]
+    data.table(comparison = paste(set_lab[["only"]], "vs", set_lab[[k]]), n_only = length(ref), n_set = length(x),
+               median_only = median(ref), median_set = median(x), p = wt(ref, x)) }))
+}, by = .(metric, CALLER)]
+tests[, p_adj := p.adjust(p, "BH")]
+tests[, signif := fcase(is.na(p_adj), "n/a", p_adj < 0.001, "***", p_adj < 0.01, "**", p_adj < 0.05, "*", default = "ns")]
+print(tests); fwrite(tests, file.path(d_ovl, "set_qc_tests.csv"))
+fmt_p <- function(p, st) fifelse(is.na(p), "n/a", paste0(fifelse(p < 0.001, "p<0.001", sprintf("p=%.2g", p)), " ", st))
+plab <- tests[, .(label = paste0("only vs >=2: ", fmt_p(p_adj[1], signif[1]), "\nonly vs all: ", fmt_p(p_adj[2], signif[2]))),
+              by = .(metric, CALLER)]
+plab[, metric_lab := factor(mets[metric], levels = mets)]
+stat_sub <- "Wilcoxon rank-sum on all values, BH-adjusted; *** <0.001 ** <0.01 * <0.05"
 qp <- ql[metric != "SCORE"][, .SD[value <= quantile(value, 0.99)], by = .(metric, CALLER)]   # display: drop top 1%
 if (nrow(qp))
   save_plot(ggplot(qp, aes(SET, value, fill = SET)) + geom_boxplot(outlier.shape = NA) +
+              geom_text(data = plab[metric != "SCORE"], aes(x = 2, y = Inf, label = label), inherit.aes = FALSE,
+                        vjust = 1.15, size = 2.4, lineheight = 0.9) +
               facet_grid(metric_lab ~ CALLER, scales = "free_y", switch = "y") +
+              scale_y_continuous(expand = expansion(mult = c(0.05, 0.45))) +             # room for the p-values
               scale_fill_manual(values = set_cols) +
               labs(x = NULL, y = NULL, fill = NULL, title = "QC of the consensus SNV sets, as each caller measured them",
-                   subtitle = "box = median and IQR; outliers not drawn; each caller's top 1% left out") +
+                   subtitle = paste0("box = median and IQR; outliers not drawn; each caller's top 1% left out (plot only)\n", stat_sub)) +
               theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
                     strip.placement = "outside", legend.position = "bottom"),
             "set_qc_metrics", d_ovl, w = 3 + 2.6 * uniqueN(qp$CALLER), h = 2 + 2.2 * uniqueN(qp$metric))
 qs <- ql[metric == "SCORE"][, .SD[value <= quantile(value, 0.99)], by = CALLER]
 if (nrow(qs))
   save_plot(ggplot(qs, aes(SET, value, fill = SET)) + geom_boxplot(outlier.shape = NA) +
+              geom_text(data = plab[metric == "SCORE"], aes(x = 2, y = Inf, label = label), inherit.aes = FALSE,
+                        vjust = 1.15, size = 2.6, lineheight = 0.9) +
               facet_wrap(~CALLER, scales = "free_y", nrow = 1) + scale_fill_manual(values = set_cols) +
+              scale_y_continuous(expand = expansion(mult = c(0.05, 0.35))) +
               labs(x = NULL, y = "caller score", fill = NULL, title = "Caller score of the consensus SNV sets",
-                   subtitle = "Mutect2 TLOD, Strelka2 SomaticEVS, SAGE QUAL - each on its own scale; MuSE has no score") +
+                   subtitle = paste0("Mutect2 TLOD, Strelka2 SomaticEVS, SAGE QUAL - each on its own scale; MuSE has no score; ",
+                                     "each caller's top 1% left out (plot only)\n", stat_sub)) +
               theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom"),
             "set_qc_score", d_ovl, w = 3 + 2.6 * uniqueN(qs$CALLER), h = 4.5)
 
