@@ -98,8 +98,9 @@ In RJALS (`01` section 5b; `qc_vcf/pass/mutect2_roq_qc.pdf`, `mutect2_roq_spectr
 `mutect2_roq_cutoff.*`, `snv_96context_mutect2_by_ROQ.*`):
 - 2,100 of 5,393 Mutect2 PASS SNVs have ROQ < 20: median VAF 0.06 (vs 0.30), 4 ALT reads (vs 19),
   80% with VAF < 0.1, C>T 59% (vs 28%) and T>C 23% (vs 17%), C>A unchanged (no oxidation
-  signal), 26% confirmed by another caller (vs 73%). The same holds in sarek's original Mutect2
-  VCF (not normalised, MNVs not split).
+  signal), 26% confirmed by another caller (vs 73%). The same check on sarek's original Mutect2
+  VCF (not normalised, MNVs not split; `mutect2_original_roq_qc.pdf`) was run - result still to
+  be compared here.
 - Per ROQ bin the C>T excess persists up to 20-30 (72% at 0-5, 36% at 20-25) and is gone from 30
   (~20%, clean group >= 60: 30%); 30-60 have normal C>T but rising confirmation and VAF - real
   low-VAF calls (a call with few ALT reads cannot reach a high ROQ).
