@@ -393,6 +393,49 @@ roq_qc_plot <- function(m, od, name = "mutect2_roq_qc", cut = 20, title = "Mutec
                   pct_VAF_below_0.1 = round(100 * mean(VAF < 0.1, na.rm = TRUE), 1)), by = grp])
 }
 
+# Is the ROQ cut-off right? m: Mutect2 PASS SNVs with info_ROQ, VAF, REF, ALT1, CALLERS.
+# (1) per ROQ bin: % confirmed by another caller, median VAF, % C>T - a good cut-off is where the
+#     bins turn from artefact-like (low confirmation, low VAF, C>T-rich) to like the high-ROQ calls;
+# (2) per candidate cut-off: calls removed, and of those how many another caller confirms (real
+#     calls a plain cut would lose; a "drop unless confirmed" rule keeps them).
+# Writes <name>.pdf and <name>_bins.csv / <name>_cuts.csv to od.
+roq_cutoff_plot <- function(m, od, name = "mutect2_roq_cutoff", cuts = c(5, 10, 15, 20, 25, 30, 40, 50)) {
+  m <- copy(m)[!is.na(info_ROQ) & !is.na(CALLERS)]
+  if (!nrow(m)) return(invisible(NULL))
+  comp <- c(A = "T", C = "G", G = "C", T = "A")
+  m[, `:=`(ROQ = as.numeric(info_ROQ), conf = lengths(strsplit(CALLERS, "+", fixed = TRUE)) > 1,
+           cls = fifelse(REF %chin% c("C", "T"), paste0(REF, ">", ALT1), paste0(comp[REF], ">", comp[ALT1])))]
+  br <- c(0, 5, 10, 15, 20, 25, 30, 40, 50, 60, Inf)
+  m[, bin := cut(ROQ, br, right = FALSE, labels = c(paste0(head(br, -2), "-", br[-c(1, length(br))]), ">=60"))]
+  bins <- m[, .(snvs = .N, confirmed_pct = round(100 * mean(conf), 1), median_VAF = round(median(VAF, na.rm = TRUE), 3),
+                C_to_T_pct = round(100 * mean(cls == "C>T"), 1)), keyby = bin]
+  ref <- m[ROQ >= 40, .(confirmed_pct = 100 * mean(conf), median_VAF = median(VAF, na.rm = TRUE), C_to_T_pct = 100 * mean(cls == "C>T"))]
+  cutt <- rbindlist(lapply(cuts, function(k) m[, .(cut = k, removed = sum(ROQ < k), removed_confirmed = sum(ROQ < k & conf),
+    removed_pct = round(100 * mean(ROQ < k), 1), kept = sum(ROQ >= k | conf))]))
+  print(bins); print(cutt)
+  fwrite(bins, file.path(od, paste0(name, "_bins.csv"))); fwrite(cutt, file.path(od, paste0(name, "_cuts.csv")))
+  lb <- melt(bins, id.vars = c("bin", "snvs"), variable.name = "measure")
+  lb[, measure := factor(measure, levels = c("confirmed_pct", "median_VAF", "C_to_T_pct"),
+                         labels = c("% confirmed by another caller", "median VAF", "% C>T"))]
+  rl <- melt(ref, measure.vars = names(ref), variable.name = "measure")[
+    , measure := factor(measure, levels = c("confirmed_pct", "median_VAF", "C_to_T_pct"), labels = levels(lb$measure))]
+  p1 <- ggplot(lb, aes(bin, value, group = 1)) + geom_line(colour = "grey40") + geom_point(aes(size = snvs), colour = "#1f77b4") +
+    geom_hline(data = rl, aes(yintercept = value), linetype = 2, colour = "grey50") +
+    facet_wrap(~measure, scales = "free_y", ncol = 1) + scale_size_area(max_size = 5) +
+    labs(x = "ROQ bin", y = NULL, size = "SNVs", title = "Mutect2 PASS SNVs by ROQ bin",
+         subtitle = "dashed: level of the ROQ >= 40 calls; the cut-off belongs where bins reach it") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  lc <- melt(cutt[, .(cut, `removed, not confirmed` = removed - removed_confirmed, `removed but confirmed (lost by a plain cut)` = removed_confirmed)],
+             id.vars = "cut", variable.name = "what", value.name = "n")
+  p2 <- ggplot(lc, aes(factor(cut), n, fill = what)) + geom_col(width = 0.7) +
+    scale_fill_manual(values = c("grey60", "#d62728")) +
+    labs(x = "ROQ cut-off (remove ROQ < cut)", y = "SNVs removed", fill = NULL, title = "What each cut-off removes",
+         subtitle = "red: confirmed by another caller - kept by 'drop unless confirmed'") + theme(legend.position = "bottom")
+  g <- if (requireNamespace("cowplot", quietly = TRUE)) cowplot::plot_grid(p1, p2, ncol = 2, rel_widths = c(1, 1)) else p1
+  save_plot(g, name, od, w = 13, h = 7.5)
+  invisible(list(bins = bins, cuts = cutt))
+}
+
 # qcVCF 96-context plot of the PASS SNVs in atom (doublet halves left out - see add_sbs96()): one column per caller;
 # rows all SNVs plus, if `rowsplit` names a column (e.g. QC_SHARED), one row per value.
 # plot96_matrix() wants NC_3 on the pyrimidine strand (as palimpsest writes it) and does not

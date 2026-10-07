@@ -138,7 +138,7 @@ if (HAVE_QCVCF) {
 # orientation only). FilterMutectCalls has no fixed ROQ cut-off, so low-ROQ calls can PASS.
 # If they are artefacts, the low-ROQ group has excess C>A (or C>T) and is rarely confirmed by
 # another caller. SPRTN_ROQ_CUT (default 20 = 1% artefact probability) sets the split.
-# Output (qc_vcf/pass/): snv_96context_mutect2_by_ROQ.pdf/.csv, mutect2_roq_spectrum.pdf, mutect2_roq_qc.pdf,
+# Output (qc_vcf/pass/): snv_96context_mutect2_by_ROQ.pdf/.csv, mutect2_roq_spectrum.pdf, mutect2_roq_qc.pdf, mutect2_roq_cutoff.pdf (+ _bins / _cuts .csv),
 #   mutect2_roq_spectrum.csv (class share per group, Fisher test per class, BH), mutect2_roq_confirmed.csv
 if ("info_ROQ" %in% names(atom) && atom[CALLER == "mutect2" & MUTTYPE == "SNV" & !is.na(info_ROQ), .N] > 0) {
   ROQ_CUT <- as.numeric(Sys.getenv("SPRTN_ROQ_CUT", "20"))
@@ -178,6 +178,8 @@ if ("info_ROQ" %in% names(atom) && atom[CALLER == "mutect2" & MUTTYPE == "SNV" &
   print(cf); fwrite(cf, file.path(pass_dir, "mutect2_roq_confirmed.csv"))
   # QC figure: ROQ distribution, VAF / ALT reads per group, ROQ vs VAF, classes, % confirmed
   print(roq_qc_plot(m2, pass_dir, cut = ROQ_CUT))
+  # is the cut-off right? evidence per ROQ bin, and what each candidate cut-off removes
+  roq_cutoff_plot(m2, pass_dir)
 } else message("no Mutect2 ROQ values - section 5b skipped")
 # ---- 6. clonal vs subclonal: PyClone-VI clusters (tumourevo) on the Mutect2 calls ----
 # tumourevo ran PyClone-VI on sarek's Mutect2 PASS calls (autosomes; copy number and purity
