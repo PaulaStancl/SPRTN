@@ -84,8 +84,9 @@ for s in "$NORMAL_ID" "$TUMOUR_ID"; do
 done
 
 echo; echo "## 4. PURPLE copy number of SPRTN (tumour) -----------------------------------------"
-echo "#    minMinorAlleleCopyNumber ~0 = LOH: then a variant on the kept allele rises in tumour VAF,"
-echo "#    one on the lost allele falls - two variants moving in opposite directions are in trans"
+echo "#    minor vs major allele copies (= copy number - minor): LOH (minor ~0) or any imbalance"
+echo "#    (e.g. 4.7 vs 1.9 copies) phases two heterozygous variants: one on the more-amplified copy"
+echo "#    rises in tumour VAF, one on the other copy stays / falls - opposite moves = in trans"
 if [[ -f "$CNV_GENE" ]]; then
     paste <(head -1 "$CNV_GENE" | tr '\t' '\n') <(awk -F'\t' '$0 ~ /\tSPRTN\t/' "$CNV_GENE" | head -1 | tr '\t' '\n') \
       | grep -iE 'gene|copyNumber|minorAllele|somaticRegions|germline' | sed 's/^/  /'
