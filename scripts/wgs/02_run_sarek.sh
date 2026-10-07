@@ -128,9 +128,17 @@ if [[ ",$SAREK_TOOLS," == *",msisensorpro,"* ]]; then
     log "msisensor: $MSISENSORPRO_SCAN"
 fi
 if [[ "$SAREK_STEP" == annotate ]]; then
-    EXTRA+=(--vep_cache "$VEP_CACHE" --vep_cache_version "$SAREK_VEP_CACHE_VERSION" --download_cache false
-            --vep_include_fasta true
-            --vep_custom_args "--everything --per_gene --total_length --offline --format vcf")
+    # In a params file, not on the command line: there Nextflow 26 passes "--x true" as the
+    # string "true" (sarek's schema rejects it), and a value starting with "--" (the VEP
+    # arguments) can be taken for options. download_cache is false by default.
+    VEP_PARAMS="$NXF_WORK_BASE/$RUN/vep_params.yml"
+    cat > "$VEP_PARAMS" <<EOF
+vep_cache: "$VEP_CACHE"
+vep_cache_version: "$SAREK_VEP_CACHE_VERSION"
+vep_include_fasta: true
+vep_custom_args: "--everything --per_gene --total_length --offline --format vcf"
+EOF
+    EXTRA+=(-params-file "$VEP_PARAMS")
     log "VEP      : ${SAREK_VEP_CACHE_VERSION}_GRCh38 from $VEP_CACHE (no --filter_common)"
 fi
 log "outdir   : $OUT"
