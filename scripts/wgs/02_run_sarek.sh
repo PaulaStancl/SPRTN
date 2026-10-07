@@ -7,15 +7,25 @@
 #   ./02_run_sarek.sh
 #   SAREK_TOOLS=strelka,manta,ascat ./02_run_sarek.sh    # faster, no Mutect2
 #   SAREK_STEP=variant_calling SAREK_TOOLS=muse,msisensorpro ./02_run_sarek.sh
+#   SAREK_STEP=annotate ./02_run_sarek.sh                # VEP on every caller's VCF
 #
 # SAREK_STEP=variant_calling adds callers to a finished run without realigning:
 # it starts from that run's recalibrated CRAMs (csv/recalibrated.csv) and writes
 # to its own outdir (<dataset>_vc) and launch dir, so the main run's MultiQC,
 # csv/ and resume history stay untouched.
 #
+# SAREK_STEP=annotate runs only sarek's annotation (VEP $SAREK_VEP_CACHE_VERSION, the version
+# sarek 3.10 ships) on the somatic VCFs of the finished runs: the bcftools-normalised SNV/indel
+# VCFs from 06 (Mutect2, Strelka2 snvs + indels, MuSE), so they match the analysis, plus Manta's
+# somatic SVs. Output: <dataset>_annotate/annotation/<caller>/<pair>/*_VEP.ann.vcf.gz.
+# Needs the VEP cache: VEP_CACHE_VERSION=116 ../wgs_test/04_download_references.sh vep
+# VEP runs with sarek's default arguments minus --filter_common, which would drop somatic
+# calls that sit on a common germline SNP position.
+#
 # Tools: mutect2 + ascat are what tumourevo (04) consumes; strelka + manta are
 # the second SNV/indel caller and the SV caller. Mutect2 is the slowest step.
-# No VEP here - tumourevo annotates with its own VEP.
+# No VEP in the mapping run - tumourevo annotates with its own VEP 115; SAREK_STEP=annotate
+# adds VEP 116 for all sarek callers afterwards.
 # Re-running resumes (-resume) from the last finished task.
 # ---------------------------------------------------------------------------
 set -euo pipefail
@@ -38,12 +48,39 @@ case "$SAREK_STEP" in
         SHEET="$RESULTS_BASE/sarek/$DATASET/csv/recalibrated.csv"
         OUT="$RESULTS_BASE/sarek/${DATASET}_vc"
         [[ -f "$SHEET" ]] || die "missing $SHEET - the main sarek run (SAREK_STEP=mapping) has to finish first" ;;
-    *)  die "SAREK_STEP must be mapping or variant_calling, not '$SAREK_STEP'" ;;
+    annotate)
+        RUN="sarek_${DATASET}_annotate"
+        SHEET="$SAMPLESHEET_DIR/sarek_${DATASET}_annotate.csv"
+        OUT="$RESULTS_BASE/sarek/${DATASET}_annotate"
+        SAREK_TOOLS=vep
+        PAIR="${TUMOUR_ID}_vs_${NORMAL_ID}"
+        NORM="$RESULTS_BASE/sarek/$DATASET/normalized_bcftools/$PAIR"
+        [[ -d "$NORM" ]] || die "missing $NORM - run ./06_normalize_vcfs.sh first"
+        [[ -d "$VEP_CACHE/homo_sapiens/${SAREK_VEP_CACHE_VERSION}_GRCh38" ]] \
+            || die "VEP cache ${SAREK_VEP_CACHE_VERSION} missing - VEP_CACHE_VERSION=${SAREK_VEP_CACHE_VERSION} ../wgs_test/04_download_references.sh vep"
+        # patient,sample,variantcaller,vcf - one row per VCF; sarek names outputs by caller
+        {
+            echo "patient,sample,variantcaller,vcf"
+            for f in "$NORM"/*.norm.vcf.gz; do
+                case "$(basename "$f")" in
+                    *.mutect2.*) c=mutect2 ;; *.strelka.*) c=strelka ;; *.muse.*) c=muse ;;
+                    *.freebayes.*) c=freebayes ;; *lofreq*) c=lofreq ;; *) continue ;;
+                esac
+                echo "$PATIENT,$PAIR,$c,$f"
+            done
+            sv=$(find "$RESULTS_BASE/sarek/$DATASET/variant_calling/manta/$PAIR" -name "${PAIR}.manta.somatic_sv.vcf.gz" 2>/dev/null | head -1)
+            [[ -n "$sv" ]] && echo "$PATIENT,$PAIR,manta,$sv"
+        } > "$SHEET"
+        (( $(wc -l < "$SHEET") > 1 )) || die "no VCFs found for $SHEET"
+        log "annotate sheet: $SHEET"; sed 's/^/    /' "$SHEET" ;;
+    *)  die "SAREK_STEP must be mapping, variant_calling or annotate, not '$SAREK_STEP'" ;;
 esac
 # A sheet written before SEX was changed would start a run with the wrong sex -
 # and fixing that later restarts every task.
-sheet_sex=$(awk -F, 'NR > 1 { print $2 }' "$SHEET" | sort -u | tr '\n' ' ')
-[[ "$sheet_sex" == "$SEX " ]] || die "$SHEET has sex '$sheet_sex' but 00_config.sh says '$SEX' - re-run ./01_make_samplesheets.sh"
+if [[ "$SAREK_STEP" != annotate ]]; then
+    sheet_sex=$(awk -F, 'NR > 1 { print $2 }' "$SHEET" | sort -u | tr '\n' ' ')
+    [[ "$sheet_sex" == "$SEX " ]] || die "$SHEET has sex '$sheet_sex' but 00_config.sh says '$SEX' - re-run ./01_make_samplesheets.sh"
+fi
 [[ -d "$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/BWAmem2Index" ]] \
     || die "iGenomes not staged - run ../wgs_test/04_download_references.sh sarek"
 
@@ -90,6 +127,12 @@ if [[ ",$SAREK_TOOLS," == *",msisensorpro,"* ]]; then
     EXTRA+=(--msisensorpro_scan "$MSISENSORPRO_SCAN")
     log "msisensor: $MSISENSORPRO_SCAN"
 fi
+if [[ "$SAREK_STEP" == annotate ]]; then
+    EXTRA+=(--vep_cache "$VEP_CACHE" --vep_cache_version "$SAREK_VEP_CACHE_VERSION" --download_cache false
+            --vep_include_fasta true
+            --vep_custom_args "--everything --per_gene --total_length --offline --format vcf")
+    log "VEP      : ${SAREK_VEP_CACHE_VERSION}_GRCh38 from $VEP_CACHE (no --filter_common)"
+fi
 log "outdir   : $OUT"
 
 nf_run "$RUN" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
@@ -106,6 +149,9 @@ nf_run "$RUN" "$NXF_PROFILE" nf-core/sarek -r "$SAREK_REV" \
 log "sarek done: $OUT"
 if [[ "$SAREK_STEP" == mapping ]]; then
     log "Next:  ./04_run_tumourevo.sh   (then: rm -rf $NXF_WORK_BASE/$RUN)"
+elif [[ "$SAREK_STEP" == annotate ]]; then
+    log "Annotated VCFs: $OUT/annotation/<caller>/${TUMOUR_ID}_vs_${NORMAL_ID}/   VEP summaries: $OUT/reports/EnsemblVEP/"
+    log "Work dir no longer needed: rm -rf $NXF_WORK_BASE/$RUN"
 else
     log "Work dir no longer needed: rm -rf $NXF_WORK_BASE/$RUN"
 fi

@@ -18,6 +18,7 @@ Run `../wgs/06_normalize_vcfs.sh` once before, so indels are compared after `bcf
 | 3 | `01c_sarek_signatures_organ.R <pipeline>` | signature-tools (`Rscript --no-environ`) | FitMS, liver common + rare signatures (signature.tools.lib; needs NNLM) |
 | 4 | `05_signature_summary.R <pipeline>` | r-mutation | attributions of all sets side by side (SigProfiler + FitMS), fit quality |
 | 4 | `05b_hartwig_sigs_check.R` | r-mutation | SAGE set: Hartwig SIGS vs our SBS96 counts, and SIGS / SigProfiler / FitMS signatures |
+| 5 | `06_drivers.R` | r-mutation | driver candidates: PURPLE + LINX vs tumourevo (IntOGen HCC), per gene and per mutation, callers per driver mutation, HCC watchlist incl. TERT promoter |
 
 qcVCF (private repo PaulaStancl/qcVCF) must be installed in r-mutation, otherwise the qcVCF
 plots (96-context, pairwise shared) are skipped with a message. Install from a clone:
@@ -49,6 +50,14 @@ base substitutions (DBS78) and excluded from the SBS96 catalogue."*
 **Consensus sets.** sarek SNVs: PASS in >= 2 of Mutect2, Strelka2, MuSE; sarek indels:
 Mutect2 AND Strelka2 (MuSE calls no indels). Shared with oncoanalyser: sarek consensus AND
 SAGE. Matched on CHROM:POS:REF:ALT after splitting MNVs and normalising indels.
+
+**Drivers (06).** PURPLE's driver catalogue (Hartwig gene panel, driver likelihood, AMP/DEL)
+and LINX (disruptions, reported fusions) are compared with tumourevo's annotation, which only
+flags Mutect2 PASS mutations in IntOGen HCC driver genes with a MODERATE/HIGH VEP impact (the
+gene is a known driver gene, not the variant a known driver). A curated HCC watchlist
+(CTNNB1, TP53, AXIN1, ARID1A/2, ... and the TERT promoter, which is non-coding and never flagged
+by tumourevo) lists every PASS mutation there. Knowledge-base annotation (OncoKB, CIViC,
+ClinVar, hotspots) is a later step.
 
 **Signatures.** One fit per set (no de novo extraction - one tumour). SigProfilerAssignment
 `cosmic_fit` with COSMIC reference signatures; FitMS with liver-specific common signatures
@@ -90,4 +99,5 @@ their own row in the 04 table, and rerun 01-04. Until decided, the scripts use A
 - Signatures per comparison set (muse, mutect2, strelka, sage, two_plus, all_callers); `05_signature_summary.R` added; SigProfiler colours.
 - `01c` stops early with install instructions when NNLM is missing (FitMS needs it).
 - `05b_hartwig_sigs_check.R` added (SAGE set vs Hartwig SIGS).
+- `06_drivers.R` added; sarek VEP 116 annotation of all callers (`SAREK_STEP=annotate`, `../wgs/qsub_sarek_annotate.sh`).
 - Doublets counted once (see Method decisions): `vcf_sbs/` signature inputs, 01b runs the matrix generator twice (`matrix_generator/` for SBS96, `matrix_generator_all/` for DBS78 + ID83). Expected effect: SAGE SBS96 2,158 -> 2,124, identical to SIGS. Rerun 01-03, 01b, 01c, 05, 05b.

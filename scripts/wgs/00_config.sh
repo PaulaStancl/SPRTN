@@ -45,6 +45,7 @@ export SAREK_REV="${SAREK_REV:-3.10.0}"
 export ONCOANALYSER_REV="${ONCOANALYSER_REV:-3.0.0}"
 export TUMOUREVO_REV="${TUMOUREVO_REV:-738cb052fd51f47563ff0f96eaa4b2eb9d4b44f3}"   # dev, no release yet
 export VEP_CACHE_VERSION="${VEP_CACHE_VERSION:-115}"     # tumourevo ships ensembl-vep 115.2
+export SAREK_VEP_CACHE_VERSION="${SAREK_VEP_CACHE_VERSION:-116}"   # sarek 3.10 ships ensembl-vep 116.0 (SAREK_STEP=annotate)
 
 # ---- Envs (created by ../wgs_test/02_create_envs.sh) ------------------------
 export NEXTFLOW_VERSION="${NEXTFLOW_VERSION:-26.04.6}"
