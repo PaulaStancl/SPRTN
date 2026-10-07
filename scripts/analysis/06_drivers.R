@@ -26,7 +26,7 @@
 #   drivers_overview.pdf      gene x source
 #   drivers_somatic_table.csv / .md    slide table: somatic driver mutations, CN and SV drivers -
 #                             Gene, Variant (c. / p.), Consequence, VAF, Callers, Driver likelihood,
-#                             Evidence (pipeline), Annotation + Tier (empty: knowledge-base step)
+#                             Evidence (pipeline), Annotation (ClinVar, local VCF - section 7b), Tier (empty)
 #   drivers_germline_table.csv / .md   slide table: PURPLE germline drivers + SPRTN (not on
 #                             Hartwig's germline panel; read counts from the SPRTN slice BAMs, phasing
 #                             from 12_whatshap_sprtn.sh) - Zygosity, VAF normal -> tumour, tumour second
@@ -103,7 +103,8 @@ if (!file.exists(mc_f)) message("no ", mc_f, " - run 03 first for the caller col
 
 # ---- 4. driver mutations -----------------------------------------------------------------------
 drv_genes <- unique(cat_all[driver %chin% c("MUTATION", "GERMLINE_MUTATION") | grepl("MUTATION", driver), gene])
-p_drv <- pv[REPORTED | TIER == "HOTSPOT" | GENE %chin% drv_genes,
+# reported / hotspot always; other variants in a catalogue gene only if protein-changing (PAVE)
+p_drv <- pv[REPORTED | TIER %chin% "HOTSPOT" | (GENE %chin% drv_genes & PAVE_CODING %chin% c("MISSENSE", "NONSENSE_OR_FRAMESHIFT", "SPLICE")),
             .(KEY, CHROM, POS, REF, ALT = ALT1, GENE, PAVE_EFFECT, PAVE_CODING, PAVE_HGVSC, PAVE_HGVSP,
               TIER, REPORTED, VAF_SAGE = round(VAF, 3), in_PURPLE = TRUE)]
 t_drv <- if (nrow(tv)) tv[is_driver == TRUE, c("KEY", "CHROM", "POS", "REF", "ALT1", tcols("SYMBOL", "Consequence", "IMPACT", "HGVSc", "HGVSp", "driver_label", "VAF")), with = FALSE] else data.table(KEY = character())
@@ -179,6 +180,50 @@ if (nrow(pl)) {
             "drivers_overview", od, w = 8, h = 2.5 + 0.25 * uniqueN(pl$gene))
 }
 
+# ---- 7b. ClinVar (local GRCh38 VCF from NCBI; nothing is sent out) ---------------------------------
+# Download once:  mkdir -p /common/WORK/pstancl/references/clinvar && cd $_ &&
+#   wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz{,.tbi}
+# Matched on CHROM:POS:REF:ALT (ClinVar writes chromosomes without "chr"). Per variant: clinical
+# significance (CLNSIG) with review stars (CLNREVSTAT), condition (CLNDN), VariationID, and the
+# somatic oncogenicity classification (ONC / ONCREVSTAT) where the file has it.
+CLINVAR <- Sys.getenv("SPRTN_CLINVAR", "/common/WORK/pstancl/references/clinvar/clinvar.vcf.gz")
+clinvar_date <- if (file.exists(CLINVAR)) {
+  h <- tryCatch(system2("sh", c("-c", shQuote(paste("gzip -dc", shQuote(CLINVAR), "| head -50 | grep -m1 '^##fileDate'"))), stdout = TRUE), error = function(e) "")
+  if (length(h)) sub("^##fileDate=", "", h[1]) else ""
+} else "not available"
+cv_cache <- data.table(KEY = character(), txt = character()); cv_asked <- character()
+clinvar_lookup <- function(keys) {
+  out <- rep(NA_character_, length(keys))
+  if (!file.exists(CLINVAR)) { message("no ClinVar VCF at ", CLINVAR, " - ClinVar annotation skipped (see section 7b)"); return(out) }
+  k <- unique(na.omit(keys)); if (!length(k)) return(out)
+  k <- setdiff(k, cv_asked)                                  # scan the file only for keys not asked before
+  if (length(k)) {
+    cv_asked <<- c(cv_asked, k)
+    kp <- tempfile(); writeLines(unique(sub("^chr", "", paste(tstrsplit(k, ":", fixed = TRUE)[[1]], tstrsplit(k, ":", fixed = TRUE)[[2]], sep = ":"))), kp)
+    cmd <- sprintf("gzip -dc %s | awk -F'\t' 'NR == FNR { w[$1] = 1; next } !/^#/ && (($1 \":\" $2) in w)' %s -", shQuote(CLINVAR), shQuote(kp))
+    hits <- tryCatch(fread(cmd = cmd, header = FALSE, sep = "\t", quote = "", colClasses = "character"), error = function(e) data.table())
+    if (nrow(hits)) {
+      setnames(hits, 1:8, c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"))
+      get_info <- function(info, key) { x <- regmatches(info, regexpr(paste0("(^|;)", key, "=[^;]*"), info))
+        out <- rep(NA_character_, length(info)); out[regexpr(paste0("(^|;)", key, "="), info) > 0] <- sub(paste0("^;?", key, "="), "", x); out }
+      stars <- c(practice_guideline = 4, `reviewed_by_expert_panel` = 3, `criteria_provided,_multiple_submitters,_no_conflicts` = 2,
+                 `criteria_provided,_single_submitter` = 1, `criteria_provided,_conflicting_classifications` = 1,
+                 `criteria_provided,_conflicting_interpretations` = 1)
+      hits[, `:=`(sig = get_info(INFO, "CLNSIG"), rev = get_info(INFO, "CLNREVSTAT"), dn = get_info(INFO, "CLNDN"),
+                  onc = get_info(INFO, "ONC"), oncrev = get_info(INFO, "ONCREVSTAT"))]
+      hits[, txt := paste0(
+        fifelse(is.na(sig), "", sprintf("%s (%s star%s)", gsub("_", " ", sig), fcoalesce(as.character(stars[rev]), "0"), fifelse(fcoalesce(stars[rev], 0) == 1, "", "s"))),
+        fifelse(is.na(dn) | dn %chin% c("not_provided", "not_specified"), "", paste0("; ", gsub("_", " ", sub("\\|.*", "", dn)))),
+        fifelse(is.na(onc), "", paste0("; oncogenicity: ", gsub("_", " ", onc), fifelse(is.na(oncrev), "", paste0(" (", gsub("_", " ", oncrev), ")")))),
+        "; VCV", sprintf("%09d", as.integer(ID)))]
+      hits[, KEY := paste0("chr", sub("^chr", "", CHROM), ":", POS, ":", REF, ":", ALT)]
+      cv_cache <<- unique(rbind(cv_cache, hits[, .(KEY, txt)]), by = "KEY")
+    }
+  }
+  out[!is.na(keys)] <- cv_cache$txt[match(keys[!is.na(keys)], cv_cache$KEY)]
+  out
+}
+
 # ---- 8. slide tables: somatic and germline ------------------------------------------------------
 strip_tx <- function(x) fifelse(is.na(x) | x == "", NA_character_, sub("^[^:]*:", "", x))   # ENST...:c.1A>G -> c.1A>G
 caller_name <- c(muse = "MuSE", mutect2 = "Mutect2", sage = "SAGE", strelka = "Strelka2")
@@ -206,13 +251,16 @@ som <- if (nrow(mt)) mt[, .(
                                          fcoalesce(strip_tx(PAVE_HGVSP), "") != "",
                                        paste0(" / ", fcoalesce(strip_tx(PAVE_HGVSP), strip_tx(if ("VEP_HGVSP" %in% names(mt)) VEP_HGVSP else NA_character_))), "")),
   Consequence = gsub("_", " ", fcoalesce(PAVE_EFFECT, if ("VEP_CONSEQUENCE" %in% names(mt)) VEP_CONSEQUENCE else NA_character_)),
-  VAF = sprintf("%.2f", fcoalesce(VAF_SAGE, if ("VAF_MUTECT2" %in% names(mt)) as.numeric(VAF_MUTECT2) else NA_real_)),
+  # raw tumour VAF: SAGE (PURPLE's VCF, FORMAT/AF) where PURPLE has the mutation, else Mutect2 (tumourevo)
+  VAF = fifelse(!is.na(VAF_SAGE), sprintf("%.2f (SAGE)", VAF_SAGE),
+                fifelse(!is.na(if ("VAF_MUTECT2" %in% names(mt)) as.numeric(VAF_MUTECT2) else NA_real_),
+                        sprintf("%.2f (Mutect2)", if ("VAF_MUTECT2" %in% names(mt)) as.numeric(VAF_MUTECT2) else NA_real_), "—")),
   Callers = pretty_callers(CALLERS, nchar(REF) == 1 & nchar(ALT) == 1),
   `Driver likelihood` = fmt_lik(lik_mut$lik[match(GENE, lik_mut$gene)]),
   `Evidence (pipeline)` = trimws(paste0(fifelse(REPORTED %in% TRUE, "PURPLE reported; ", ""),
                                         fifelse(TIER %chin% "HOTSPOT", "known hotspot (SAGE); ", ""),
                                         fifelse(if ("in_tumourevo_driver" %in% names(mt)) in_tumourevo_driver %in% TRUE else FALSE, "IntOGen HCC gene (tumourevo)", "")), whitespace = "[ ;]"),
-  rank = fifelse(REPORTED %in% TRUE, 1L, 2L))] else data.table()
+  rank = fifelse(REPORTED %in% TRUE, 1L, 2L), KEY)] else data.table()
 cn_rows <- if (nrow(som_cat)) som_cat[driver %chin% c("AMP", "PARTIAL_AMP", "DEL", "HOM_DEL_DISRUPTION", "HOM_DUP_DISRUPTION"), .(
   Gene = gene, `Variant (c. / p.)` = fifelse(grepl("AMP", driver), sprintf("%s, CN %.1f", driver, maxCopyNumber), sprintf("%s, CN %.1f", driver, minCopyNumber)),
   Consequence = fifelse(grepl("AMP", driver), "amplification", "deletion / loss"), VAF = "—", Callers = "PURPLE (copy number)",
@@ -226,11 +274,15 @@ sv_rows <- rbindlist(list(
 som <- rbindlist(list(som, cn_rows, sv_rows), fill = TRUE)
 if (nrow(som)) {
   som <- unique(som)[order(rank, Gene)][, rank := NULL]
-  som[, `:=`(Annotation = "", Tier = "")]                      # OncoKB / CIViC / ClinVar / COSMIC: knowledge-base step
+  if (!"KEY" %in% names(som)) som[, KEY := NA_character_]
+  cv_som <- clinvar_lookup(som$KEY)
+  som[, `:=`(Annotation = fifelse(is.na(cv_som), "", paste("ClinVar:", cv_som)), Tier = "")]   # OncoKB / CIViC: later
+  som[, KEY := NULL]
 }
 fwrite(som, file.path(od, "drivers_somatic_table.csv"))
 write_md(som, file.path(od, "drivers_somatic_table.md"),
-         "Driver likelihood from PURPLE driver catalogue; Callers: SNVs out of 4 (Mutect2, Strelka2, MuSE, SAGE), indels out of 3; annotation sources: [OncoKB / CIViC / ClinVar / COSMIC]")
+         paste0("Driver likelihood from PURPLE driver catalogue; VAF: raw tumour allele fraction (SAGE, else Mutect2); Callers: SNVs out of 4 (Mutect2, Strelka2, MuSE, SAGE), indels out of 3; ",
+                "Annotation: ClinVar ", clinvar_date, " (significance, review stars, condition, oncogenicity where present); OncoKB / CIViC to be added"))
 message("somatic table: ", nrow(som), " rows"); print(som)
 
 # germline: PURPLE germline catalogue + its germline VCF (REPORTED or in a catalogue gene)
@@ -257,7 +309,7 @@ if (!is.na(gv_f)) {
     `Tumour 2nd hit` = fcase(BIAL | (GENE %chin% germ_cat[as.character(biallelic) %chin% c("true", "TRUE"), gene]), "biallelic (PURPLE)",
                              !is.na(MACN) & MACN < 0.5, sprintf("LOH (minor allele CN %.1f)", MACN),
                              VAF > N_VAF + 0.1, "allelic imbalance, variant allele gained", default = "none detected"),
-    ClinVar = fcoalesce(gsub("_", " ", CLN), ""),
+    ClinVar = fcoalesce(gsub("_", " ", CLN), clinvar_lookup(paste(CHROM, POS, REF, ALT1, sep = ":")), ""),
     `Driver likelihood` = fmt_lik(germ_cat$driverLikelihood[match(GENE, germ_cat$gene)]),
     `Gene–disease link` = "", Source = "PURPLE germline (Hartwig panel)")]
 }

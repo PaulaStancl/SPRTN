@@ -56,8 +56,17 @@ and LINX (disruptions, reported fusions) are compared with tumourevo's annotatio
 flags Mutect2 PASS mutations in IntOGen HCC driver genes with a MODERATE/HIGH VEP impact (the
 gene is a known driver gene, not the variant a known driver). A curated HCC watchlist
 (CTNNB1, TP53, AXIN1, ARID1A/2, ... and the TERT promoter, which is non-coding and never flagged
-by tumourevo) lists every PASS mutation there. Knowledge-base annotation (OncoKB, CIViC,
-ClinVar, hotspots) is a later step.
+by tumourevo) lists every PASS mutation there. Somatic slide table rows: PURPLE-reported or
+SAGE-hotspot mutations; other mutations in PURPLE driver-catalogue genes only if protein-changing
+(PAVE missense / nonsense-frameshift / splice); tumourevo is_driver mutations; the TERT promoter;
+PURPLE AMP/DEL; LINX disruptions and reported fusions. VAF = raw tumour allele fraction, labelled
+by source: SAGE (PURPLE's VCF) where PURPLE has the mutation, else Mutect2 (tumourevo); not
+purity-adjusted (PURPLE_AF / PURPLE_VCN would be). ClinVar is matched locally on CHROM:POS:REF:ALT
+from NCBI's GRCh38 ClinVar VCF (`SPRTN_CLINVAR`, default
+`/common/WORK/pstancl/references/clinvar/clinvar.vcf.gz`; download once with
+`wget https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz{,.tbi}`): significance,
+review stars, condition, somatic oncogenicity where present, VCV ID; its file date is printed
+under the table. OncoKB / CIViC are still to be added.
 
 **Signatures.** One fit per set (no de novo extraction - one tumour). SigProfilerAssignment
 `cosmic_fit` with COSMIC reference signatures; FitMS with liver-specific common signatures
@@ -174,5 +183,6 @@ were removed unless also called by another caller."
 - `05` fit quality: the FitMS cosine is labelled as the organ-signature fit (the RefSig plot is the same fit).
 - `06` slide tables: `drivers_somatic_table` and `drivers_germline_table` (.csv/.md); germline includes SPRTN from the slice-BAM pileups, phasing and PURPLE CN.
 - sarek annotate fixes: VEP settings via `-params-file` (Nextflow 26 passes `--x true` as a string); one samplesheet row per VCF with its own sample name (sarek requires a unique patient-sample-status-lane). Result: all 5 VCFs annotated, record counts unchanged (`--filter_common` left out).
+- `06`: ClinVar annotation from a local ClinVar VCF (somatic `Annotation`, germline `ClinVar` where PURPLE gave none); VAF labelled by source (SAGE / Mutect2); catalogue-gene rule limited to protein-changing variants (synonymous / intronic no longer listed).
 - `01` section 5b: Mutect2 ROQ analysis - `roq_qc_plot()` (ROQ distribution, VAF low vs high ROQ with median/mean and Wilcoxon, ALT reads, ROQ vs VAF, classes, % confirmed) and `roq_cutoff_plot()` (evidence per ROQ bin, what each cut-off removes). See Method decisions and Open questions 2.
 - Doublets counted once (see Method decisions): `vcf_sbs/` signature inputs, 01b runs the matrix generator twice (`matrix_generator/` for SBS96, `matrix_generator_all/` for DBS78 + ID83). Expected effect: SAGE SBS96 2,158 -> 2,124, identical to SIGS. Rerun 01-03, 01b, 01c, 05, 05b.
