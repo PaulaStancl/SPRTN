@@ -376,12 +376,19 @@ write_signature_sets <- function(sets, sig_in, source_label) {
   invisible(sets)
 }
 
+# What counts as a call. FILTER == "PASS" for every caller except MuSE, whose FILTER is a
+# confidence tier, not pass / fail: PASS (highest), Tier1 ... Tier5 (lowest). For WGS, MuSE's
+# authors recommend keeping all of them (README, github.com/wwylab/MuSE; WES: all but Tier5).
+# SPRTN_MUSE_TIERS=1,2,3,4 (say) keeps only those tiers besides PASS. See CALLERS.md.
+MUSE_KEEP <- c("PASS", paste0("Tier", strsplit(Sys.getenv("SPRTN_MUSE_TIERS", "1,2,3,4,5"), ",", fixed = TRUE)[[1]]))
+is_pass <- function(d) d$FILTER == "PASS" | (d$CALLER == "muse" & d$FILTER %chin% MUSE_KEEP)
+
 # All records, PASS and filtered, per caller and mutation type (SNV / MNV / INS / DEL): how
 # many passed, why the rest failed, and how depth, allele fraction and score compare between
 # PASS and FAIL. Writes pass_fail_counts, filter_reasons, metrics_summary and metric_* to od.
 raw_qc <- function(calls, od) {
   d <- calls[CHROM %chin% STD_CHR]
-  d[, `:=`(STATUS  = factor(fifelse(FILTER == "PASS", "PASS", "FAIL"), levels = c("PASS", "FAIL")),
+  d[, `:=`(STATUS  = factor(fifelse(is_pass(d), "PASS", "FAIL"), levels = c("PASS", "FAIL")),   # MuSE tiers: see is_pass()
            MUTTYPE = factor(MUTTYPE, levels = intersect(c("SNV", "MNV", "INS", "DEL", "OTHER"), unique(MUTTYPE))))]
 
   # 1. PASS vs FAIL
@@ -389,6 +396,11 @@ raw_qc <- function(calls, od) {
   counts[, pass_pct := round(100 * pass / total, 1)]
   setorder(counts, CALLER, MUTTYPE)
   print(counts); fwrite(counts, file.path(od, "pass_fail_counts.csv"))
+  if ("muse" %in% d$CALLER) {                                   # MuSE's own confidence tiers
+    mt <- d[CALLER == "muse", .N, by = .(FILTER, MUTTYPE)][order(match(FILTER, c("PASS", paste0("Tier", 1:5)))), ]
+    mt[, kept := FILTER %chin% MUSE_KEEP]
+    print(mt); fwrite(mt, file.path(od, "muse_tiers.csv"))
+  }
   pf <- d[, .N, by = .(CALLER, MUTTYPE, STATUS)]
   # share of PASS / FAIL per bar (counts differ by orders of magnitude between types), with the counts on it
   save_plot(ggplot(pf, aes(MUTTYPE, N, fill = STATUS)) +
@@ -450,7 +462,7 @@ raw_qc <- function(calls, od) {
 # spectrum (split MNVs included), and the PASS tables, written to od. Returns, invisibly,
 # list(pass = PASS records as called, atom = the same with MNVs split - see atomize_mnv()).
 snv_indel_summary <- function(calls, od) {
-  calls_pass <- calls[CHROM %chin% STD_CHR & FILTER == "PASS"]
+  calls_pass <- calls[CHROM %chin% STD_CHR & is_pass(calls)]          # MuSE: PASS + Tier1-5 (see is_pass)
   atom       <- atomize_mnv(calls_pass)
 
   if (uniqueN(atom$CALLER) > 1) {
