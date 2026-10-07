@@ -16,7 +16,7 @@
 #   pass_calls/   pass_counts.csv/.pdf  PASS calls per caller and mutation type
 #                 snv_indel_pass.csv, snv_indel_pass_atomized.csv   all PASS records (MNVs whole / split)
 #   overlap/      snv_indel_concordance.csv/.pdf   every exact combination of callers (MNVs split)
-#                 concordance_groups.csv/.pdf      the same + summary bars two_plus, all_callers
+#                 concordance_groups.csv/.pdf      the same + each caller's total + summary bars two_plus, all_callers
 #                 pairwise_overlap.csv, pairwise_overlap_<SNV|INDEL>.pdf   % of row caller's calls in column caller
 #                 n_callers_per_caller.csv/.pdf    of each caller's calls, how many callers found them
 #                 consensus_summary.csv            union, >= 2 callers, all callers - per type
@@ -55,7 +55,7 @@ calls <- rbindlist(lapply(split(vcfs, by = "CALLER"), function(x)
 # ---- 2. PASS calls: counts, concordance of all callers, VAF, spectrum --------------
 pass <- snv_indel_summary(calls, d_pass)    # concordance, VAF histogram, spectrum, PASS tables - moved below
 mv <- function(f, to) { src <- file.path(d_pass, f); ok <- file.exists(src); file.rename(src[ok], file.path(to, f[ok])) }
-mv(c("snv_indel_concordance.csv", "snv_indel_concordance.pdf"), d_ovl)
+mv(c("snv_indel_concordance.csv", "snv_indel_concordance.pdf", "snv_indel_caller_totals.csv"), d_ovl)
 mv("snv_vaf_hist.pdf", d_vaf)
 mv(c("snv_spectrum.pdf", "snv_substitution_spectrum.csv"), d_96)
 calls_pass <- pass$pass; atom <- pass$atom
@@ -94,7 +94,8 @@ print(cons); fwrite(cons, file.path(d_ovl, "consensus_summary.csv"))
 # concordance bars: every exact combination of callers (each mutation once, in the set of
 # callers that found it) plus two summary groups - found by >= 2 callers (two_plus) and by
 # every caller of that type (all_callers); the summary bars overlap the combination bars
-cg <- rbind(mut[, .(n = .N), by = .(TYPE, group = disp(CALLERS))][, kind := "exact combination"],
+cg <- rbind(atom[, .(n = .N), by = .(TYPE, group = paste("total:", disp(CALLER)))][, kind := "caller total"],
+            mut[, .(n = .N), by = .(TYPE, group = disp(CALLERS))][, kind := "exact combination"],
             cons[, .(TYPE, group = two_plus_label, n = two_plus, kind = "summary")],
             cons[, .(TYPE, group = all_callers_label, n = all_callers, kind = "summary")])
 fwrite(cg[order(TYPE, kind, -n)], file.path(d_ovl, "concordance_groups.csv"))
@@ -107,7 +108,7 @@ save_plot(ggplot(cg, aes(n, group_f, fill = kind)) + geom_col() +
             facet_grid(TYPE ~ ., scales = "free", space = "free_y") +           # panel height ~ number of groups
             scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
             scale_y_discrete(labels = function(x) sub("___.*$", "", x)) +
-            scale_fill_manual(values = c("exact combination" = "grey55", summary = "steelblue")) +
+            scale_fill_manual(values = c("caller total" = "#E69F00", "exact combination" = "grey55", summary = "steelblue")) +
             labs(y = NULL, x = "PASS mutations (MNVs split)", fill = NULL,
                  title = "Concordance: exact caller combinations and summary groups"),
           "concordance_groups", d_ovl, w = 11, h = 6)

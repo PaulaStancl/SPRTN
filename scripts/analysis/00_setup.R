@@ -481,6 +481,12 @@ snv_indel_summary <- function(calls, od) {
     # NB indels can be written differently by different callers (normalise with
     # bcftools norm before trusting the indel overlap).
     concord <- unique(atom[, .(CALLER, TYPE, key = paste(CHROM, POS, REF, ALT1, sep = ":"))])
+    # each caller's total (the bars are exact combinations, so no bar shows it): the sum of
+    # every combination that contains the caller - MNVs split, so e.g. SAGE's 17 MNVs add 34 SNVs
+    totals <- concord[, .(n = .N), by = .(CALLER, TYPE)][order(TYPE, CALLER)]
+    fwrite(totals, file.path(od, "snv_indel_caller_totals.csv"))
+    tot_caption <- paste(totals[, .(txt = paste(paste(CALLER, format(n, big.mark = ",")), collapse = " | ")), by = TYPE][
+                           , paste0(TYPE, " per caller: ", txt)], collapse = "\n")
     concord <- concord[, .(callers = paste(sort(CALLER), collapse = "+")), by = .(key, TYPE)]
     concord <- concord[, .(n = .N), by = .(TYPE, callers)]
     print(concord); fwrite(concord, file.path(od, "snv_indel_concordance.csv"))
@@ -488,7 +494,9 @@ snv_indel_summary <- function(calls, od) {
                 geom_col(position = position_dodge(width = 0.9, preserve = "single")) +
                 geom_text(aes(label = n), position = position_dodge(width = 0.9, preserve = "single"), hjust = -0.15, size = 3.5) +
                 scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +      # room for the labels
-                coord_flip() + labs(x = NULL, y = "PASS calls (MNVs split into SNVs)", title = "Overlap between callers"),
+                coord_flip() + labs(x = NULL, y = "PASS calls (MNVs split into SNVs)", title = "Overlap between callers",
+                                    subtitle = "each bar: mutations found by exactly these callers",
+                                    caption = paste0("Totals (= sum of the bars containing the caller)\n", tot_caption)),
               "snv_indel_concordance", od)
   }
 
