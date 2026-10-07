@@ -102,12 +102,13 @@ fwrite(cg[order(TYPE, kind, -n)], file.path(d_ovl, "concordance_groups.csv"))
 # (ordered within each panel: the label carries the type, stripped again on the axis)
 setorder(cg, TYPE, -kind, n)
 cg[, group_f := factor(paste0(group, "___", TYPE), levels = paste0(group, "___", TYPE))]
-save_plot(ggplot(cg, aes(group_f, n, fill = kind)) + geom_col() +
-            geom_text(aes(label = n), hjust = -0.15, size = 3.2) + coord_flip() +
-            facet_wrap(~TYPE, scales = "free") + scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
-            scale_x_discrete(labels = function(x) sub("___.*$", "", x)) +
+save_plot(ggplot(cg, aes(n, group_f, fill = kind)) + geom_col() +
+            geom_text(aes(label = n), hjust = -0.15, size = 3.2) +
+            facet_grid(TYPE ~ ., scales = "free", space = "free_y") +           # panel height ~ number of groups
+            scale_x_continuous(expand = expansion(mult = c(0, 0.15))) +
+            scale_y_discrete(labels = function(x) sub("___.*$", "", x)) +
             scale_fill_manual(values = c("exact combination" = "grey55", summary = "steelblue")) +
-            labs(x = NULL, y = "PASS mutations (MNVs split)", fill = NULL,
+            labs(y = NULL, x = "PASS mutations (MNVs split)", fill = NULL,
                  title = "Concordance: exact caller combinations and summary groups"),
           "concordance_groups", d_ovl, w = 11, h = 6)
 
@@ -116,7 +117,8 @@ nc <- atom[, .N, by = .(CALLER, TYPE, N_CALLERS)][, pct := round(100 * N / sum(N
 fwrite(nc[order(CALLER, TYPE, N_CALLERS)], file.path(d_ovl, "n_callers_per_caller.csv"))
 save_plot(ggplot(nc, aes(CALLER, N, fill = factor(N_CALLERS))) + geom_col(position = "fill") +
             geom_text(aes(label = N), position = position_fill(vjust = 0.5), size = 3) +
-            facet_wrap(~TYPE, scales = "free_x") + scale_y_continuous(labels = function(x) paste0(100 * x, "%")) +
+            facet_grid(. ~ TYPE, scales = "free_x", space = "free_x") +         # panel width ~ number of callers
+            scale_y_continuous(labels = function(x) paste0(100 * x, "%")) +
             labs(x = NULL, y = "share of the caller's PASS calls", fill = "found by\nn callers",
                  title = "How many callers found each caller's PASS calls"),
           "n_callers_per_caller", d_ovl, w = 9, h = 5)

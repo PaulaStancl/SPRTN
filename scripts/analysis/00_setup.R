@@ -416,7 +416,7 @@ raw_qc <- function(calls, od) {
               geom_col(position = "fill") +
               geom_text(aes(label = N), position = position_fill(vjust = 0.5), size = 3) +
               scale_y_continuous(labels = function(x) paste0(100 * x, "%"), expand = c(0, 0)) +
-              facet_wrap(~CALLER, scales = "free_x") +
+              facet_grid(. ~ CALLER, scales = "free_x", space = "free_x") +      # panel width ~ number of types
               labs(x = NULL, y = "share of records (numbers = records)", title = "FILTER outcome per caller and mutation type"),
             "pass_fail_counts", od, w = 9, h = 5)
 
@@ -429,9 +429,9 @@ raw_qc <- function(calls, od) {
                           reason  = unlist(parts, use.names = FALSE))[, .N, by = .(CALLER, MUTTYPE, reason)]
     setorder(reasons, CALLER, -N)
     fwrite(reasons, file.path(od, "filter_reasons.csv"))
-    save_plot(ggplot(reasons, aes(reorder(reason, N, sum), N, fill = MUTTYPE)) + geom_col() + coord_flip() +
-                facet_wrap(~CALLER, scales = "free") +
-                labs(x = NULL, y = "failed records", title = "Why records failed FILTER"),
+    save_plot(ggplot(reasons, aes(N, reorder(reason, N, sum), fill = MUTTYPE)) + geom_col() +
+                facet_grid(CALLER ~ ., scales = "free_y", space = "free_y") +     # panel height ~ number of reasons
+                labs(x = "failed records", y = NULL, title = "Why records failed FILTER"),
               "filter_reasons", od, w = 10, h = 6)
   }
 
@@ -457,8 +457,11 @@ raw_qc <- function(calls, od) {
     x <- long[metric == m]
     if (!nrow(x)) next
     x <- x[, .SD[value <= quantile(value, 0.99)], by = CALLER]      # display only: drop each caller's top 1%
-    save_plot(ggplot(x, aes(MUTTYPE, value, fill = STATUS)) + geom_boxplot(outlier.shape = NA) +
-                facet_wrap(~CALLER, scales = "free") +
+    # panel width ~ number of mutation types; SCORE is on each caller's own scale, so it keeps
+    # one y-axis per caller (facet_grid would share it across the row)
+    fac <- if (m == "SCORE") facet_wrap(~CALLER, scales = "free") else
+             facet_grid(. ~ CALLER, scales = "free_x", space = "free_x")
+    save_plot(ggplot(x, aes(MUTTYPE, value, fill = STATUS)) + geom_boxplot(outlier.shape = NA) + fac +
                 labs(x = NULL, y = metrics[[m]], title = paste0(metrics[[m]], ": PASS vs FAIL"),
                      subtitle = "box = median and IQR; outliers not drawn; each caller's top 1% left out"),
               paste0("metric_", m), od, w = 9, h = 5)
