@@ -131,6 +131,52 @@ if (HAVE_QCVCF) {
   plot_96context(atom, pass_dir, rowsplit = "SHARING", roworder = sharing_levels(n_snv_callers))
   atom[, SHARING := NULL]
 }
+
+# ---- 5b. Mutect2 read-orientation artefacts: profile by ROQ ---------------------------------------
+# ROQ (Mutect2 INFO): Phred-scaled quality that the ALT allele is NOT a read-orientation artefact
+# (LearnReadOrientationModel: e.g. 8-oxoG oxidation -> C>A, deamination -> C>T, seen on one read
+# orientation only). FilterMutectCalls has no fixed ROQ cut-off, so low-ROQ calls can PASS.
+# If they are artefacts, the low-ROQ group has excess C>A (or C>T) and is rarely confirmed by
+# another caller. SPRTN_ROQ_CUT (default 20 = 1% artefact probability) sets the split.
+# Output (qc_vcf/pass/): snv_96context_mutect2_by_ROQ.pdf/.csv, mutect2_roq_spectrum.pdf,
+#   mutect2_roq_spectrum.csv (class share per group, Fisher test per class, BH), mutect2_roq_confirmed.csv
+if ("info_ROQ" %in% names(atom) && atom[CALLER == "mutect2" & MUTTYPE == "SNV" & !is.na(info_ROQ), .N] > 0) {
+  ROQ_CUT <- as.numeric(Sys.getenv("SPRTN_ROQ_CUT", "20"))
+  lv  <- c(sprintf("ROQ < %g", ROQ_CUT), sprintf("ROQ >= %g", ROQ_CUT))
+  m2  <- atom[CALLER == "mutect2" & MUTTYPE == "SNV" & !is.na(SBS96) & !is.na(info_ROQ)]
+  m2[, ROQ_GROUP := factor(fifelse(as.numeric(info_ROQ) < ROQ_CUT, lv[1], lv[2]), levels = lv)]
+  print(m2[, .N, by = ROQ_GROUP])
+  plot_96context(m2[, .(CHROM, POS, REF, ALT1, SBS96, ROQ_GROUP = as.character(ROQ_GROUP),
+                        CALLER = "Mutect2 PASS SNVs by read-orientation quality (ROQ)")],
+                 pass_dir, rowsplit = "ROQ_GROUP", name = "snv_96context_mutect2_by_ROQ", show_all = FALSE, roworder = lv)
+
+  # 6-class spectrum per group; Fisher test per class: share of this class, low vs high ROQ
+  m2[, class := substr(SBS96, 3, 5)]
+  sp <- dcast(m2[, .N, by = .(class, ROQ_GROUP)], class ~ ROQ_GROUP, value.var = "N", fill = 0)
+  setnames(sp, lv, c("n_low", "n_high"))
+  tot <- sp[, .(L = sum(n_low), H = sum(n_high))]
+  sp[, `:=`(pct_low = round(100 * n_low / tot$L, 1), pct_high = round(100 * n_high / tot$H, 1))]
+  sp[, p := mapply(function(a, b) fisher.test(matrix(c(a, tot$L - a, b, tot$H - b), 2))$p.value, n_low, n_high)]
+  sp[, p_BH := signif(p.adjust(p, "BH"), 3)][, p := signif(p, 3)]
+  print(sp); fwrite(sp, file.path(pass_dir, "mutect2_roq_spectrum.csv"))
+  sl <- melt(sp, id.vars = c("class", "p_BH"), measure.vars = c("pct_low", "pct_high"), variable.name = "grp", value.name = "pct")
+  sl[, grp := factor(fifelse(grp == "pct_low", sprintf("%s (n=%d)", lv[1], tot$L), sprintf("%s (n=%d)", lv[2], tot$H)))]
+  lab <- sp[, .(class, y = pmax(pct_low, pct_high) + 2, txt = fifelse(p_BH < 0.001, "p<0.001", sprintf("p=%.2g", p_BH)))]
+  save_plot(ggplot(sl, aes(class, pct, fill = grp)) + geom_col(position = position_dodge(preserve = "single"), width = 0.75) +
+              geom_text(data = lab, aes(class, y, label = txt), inherit.aes = FALSE, size = 3) +
+              scale_fill_manual(values = c("#d62728", "grey60")) +
+              labs(x = NULL, y = "% of the group's SNVs", fill = NULL,
+                   title = "Mutect2 PASS SNVs: substitution spectrum by ROQ",
+                   subtitle = "artefacts: excess C>A (8-oxoG) or C>T (deamination) at low ROQ\nFisher test per class (share low vs high ROQ), BH-adjusted") +
+              theme(legend.position = "bottom"),
+            "mutect2_roq_spectrum", pass_dir, w = 7, h = 4.5)
+
+  # confirmed by another caller? (artefacts are mostly Mutect2-only)
+  m2[, confirmed := lengths(strsplit(CALLERS, "+", fixed = TRUE)) > 1]
+  cf <- m2[, .(snvs = .N, confirmed = sum(confirmed), confirmed_pct = round(100 * mean(confirmed), 1),
+               C_to_A_pct = round(100 * mean(class == "C>A"), 1)), by = ROQ_GROUP][order(ROQ_GROUP)]
+  print(cf); fwrite(cf, file.path(pass_dir, "mutect2_roq_confirmed.csv"))
+} else message("no Mutect2 ROQ values - section 5b skipped")
 # ---- 6. clonal vs subclonal: PyClone-VI clusters (tumourevo) on the Mutect2 calls ----
 # tumourevo ran PyClone-VI on sarek's Mutect2 PASS calls (autosomes; copy number and purity
 # from ASCAT). Its clusters are joined back to the Mutect2 records here (mutation_id is
