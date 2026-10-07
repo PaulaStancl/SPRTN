@@ -41,23 +41,31 @@ if (!is.null(calls)) {
   add_sbs96(atom)
 }
 
-# ---- 3. structural variants: ESVEE and LINX ------------------------------------
+# ---- 3. structural variants: ESVEE and LINX -> sv/ ------------------------------------
+sv_dir <- file.path(od, "sv"); dir.create(sv_dir, showWarnings = FALSE)
 if ("esvee" %in% names(files)) {
   sv <- read_sv_vcf(files[["esvee"]])[, CALLER := "esvee"]
-  sv_summary(sv, od)
+  sv_summary(sv, sv_dir)
 }
-# TODO: match breakpoints between ESVEE and Manta (StructuralVariantAnnotation) in a comparison script.
+# Manta vs ESVEE breakpoints: 04_summary_table.R (within 100 bp)
 if ("linx_svs" %in% names(files)) {
   linx <- fread(files[["linx_svs"]])
-  if ("type" %in% names(linx)) print(linx[, .N, by = type])    # LINX's classification of each SV
+  if ("type" %in% names(linx)) {                                 # LINX's classification of each SV
+    lt <- linx[, .N, by = type][order(-N)]
+    print(lt); fwrite(lt, file.path(sv_dir, "linx_sv_types.csv"))
+  }
 }
 
-# ---- 4. copy number and purity: PURPLE ---------------------------------------
+# ---- 4. copy number and purity: PURPLE -> cnv/ ---------------------------------------
+cn_dir <- file.path(od, "cnv"); dir.create(cn_dir, showWarnings = FALSE)
 seg <- purple_segments(files[["purple_cnv"]])
-cn_summary(seg, od)
+cn_summary(seg, cn_dir)
 pp <- fread(files[["purple_pur"]])
 purity <- data.table(field = names(pp), value = unlist(lapply(pp[1], as.character)))   # transposed: one row per field
-print(purity); fwrite(purity, file.path(od, "purple_purity.csv"))
+print(purity); fwrite(purity, file.path(cn_dir, "purple_purity.csv"))
+# outputs of the earlier flat layout, now in sv/ and cnv/
+unlink(file.path(od, c("sv_counts.csv", "sv_types.pdf", "cn_segments.csv", "cn_genome.pdf",
+                       "cn_state_fraction.csv", "cn_loh_fraction.csv", "purple_purity.csv")))
 
 # ---- 5. qcVCF on the PASS calls ----------------------------------------------
 # One caller here, so no pairwise sharing / shared-unique split (that is the sarek comparison).

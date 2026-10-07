@@ -58,17 +58,22 @@ atom[, CALLERS := paste(sort(unique(CALLER)), collapse = "+"), by = .(CHROM, POS
 atom[, REC_KEY := fifelse(FROM_MNV, MNV_KEY, paste0(CHROM, ":", POS, ":", REF, ">", ALT1))]
 in_strelka <- function(callers) grepl("(^|\\+)strelka(\\+|$)", callers)   # CALLERS contains strelka (any other callers too)
 
-# ---- 3. structural variants: Manta ---------------------------------------------
+# ---- 3. structural variants: Manta -> sv/ ------------------------------------------
+sv_dir <- file.path(od, "sv"); dir.create(sv_dir, showWarnings = FALSE)
 if ("manta" %in% names(files)) {
   sv <- read_sv_vcf(files[["manta"]])[, CALLER := "manta"]
-  sv_summary(sv, od)
+  sv_summary(sv, sv_dir)
 }
 
-# ---- 4. copy number and purity: ASCAT ------------------------------------------
+# ---- 4. copy number and purity: ASCAT -> cnv/ ------------------------------------------
+cn_dir <- file.path(od, "cnv"); dir.create(cn_dir, showWarnings = FALSE)
 seg <- ascat_segments(files[["ascat_seg"]])
-cn_summary(seg, od)
+cn_summary(seg, cn_dir)
 purity <- fread(files[["ascat_pp"]])
-print(purity); fwrite(purity, file.path(od, "ascat_purity_ploidy.csv"))
+print(purity); fwrite(purity, file.path(cn_dir, "ascat_purity_ploidy.csv"))
+# outputs of the earlier flat layout, now in sv/ and cnv/
+unlink(file.path(od, c("sv_counts.csv", "sv_types.pdf", "cn_segments.csv", "cn_genome.pdf",
+                       "cn_state_fraction.csv", "cn_loh_fraction.csv", "ascat_purity_ploidy.csv")))
 
 # ---- 5. qcVCF on the PASS calls ----------------------------------------------
 # qcVCF's CHROM / POS / REF / ALT match these tables; ALT is ALT1 (the first allele - PASS

@@ -482,8 +482,8 @@ snv_indel_summary <- function(calls, od) {
     concord <- concord[, .(n = .N), by = .(TYPE, callers)]
     print(concord); fwrite(concord, file.path(od, "snv_indel_concordance.csv"))
     save_plot(ggplot(concord, aes(reorder(callers, n), n, fill = TYPE)) +
-                geom_col(position = position_dodge(width = 0.9)) +
-                geom_text(aes(label = n), position = position_dodge(width = 0.9), hjust = -0.15, size = 3.5) +
+                geom_col(position = position_dodge(width = 0.9, preserve = "single")) +
+                geom_text(aes(label = n), position = position_dodge(width = 0.9, preserve = "single"), hjust = -0.15, size = 3.5) +
                 scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +      # room for the labels
                 coord_flip() + labs(x = NULL, y = "PASS calls (MNVs split into SNVs)", title = "Overlap between callers"),
               "snv_indel_concordance", od)
@@ -501,7 +501,7 @@ snv_indel_summary <- function(calls, od) {
                         fifelse(pyr, ALT1, unname(comp[ALT1])))]
   spec <- snv[, .(n = .N), by = .(CALLER, class)]
   fwrite(spec, file.path(od, "snv_substitution_spectrum.csv"))
-  save_plot(ggplot(spec, aes(class, n, fill = CALLER)) + geom_col(position = "dodge") +
+  save_plot(ggplot(spec, aes(class, n, fill = CALLER)) + geom_col(position = position_dodge(preserve = "single")) +
               labs(x = NULL, y = "PASS SNVs (incl. split MNVs)", title = "Substitution spectrum"), "snv_spectrum", od)
 
   fwrite(calls_pass, file.path(od, "snv_indel_pass.csv"))
@@ -515,7 +515,7 @@ sv_summary <- function(sv, od) {
   sv[, SVTYPE := fcoalesce(SVTYPE, "unknown")]
   sv_counts <- sv[, .(total = .N, pass = sum(FILTER == "PASS")), by = .(CALLER, SVTYPE)]
   print(sv_counts); fwrite(sv_counts, file.path(od, "sv_counts.csv"))
-  save_plot(ggplot(sv[FILTER == "PASS"], aes(SVTYPE, fill = CALLER)) + geom_bar(position = "dodge") +
+  save_plot(ggplot(sv[FILTER == "PASS"], aes(SVTYPE, fill = CALLER)) + geom_bar(position = position_dodge(preserve = "single")) +
               labs(x = NULL, y = "PASS records", title = "SVs by type (BND = two records per event)"), "sv_types", od)
   invisible(sv)
 }

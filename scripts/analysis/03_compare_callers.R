@@ -61,8 +61,8 @@ mv(c("snv_spectrum.pdf", "snv_substitution_spectrum.csv"), d_96)
 calls_pass <- pass$pass; atom <- pass$atom
 cnt <- calls_pass[, .N, by = .(CALLER, MUTTYPE)][order(CALLER, MUTTYPE)]
 fwrite(dcast(cnt, CALLER ~ MUTTYPE, value.var = "N", fill = 0), file.path(d_pass, "pass_counts.csv"))
-save_plot(ggplot(cnt, aes(CALLER, N, fill = MUTTYPE)) + geom_col(position = position_dodge(0.9)) +
-            geom_text(aes(label = N), position = position_dodge(0.9), vjust = -0.3, size = 3) +
+save_plot(ggplot(cnt, aes(CALLER, N, fill = MUTTYPE)) + geom_col(position = position_dodge(0.9, preserve = "single")) +
+            geom_text(aes(label = N), position = position_dodge(0.9, preserve = "single"), vjust = -0.3, size = 3) +
             scale_y_continuous(expand = expansion(mult = c(0, 0.1))) +
             labs(x = NULL, y = "PASS calls (as called)", title = "PASS calls per caller"),
           "pass_counts", d_pass, w = 8, h = 5)
