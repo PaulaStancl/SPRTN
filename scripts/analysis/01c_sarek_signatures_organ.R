@@ -25,6 +25,11 @@
 # bootstrap with the Gini-scaled exposure filter.
 # ---------------------------------------------------------------------------
 suppressPackageStartupMessages({ library(data.table); library(signature.tools.lib) })
+# FitMS (method KLD) fits with NNLM::nnlm, which is only Suggested, so check before the first fit
+if (!requireNamespace("NNLM", quietly = TRUE))
+  stop("R package NNLM missing (FitMS needs it) - install it from GitHub, as the signature.tools.lib README says:\n",
+       "  micromamba install -p /common/WORK/pstancl/envs/signature-tools -c conda-forge r-remotes r-rcpp r-rcpparmadillo r-rcppprogress compilers\n",
+       "  Rscript --no-environ -e 'remotes::install_github(\"linxihui/NNLM\", upgrade = \"never\")'", call. = FALSE)
 
 PATIENT <- "RJALS"
 ORGAN   <- "Liver"
