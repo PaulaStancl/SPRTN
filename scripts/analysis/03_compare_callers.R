@@ -28,6 +28,8 @@
 #                 snv_96context_per_caller.pdf/.csv  per caller: all / shared / unique SNVs
 #                 snv_96context_groups.pdf/.csv      two_plus / all_callers SNVs (callers named)
 #                 sbs96_groups.txt                   the group counts, SigProfiler matrix format
+#                 snv_96context_candidate_sets.pdf, sbs96_candidate_sets.txt   candidate final sets (section 8)
+#   overlap/      candidate_sets.csv               candidate final sets: n, median VAF, % VAF < 0.10
 # ---------------------------------------------------------------------------
 source(Filter(file.exists, c("00_setup.R", "analysis/00_setup.R", "scripts/analysis/00_setup.R",
   "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN/scripts/analysis/00_setup.R"))[1])
@@ -176,7 +178,7 @@ if (length(vc) >= 2) {
 # Each SNV once per group (not once per caller); all_callers is a subset of two_plus. The plot
 # names the callers of each group; sbs96_groups.txt (SigProfiler matrix format) uses the short
 # names two_plus / all_callers. Context from the GATK GRCh38 FASTA (add_sbs96(), as in 01/02).
-snv <- mut[TYPE == "SNV", .(CHROM, POS, REF, ALT1 = ALT, MUTTYPE = "SNV", N_CALLERS)]
+snv <- mut[TYPE == "SNV", .(KEY, CHROM, POS, REF, ALT1 = ALT, MUTTYPE = "SNV", N_CALLERS, CALLERS)]
 add_sbs96(snv)
 sc  <- cons[TYPE == "SNV"]
 grp <- rbindlist(list(
@@ -199,4 +201,59 @@ add_sbs96(atom)
 atom[, QC_SHARED := fifelse(N_CALLERS >= 2, "shared", "unique")]
 pc <- atom[, .(CHROM, POS, REF, ALT1, SBS96, QC_SHARED, CALLER = disp(CALLER))]
 plot_96context(pc, d_96, rowsplit = "QC_SHARED", name = "snv_96context_per_caller")
+# ---- 8. candidate final sets: which overlap to keep -------------------------------------------
+# Each set is a rule over the callers that found a mutation (PASS, MNVs split, indels normalised):
+#   mutect2+strelka         Mutect2 AND Strelka2 (others may also have it)
+#   sarek >=2 of 3          at least two of Mutect2, Strelka2, MuSE (SNVs; indels: Mutect2 AND Strelka2)
+#   sarek all 3             Mutect2 AND Strelka2 AND MuSE (SNVs only - MuSE calls no indels)
+#   sarek >=2 of 3 + SAGE   the above and also PASS in SAGE/PURPLE (two pipelines agree)
+#   mutect2+strelka + SAGE  Mutect2 AND Strelka2 AND SAGE
+#   >=2 of all callers      any two callers (= two_plus)
+#   all callers             every caller able to call the type
+# Per set and type: number of mutations, median VAF (mean of the callers' VAFs per mutation) and
+# share with VAF < 0.10 (where false positives concentrate); for SNVs also the 96-context profile.
+# Output: overlap/candidate_sets.csv, context_96/snv_96context_candidate_sets.pdf/.csv,
+#         context_96/sbs96_candidate_sets.txt (SigProfiler matrix format)
+has <- function(cl) grepl(paste0("(^|\\+)", cl, "(\\+|$)"), mut$CALLERS)
+present <- sort(unique(atom$CALLER))
+mut[, `:=`(m2 = has("mutect2"), st = has("strelka"), mu = has("muse"), sg = has("sage"))]
+vcols <- grep("^VAF_", names(mut), value = TRUE)
+mut[, VAF_MEAN := rowMeans(.SD, na.rm = TRUE), .SDcols = vcols]
+mut[, n_sarek := m2 + st + mu]
+rules <- list(
+  "mutect2+strelka"        = quote(m2 & st),
+  "sarek >=2 of 3"         = quote(fifelse(TYPE == "SNV", n_sarek >= 2, m2 & st)),
+  "sarek all 3"            = quote(TYPE == "SNV" & m2 & st & mu),
+  "sarek >=2 of 3 + SAGE"  = quote(fifelse(TYPE == "SNV", n_sarek >= 2, m2 & st) & sg),
+  "mutect2+strelka + SAGE" = quote(m2 & st & sg),
+  ">=2 of all callers"     = quote(N_CALLERS >= 2),
+  "all callers"            = quote(N_CALLERS == n_able))
+mut[cons, on = "TYPE", n_able := i.n_callers]
+need <- list("mutect2+strelka" = c("mutect2", "strelka"), "sarek >=2 of 3" = c("mutect2", "strelka", "muse"),
+             "sarek all 3" = c("mutect2", "strelka", "muse"), "sarek >=2 of 3 + SAGE" = c("mutect2", "strelka", "muse", "sage"),
+             "mutect2+strelka + SAGE" = c("mutect2", "strelka", "sage"))
+rules <- rules[vapply(names(rules), function(r) all(need[[r]] %in% present), TRUE)]   # only sets whose callers ran
+for (r in names(rules)) mut[, (r) := eval(rules[[r]])]
+cs <- rbindlist(lapply(names(rules), function(r) mut[get(r) == TRUE, .(set = r, n = .N,
+        median_VAF = round(median(VAF_MEAN, na.rm = TRUE), 3),
+        pct_VAF_below_0.10 = round(100 * mean(VAF_MEAN < 0.10, na.rm = TRUE), 1)), by = TYPE]))
+cs[, set := factor(set, levels = names(rules))]
+setorder(cs, TYPE, set)
+print(cs); fwrite(cs, file.path(d_ovl, "candidate_sets.csv"))
+# 96-context profile per candidate set (SNVs), one column each
+snv <- mut[, c("KEY", names(rules)), with = FALSE][snv, on = "KEY"]
+cand <- rbindlist(lapply(names(rules), function(r) snv[get(r) == TRUE & !is.na(SBS96),
+          .(CHROM, POS, REF, ALT1, SBS96, SET = disp(r))]))
+cand[, SET := factor(SET, levels = disp(names(rules)))]
+if (nrow(cand)) {
+  m96c <- dcast(cand, SBS96 ~ SET, fun.aggregate = length, value.var = "POS")
+  m96c <- m96c[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
+  for (cl in setdiff(names(m96c), "SBS96")) set(m96c, which(is.na(m96c[[cl]])), cl, 0L)
+  setnames(m96c, "SBS96", "MutationType")
+  fwrite(m96c, file.path(d_96, "sbs96_candidate_sets.txt"), sep = "\t")
+  # one row per set, stacked (the sets overlap, so no summed "all SNVs" row)
+  cand[, `:=`(CALLER = "candidate final sets", SET = as.character(SET))]
+  plot_96context(cand, d_96, rowsplit = "SET", name = "snv_96context_candidate_sets", show_all = FALSE)
+}
+mut[, c("m2", "st", "mu", "sg", "VAF_MEAN", "n_sarek", "n_able", names(rules)) := NULL]
 message("done: ", od)

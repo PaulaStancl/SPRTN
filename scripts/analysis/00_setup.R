@@ -240,7 +240,8 @@ find_caller_vcfs <- function() {
   hits <- rbindlist(lapply(seq_len(nrow(known)), function(i) {
     raw <- unlist(lapply(vc_dirs[dir.exists(vc_dirs)], list.files, pattern = paste0(known$pattern[i], "\\.vcf\\.gz$"),
                          recursive = TRUE, full.names = TRUE))
-    raw <- raw[grepl(paste0("/", PAIR, "/"), raw)][1]                # main run first, then RJALS_vc
+    raw <- raw[grepl(paste0("/", PAIR, "/"), raw)]
+    raw <- if (length(raw)) raw[1] else NA_character_                # main run first, then RJALS_vc
     nrm <- if (dir.exists(norm_s)) list.files(norm_s, paste0(known$pattern[i], "\\.norm\\.vcf\\.gz$"), full.names = TRUE)[1] else NA
     f <- if (!is.na(nrm)) nrm else raw
     if (is.na(f)) NULL else data.table(CALLER = known$CALLER[i], file = f, normalised = !is.na(nrm))
@@ -327,7 +328,8 @@ add_sbs96 <- function(atom) {
 # flip it itself, so it gets SBS96's bases, not the + strand NC_3. It returns the figure(s)
 # without saving; orderplots / showperc / dropempty / dontshowall must be single values (their
 # defaults are vectors, which its if() checks reject). Needs packages qcVCF does not declare.
-plot_96context <- function(atom, od, rowsplit = NULL, name = "snv_96context") {
+# show_all = FALSE: no extra "all SNVs" row (for overlapping groups, where summing them is meaningless)
+plot_96context <- function(atom, od, rowsplit = NULL, name = "snv_96context", show_all = TRUE) {
   cols <- c("CHROM", "POS", "REF", "ALT1", "CALLER", "SBS96", rowsplit)
   snv96 <- atom[!is.na(SBS96), ..cols]
   setnames(snv96, c("ALT1", "CALLER"), c("ALT", "tool"))
@@ -337,8 +339,8 @@ plot_96context <- function(atom, od, rowsplit = NULL, name = "snv_96context") {
   miss <- Filter(function(pk) !requireNamespace(pk, quietly = TRUE), c("qcVCF", "cowplot", "stringr", "stringi", "ggtext"))
   if (length(miss)) { message("96-context plot skipped - install: ", paste(miss, collapse = ", ")); return(invisible(NULL)) }
   fig96 <- qcVCF::plot96_matrix(snv96, rowsplit = rowsplit, plotsplitcol = "tool", orderplots = "no", showperc = "yes",
-                                dropempty = "no", dontshowall = if (is.null(rowsplit)) "yes" else "no")
-  nrow96 <- if (is.null(rowsplit)) 1 else uniqueN(snv96[[rowsplit]]) + 1
+                                dropempty = "no", dontshowall = if (is.null(rowsplit) || !show_all) "yes" else "no")
+  nrow96 <- if (is.null(rowsplit)) 1 else uniqueN(snv96[[rowsplit]]) + show_all
   for (k in seq_along(fig96))
     save_plot(fig96[[k]], paste0(name, if (k > 1) paste0("_", k)), od,
               w = 9 * uniqueN(snv96$tool), h = 2 + 1.7 * nrow96)

@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------
 # 01_sarek.R - sarek output for RJALS, tumour vs normal.
-#   SNV / indel: Mutect2 + Strelka2     SV: Manta     copy number + purity: ASCAT
+#   SNV / indel: Mutect2 + Strelka2 (+ MuSE, extra run RJALS_vc)     SV: Manta     copy number + purity: ASCAT
 # Run:  Rscript 01_sarek.R   (or line by line in R - any of the folders above works)
 # ---------------------------------------------------------------------------
 # Finds 00_setup.R from this folder, from scripts/, or from the project root.
@@ -17,12 +17,16 @@ nd <- file.path(SAREK, "normalized_bcftools", PAIR)
 norm <- if (dir.exists(nd)) c(
   mutect2       = find_one(nd, "\\.mutect2\\.filtered\\.norm\\.vcf\\.gz$", required = FALSE),
   strelka_snv   = find_one(nd, "somatic_snvs\\.norm\\.vcf\\.gz$",           required = FALSE),
-  strelka_indel = find_one(nd, "somatic_indels\\.norm\\.vcf\\.gz$",         required = FALSE))
+  strelka_indel = find_one(nd, "somatic_indels\\.norm\\.vcf\\.gz$",         required = FALSE),
+  muse          = find_one(nd, "\\.muse\\.norm\\.vcf\\.gz$",                  required = FALSE))
 if (is.null(norm)) message("no normalised VCFs (", nd, ") - using sarek's raw ones; run scripts/wgs/06_normalize_vcfs.sh")
 files <- c(
   mutect2       = find_one(file.path(vc, "mutect2", PAIR), "\\.mutect2\\.filtered\\.vcf\\.gz$"),
   strelka_snv   = find_one(file.path(vc, "strelka", PAIR), "somatic_snvs\\.vcf\\.gz$",   required = FALSE),
   strelka_indel = find_one(file.path(vc, "strelka", PAIR), "somatic_indels\\.vcf\\.gz$", required = FALSE),
+  # MuSE: run later on the same recalibrated CRAMs, in its own sarek run (results/wgs/sarek/RJALS_vc)
+  muse          = find_one(file.path(RESULTS, "sarek", paste0(PATIENT, "_vc"), "variant_calling", "muse", PAIR),
+                           "\\.muse\\.vcf\\.gz$", required = FALSE),
   manta         = find_one(file.path(vc, "manta",   PAIR), "\\.manta\\.somatic_sv\\.vcf\\.gz$", required = FALSE),
   ascat_seg     = find_one(file.path(vc, "ascat",   PAIR), "\\.segments\\.txt$"),
   ascat_pp      = find_one(file.path(vc, "ascat",   PAIR), "\\.purityploidy\\.txt$")
@@ -31,10 +35,11 @@ files <- files[!is.na(files)]
 if (!is.null(norm)) files[names(norm)[!is.na(norm)]] <- norm[!is.na(norm)]
 writeLines(paste(names(files), files, sep = "\t"), file.path(od, "inputs_used.tsv"))
 
-# ---- 2. SNV / indel: Mutect2 and Strelka2 -------------------------------------
+# ---- 2. SNV / indel: Mutect2, Strelka2 and MuSE (SNVs only) ----------------------
 calls <- rbindlist(list(
   load_calls(files, "mutect2", "mutect2"),
-  load_calls(files, c("strelka_snv", "strelka_indel"), "strelka")      # NULL (skipped) if not found
+  load_calls(files, c("strelka_snv", "strelka_indel"), "strelka"),     # NULL (skipped) if not found
+  load_calls(files, "muse", "muse")                                     # MuSE: SNVs only, FILTER PASS / Tier2-5
 ), fill = TRUE)                                                         # the callers' metric columns differ
 # qc_vcf/raw:  every record, PASS and filtered - FILTER outcome, reasons, depth / VAF / score
 # qc_vcf/pass: PASS calls only - caller overlap, VAF, spectrum, qcVCF plots (section 5)
@@ -51,6 +56,7 @@ add_sbs96(atom)
 # each row of atom comes from (REC_KEY - an MNV's split bases share their MNV's key)
 atom[, CALLERS := paste(sort(unique(CALLER)), collapse = "+"), by = .(CHROM, POS, REF, ALT1)]
 atom[, REC_KEY := fifelse(FROM_MNV, MNV_KEY, paste0(CHROM, ":", POS, ":", REF, ">", ALT1))]
+in_strelka <- function(callers) grepl("(^|\\+)strelka(\\+|$)", callers)   # CALLERS contains strelka (any other callers too)
 
 # ---- 3. structural variants: Manta ---------------------------------------------
 if ("manta" %in% names(files)) {
@@ -144,8 +150,8 @@ if (!is.na(py_fit)) {
   # Mutect2 PASS records + Strelka support of each (an MNV: all / some / none of its bases)
   m2 <- calls_pass[CALLER == "mutect2"]
   m2[, REC_KEY := paste0(CHROM, ":", POS, ":", REF, ">", ALT1)]
-  sup <- atom[CALLER == "mutect2", .(STRELKA = if (all(CALLERS == "mutect2+strelka")) "PASS in Strelka"
-                                               else if (any(CALLERS == "mutect2+strelka")) "partly (MNV)"
+  sup <- atom[CALLER == "mutect2", .(STRELKA = if (all(in_strelka(CALLERS))) "PASS in Strelka"
+                                               else if (any(in_strelka(CALLERS))) "partly (MNV)"
                                                else "not PASS in Strelka"), by = REC_KEY]
   m2 <- sup[m2, on = "REC_KEY"]
   keep <- intersect(c("CHROM", "POS", "REF", "ALT1", "MUTTYPE", "REC_KEY", "STRELKA", "VAF", "N_VAF", "T_ALT",
@@ -207,7 +213,7 @@ sig_in <- file.path(od, "signatures", "input")
 write_signature_sets(rbindlist(list(
   mutect2         = atom[CALLER == "mutect2"],
   strelka         = atom[CALLER == "strelka"],
-  mutect2_strelka = atom[CALLER == "mutect2" & CALLERS == "mutect2+strelka"]
+  mutect2_strelka = atom[CALLER == "mutect2" & in_strelka(CALLERS)]   # PASS in both (MuSE may have it too)
 ), idcol = "SET"), sig_in, "01_sarek.R")
 message("signature inputs: ", sig_in, "  ->  python 01b_sarek_signatures.py; Rscript 01c_sarek_signatures_organ.R")
 
