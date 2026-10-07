@@ -118,8 +118,13 @@ if (HAVE_QCVCF) {
   fwrite(calls_pass, file.path(pass_dir, "snv_indel_pass.csv"))            # now with QC_SHARED
   fwrite(atom,       file.path(pass_dir, "snv_indel_pass_atomized.csv"))
 
-  # 96-context profile, one column per caller, rows all / shared / unique
-  plot_96context(atom, pass_dir, rowsplit = "QC_SHARED")
+  # 96-context profile, one column per caller, rows all / by number of callers
+  # rows by how many SNV callers found each SNV: unique / 2 of 3 / all 3 (the last is the same
+  # mutations in every column; "shared" alone would mean "with any other caller", different per caller)
+  n_snv_callers <- uniqueN(atom[MUTTYPE == "SNV", CALLER])
+  atom[, SHARING := sharing_label(lengths(strsplit(CALLERS, "+", fixed = TRUE)), n_snv_callers)]
+  plot_96context(atom, pass_dir, rowsplit = "SHARING", roworder = sharing_levels(n_snv_callers))
+  atom[, SHARING := NULL]
 }
 # ---- 6. clonal vs subclonal: PyClone-VI clusters (tumourevo) on the Mutect2 calls ----
 # tumourevo ran PyClone-VI on sarek's Mutect2 PASS calls (autosomes; copy number and purity

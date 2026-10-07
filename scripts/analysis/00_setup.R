@@ -329,7 +329,7 @@ add_sbs96 <- function(atom) {
 # without saving; orderplots / showperc / dropempty / dontshowall must be single values (their
 # defaults are vectors, which its if() checks reject). Needs packages qcVCF does not declare.
 # show_all = FALSE: no extra "all SNVs" row (for overlapping groups, where summing them is meaningless)
-plot_96context <- function(atom, od, rowsplit = NULL, name = "snv_96context", show_all = TRUE) {
+plot_96context <- function(atom, od, rowsplit = NULL, name = "snv_96context", show_all = TRUE, roworder = NULL) {
   cols <- c("CHROM", "POS", "REF", "ALT1", "CALLER", "SBS96", rowsplit)
   snv96 <- atom[!is.na(SBS96), ..cols]
   setnames(snv96, c("ALT1", "CALLER"), c("ALT", "tool"))
@@ -339,13 +339,22 @@ plot_96context <- function(atom, od, rowsplit = NULL, name = "snv_96context", sh
   miss <- Filter(function(pk) !requireNamespace(pk, quietly = TRUE), c("qcVCF", "cowplot", "stringr", "stringi", "ggtext"))
   if (length(miss)) { message("96-context plot skipped - install: ", paste(miss, collapse = ", ")); return(invisible(NULL)) }
   fig96 <- qcVCF::plot96_matrix(snv96, rowsplit = rowsplit, plotsplitcol = "tool", orderplots = "no", showperc = "yes",
-                                dropempty = "no", dontshowall = if (is.null(rowsplit) || !show_all) "yes" else "no")
+                                dropempty = "no", dontshowall = if (is.null(rowsplit) || !show_all) "yes" else "no",
+                                roworder = paste(c("all SNVs", roworder), collapse = ","))
   nrow96 <- if (is.null(rowsplit)) 1 else uniqueN(snv96[[rowsplit]]) + show_all
   for (k in seq_along(fig96))
     save_plot(fig96[[k]], paste0(name, if (k > 1) paste0("_", k)), od,
               w = 9 * uniqueN(snv96$tool), h = 2 + 1.7 * nrow96)
   invisible(snv96)
 }
+
+# How many of the n_all callers found a mutation, as a label for the 96-context rows:
+# "unique" (1), "2 of 3 callers", ..., "all 3 callers". Unlike a shared/unique split, the
+# "all n callers" row is the same set of mutations in every caller's column.
+sharing_label <- function(n, n_all) fifelse(n <= 1L, "unique",
+  fifelse(n >= n_all, sprintf("all %d callers", n_all), sprintf("%d of %d callers", n, n_all)))
+sharing_levels <- function(n_all) c("unique", if (n_all > 2) sprintf("%d of %d callers", 2:(n_all - 1), n_all),
+                                   sprintf("all %d callers", n_all))
 
 # Signature sets (rows of atom with a SET column, MNVs split) -> signatures/input/ for the
 # SigProfiler script (01b) and FitMS (01c): one minimal VCF per set in vcf/ (one "sample" each;

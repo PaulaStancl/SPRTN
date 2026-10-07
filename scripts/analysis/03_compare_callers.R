@@ -25,7 +25,7 @@
 #                 support_by_vaf.csv/.pdf          share of each caller's calls confirmed by >= 1 other, by VAF
 #                 vaf_agreement.csv/.pdf           tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
 #   context_96/   snv_spectrum.pdf, snv_substitution_spectrum.csv   6 substitution classes per caller
-#                 snv_96context_per_caller.pdf/.csv  per caller: all / shared / unique SNVs
+#                 snv_96context_per_caller.pdf/.csv  per caller: all SNVs, then unique / 2 of n / ... / all n callers
 #                 snv_96context_groups.pdf/.csv      two_plus / all_callers SNVs (callers named)
 #                 sbs96_groups.txt                   the group counts, SigProfiler matrix format
 #                 snv_96context_candidate_sets.pdf, sbs96_candidate_sets.txt   candidate final sets (section 8)
@@ -195,12 +195,14 @@ fwrite(m96, file.path(d_96, "sbs96_groups.txt"), sep = "\t")
 grp[, CALLER := fifelse(GROUP == "two_plus", sc$two_plus_label, sc$all_callers_label)]
 plot_96context(grp, d_96, name = "snv_96context_groups")  # snv_96context_groups.pdf / .csv
 
-# per caller, as in 01: one column per caller, rows all SNVs / shared (PASS in >= 1 other
-# caller) / unique (this caller only)
+# per caller, as in 01: one column per caller, rows all SNVs, then by how many callers found
+# each SNV (unique / 2 of n / ... / all n - the last row is the same mutations in every column)
 add_sbs96(atom)
-atom[, QC_SHARED := fifelse(N_CALLERS >= 2, "shared", "unique")]
+# rows by how many SNV callers found each SNV: unique / 2 of n / ... / all n
+n_snv_callers <- uniqueN(atom[TYPE == "SNV", CALLER])
+atom[, QC_SHARED := sharing_label(N_CALLERS, n_snv_callers)]
 pc <- atom[, .(CHROM, POS, REF, ALT1, SBS96, QC_SHARED, CALLER = disp(CALLER))]
-plot_96context(pc, d_96, rowsplit = "QC_SHARED", name = "snv_96context_per_caller")
+plot_96context(pc, d_96, rowsplit = "QC_SHARED", name = "snv_96context_per_caller", roworder = sharing_levels(n_snv_callers))
 # ---- 8. candidate final sets: which overlap to keep -------------------------------------------
 # Each set is a rule over the callers that found a mutation (PASS, MNVs split, indels normalised):
 #   mutect2+strelka         Mutect2 AND Strelka2 (others may also have it)
