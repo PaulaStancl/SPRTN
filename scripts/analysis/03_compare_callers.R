@@ -21,6 +21,7 @@
 #                 n_callers_per_caller.csv/.pdf    of each caller's calls, how many callers found them
 #                 consensus_summary.csv            union, >= 2 callers, all callers - per type
 #                 mutation_callers.csv             one row per PASS mutation: callers, n callers, each one's VAF
+#                 set_qc_metrics.pdf, set_qc_score.pdf, set_qc_summary.csv   QC of the >= 2 / all-callers SNV sets per caller
 #   vaf/          snv_vaf_hist.pdf                 tumour VAF per caller
 #                 support_by_vaf.csv/.pdf          share of each caller's calls confirmed by >= 1 other, by VAF
 #                 vaf_agreement.csv/.pdf           tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
@@ -197,6 +198,54 @@ fwrite(m96, file.path(d_96, "sbs96_groups.txt"), sep = "\t")
 # plot_96context() draws one column per CALLER: here the group, labelled with its callers
 grp[, CALLER := fifelse(GROUP == "two_plus", sc$two_plus_label, sc$all_callers_label)]
 plot_96context(grp, d_96, name = "snv_96context_groups")  # snv_96context_groups.pdf / .csv
+
+# ---- 7b. QC of the consensus SNV sets, as each caller measured them ------------------------
+# Rows = QC metric, columns = caller. For each caller, its own values for its SNVs in
+# ">= 2 callers" and "all callers" (the two sets above), plus "this caller only" as the
+# reference - the calls the consensus sets drop. "all" is a subset of ">= 2".
+# The caller score is on a different scale per caller (Mutect2 TLOD, Strelka2 SomaticEVS,
+# SAGE QUAL; MuSE has none), so it gets its own plot with a y-axis per caller.
+# Output: overlap/set_qc_metrics.pdf, set_qc_score.pdf, set_qc_summary.csv
+num1 <- function(x) suppressWarnings(as.numeric(sub(",.*", "", x)))
+q <- atom[TYPE == "SNV"]
+nsc <- uniqueN(q$CALLER)
+q[, SCORE := NA_real_]
+for (col in c("info_TLOD", "info_SomaticEVS")) if (col %in% names(q)) q[is.na(SCORE), SCORE := num1(get(col))]
+q[CALLER == "sage" & is.na(SCORE), SCORE := num1(QUAL)]
+for (m in intersect(c("t_DP", "n_DP"), names(q))) set(q, j = m, value = num1(q[[m]]))
+set_lab <- c(only = "this caller only", two = sprintf(">= 2 of %d callers", nsc), all = sprintf("all %d callers", nsc))
+q_long <- rbind(q[N_CALLERS == 1][, SET := set_lab[["only"]]],
+                q[N_CALLERS >= 2][, SET := set_lab[["two"]]],
+                q[N_CALLERS == nsc][, SET := set_lab[["all"]]])
+q_long[, `:=`(SET = factor(SET, levels = unname(set_lab)), CALLER = disp(CALLER))]
+mets <- c(VAF = "tumour VAF", T_ALT = "tumour ALT reads", t_DP = "tumour depth",
+          N_VAF = "normal VAF", n_DP = "normal depth", SCORE = "caller score")
+mets <- mets[names(mets) %in% names(q_long)]
+ql <- melt(q_long[, c("CALLER", "SET", names(mets)), with = FALSE], id.vars = c("CALLER", "SET"),
+           variable.name = "metric", value.name = "value", variable.factor = FALSE, na.rm = TRUE)
+ql[, metric_lab := factor(mets[metric], levels = mets)]
+summ_q <- ql[, .(n = .N, median = median(value), q25 = quantile(value, 0.25), q75 = quantile(value, 0.75)),
+             by = .(metric, CALLER, SET)][order(metric, CALLER, SET)]
+print(summ_q); fwrite(summ_q, file.path(d_ovl, "set_qc_summary.csv"))
+set_cols <- setNames(c("grey70", "#56B4E9", "#0072B2"), unname(set_lab))
+qp <- ql[metric != "SCORE"][, .SD[value <= quantile(value, 0.99)], by = .(metric, CALLER)]   # display: drop top 1%
+if (nrow(qp))
+  save_plot(ggplot(qp, aes(SET, value, fill = SET)) + geom_boxplot(outlier.shape = NA) +
+              facet_grid(metric_lab ~ CALLER, scales = "free_y", switch = "y") +
+              scale_fill_manual(values = set_cols) +
+              labs(x = NULL, y = NULL, fill = NULL, title = "QC of the consensus SNV sets, as each caller measured them",
+                   subtitle = "box = median and IQR; outliers not drawn; each caller's top 1% left out") +
+              theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
+                    strip.placement = "outside", legend.position = "bottom"),
+            "set_qc_metrics", d_ovl, w = 3 + 2.6 * uniqueN(qp$CALLER), h = 2 + 2.2 * uniqueN(qp$metric))
+qs <- ql[metric == "SCORE"][, .SD[value <= quantile(value, 0.99)], by = CALLER]
+if (nrow(qs))
+  save_plot(ggplot(qs, aes(SET, value, fill = SET)) + geom_boxplot(outlier.shape = NA) +
+              facet_wrap(~CALLER, scales = "free_y", nrow = 1) + scale_fill_manual(values = set_cols) +
+              labs(x = NULL, y = "caller score", fill = NULL, title = "Caller score of the consensus SNV sets",
+                   subtitle = "Mutect2 TLOD, Strelka2 SomaticEVS, SAGE QUAL - each on its own scale; MuSE has no score") +
+              theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), legend.position = "bottom"),
+            "set_qc_score", d_ovl, w = 3 + 2.6 * uniqueN(qs$CALLER), h = 4.5)
 
 # per caller + consensus, one panel per row on the same axis: each caller's PASS SNVs as it
 # calls them (MuSE: all tiers), then the SNVs PASS in all SNV callers, then in >= 2 of them.
