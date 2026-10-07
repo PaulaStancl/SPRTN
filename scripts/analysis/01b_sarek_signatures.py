@@ -7,6 +7,7 @@
 #   python 01b_sarek_signatures.py                     # SBS96 + DBS78 + ID83
 #   python 01b_sarek_signatures.py --contexts SBS96    # one context only
 #   python 01b_sarek_signatures.py --pipeline oncoanalyser   # SAGE PASS set from 02_oncoanalyser.R
+#   python 01b_sarek_signatures.py --pipeline comparison     # each caller + two_plus + all_callers (03)
 #
 # Input  <OUT>/<pipeline>/signatures/input/vcf/<set>.vcf - mutect2 (all PASS), strelka (all PASS),
 #        mutect2_strelka (PASS in both) - or, for oncoanalyser, sage; each file is one
@@ -46,8 +47,8 @@ if re.search(r"OneDrive|CloudStorage|Dropbox|iCloud|Google Drive", os.path.abspa
 CONTEXTS = {"SBS96": ("SBS", "SBS96"), "DBS78": ("DBS", "DBS78"), "ID83": ("ID", "ID83")}
 
 ap = argparse.ArgumentParser(description=__doc__)
-ap.add_argument("--pipeline", default="sarek", choices=["sarek", "oncoanalyser"],
-                help="whose PASS sets: sarek (01_sarek.R) or oncoanalyser (02_oncoanalyser.R)")
+ap.add_argument("--pipeline", default="sarek", choices=["sarek", "oncoanalyser", "comparison"],
+                help="whose PASS sets: sarek (01_sarek.R), oncoanalyser (02_oncoanalyser.R) or comparison (03_compare_callers.R: each caller + two_plus + all_callers)")
 ap.add_argument("--contexts", default="SBS96,DBS78,ID83", help="comma-separated: SBS96, DBS78, ID83")
 ap.add_argument("--cosmic-version", type=float, default=None, help="COSMIC version (default: the package's)")
 ap.add_argument("--exclude-subgroups", default="",
