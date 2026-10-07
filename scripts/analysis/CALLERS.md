@@ -13,6 +13,10 @@ Somatic SNV caller (no indels). It runs in two steps:
 
 The VCF header records which mode ran (`##MuSE_sump=...`, look for `-G`).
 
+**This project (RJALS_vc run):** `sump -G -I RJALS_Tm_vs_RJALS_N.MuSE.txt -n 12 -D dbsnp_146.hg38.vcf.gz`.
+That's WGS mode with dbSNP 146 (hg38), taken from the VCF header. So the WGS recommendation
+below applies, and all tiers are kept.
+
 ### FILTER: confidence tiers, not pass / fail
 
 | FILTER | MuSE's description | meaning |
