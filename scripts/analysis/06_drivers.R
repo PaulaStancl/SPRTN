@@ -24,6 +24,13 @@
 #                             promoter, in either pipeline, driver-labelled or not
 #   linx_fusions_reported.csv LINX fusions with reported = true
 #   drivers_overview.pdf      gene x source
+#   drivers_somatic_table.csv / .md    slide table: somatic driver mutations, CN and SV drivers -
+#                             Gene, Variant (c. / p.), Consequence, VAF, Callers, Driver likelihood,
+#                             Evidence (pipeline), Annotation + Tier (empty: knowledge-base step)
+#   drivers_germline_table.csv / .md   slide table: PURPLE germline drivers + SPRTN (not on
+#                             Hartwig's germline panel; read counts from the SPRTN slice BAMs, phasing
+#                             from 12_whatshap_sprtn.sh) - Zygosity, VAF normal -> tumour, tumour second
+#                             hit (LOH / allelic imbalance), ClinVar, gene-disease link
 # ---------------------------------------------------------------------------
 source(Filter(file.exists, c("00_setup.R", "analysis/00_setup.R", "scripts/analysis/00_setup.R",
   "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN/scripts/analysis/00_setup.R"))[1])
@@ -171,4 +178,139 @@ if (nrow(pl)) {
               theme(axis.text.x = element_text(angle = 20, hjust = 0)),
             "drivers_overview", od, w = 8, h = 2.5 + 0.25 * uniqueN(pl$gene))
 }
+
+# ---- 8. slide tables: somatic and germline ------------------------------------------------------
+strip_tx <- function(x) fifelse(is.na(x) | x == "", NA_character_, sub("^[^:]*:", "", x))   # ENST...:c.1A>G -> c.1A>G
+caller_name <- c(muse = "MuSE", mutect2 = "Mutect2", sage = "SAGE", strelka = "Strelka2")
+pretty_callers <- function(cl, is_snv) vapply(seq_along(cl), function(i) {
+  if (is.na(cl[i])) return(NA_character_)
+  k <- strsplit(cl[i], "+", fixed = TRUE)[[1]]
+  sprintf("%s (%d of %d)", paste(fcoalesce(caller_name[k], k), collapse = ", "), length(k), if (is_snv[i]) 4L else 3L)
+}, character(1))
+fmt_lik <- function(x) fifelse(is.na(x), "—", sprintf("%.2f", x))
+write_md <- function(d, f, note) writeLines(c(paste("|", paste(names(d), collapse = " | "), "|"),
+  paste("|", paste(rep("---", ncol(d)), collapse = " | "), "|"),
+  apply(d, 1, function(r) paste("|", paste(fifelse(is.na(r), "", r), collapse = " | "), "|")), "", note), f)
+som_cat <- if (nrow(cat_all)) cat_all[source == "PURPLE somatic"] else data.table()
+lik_mut <- if (nrow(som_cat)) som_cat[grepl("MUTATION", driver), .(lik = max(driverLikelihood)), by = gene] else data.table(gene = character(), lik = numeric())
+
+# somatic: driver mutations (06 section 4) + TERT promoter + CN drivers + LINX disruptions / fusions
+tert <- pv[in_tert(CHROM, POS), .(KEY, CHROM, POS, REF, ALT = ALT1, GENE = "TERT promoter", PAVE_EFFECT = "promoter (non-coding)",
+                                   PAVE_HGVSC, PAVE_HGVSP, TIER, REPORTED, VAF_SAGE = round(VAF, 3), in_PURPLE = TRUE)]
+mt <- rbindlist(list(dm, tert[!KEY %chin% dm$KEY]), fill = TRUE)
+mt[mc, on = "KEY", `:=`(CALLERS = i.CALLERS)]
+som <- if (nrow(mt)) mt[, .(
+  Gene = GENE,
+  `Variant (c. / p.)` = paste0(fcoalesce(strip_tx(PAVE_HGVSC), strip_tx(if ("VEP_HGVSC" %in% names(mt)) VEP_HGVSC else NA_character_), paste0(REF, ">", ALT)),
+                               fifelse(!is.na(fcoalesce(strip_tx(PAVE_HGVSP), strip_tx(if ("VEP_HGVSP" %in% names(mt)) VEP_HGVSP else NA_character_))) &
+                                         fcoalesce(strip_tx(PAVE_HGVSP), "") != "",
+                                       paste0(" / ", fcoalesce(strip_tx(PAVE_HGVSP), strip_tx(if ("VEP_HGVSP" %in% names(mt)) VEP_HGVSP else NA_character_))), "")),
+  Consequence = gsub("_", " ", fcoalesce(PAVE_EFFECT, if ("VEP_CONSEQUENCE" %in% names(mt)) VEP_CONSEQUENCE else NA_character_)),
+  VAF = sprintf("%.2f", fcoalesce(VAF_SAGE, if ("VAF_MUTECT2" %in% names(mt)) as.numeric(VAF_MUTECT2) else NA_real_)),
+  Callers = pretty_callers(CALLERS, nchar(REF) == 1 & nchar(ALT) == 1),
+  `Driver likelihood` = fmt_lik(lik_mut$lik[match(GENE, lik_mut$gene)]),
+  `Evidence (pipeline)` = trimws(paste0(fifelse(REPORTED %in% TRUE, "PURPLE reported; ", ""),
+                                        fifelse(TIER %chin% "HOTSPOT", "known hotspot (SAGE); ", ""),
+                                        fifelse(if ("in_tumourevo_driver" %in% names(mt)) in_tumourevo_driver %in% TRUE else FALSE, "IntOGen HCC gene (tumourevo)", "")), whitespace = "[ ;]"),
+  rank = fifelse(REPORTED %in% TRUE, 1L, 2L))] else data.table()
+cn_rows <- if (nrow(som_cat)) som_cat[driver %chin% c("AMP", "PARTIAL_AMP", "DEL", "HOM_DEL_DISRUPTION", "HOM_DUP_DISRUPTION"), .(
+  Gene = gene, `Variant (c. / p.)` = fifelse(grepl("AMP", driver), sprintf("%s, CN %.1f", driver, maxCopyNumber), sprintf("%s, CN %.1f", driver, minCopyNumber)),
+  Consequence = fifelse(grepl("AMP", driver), "amplification", "deletion / loss"), VAF = "—", Callers = "PURPLE (copy number)",
+  `Driver likelihood` = fmt_lik(driverLikelihood), `Evidence (pipeline)` = sprintf("PURPLE driver (%s)", fifelse(category == "TSG", "tumour suppressor", "oncogene")), rank = 1L)] else data.table()
+sv_rows <- rbindlist(list(
+  if (nrow(cat_all)) cat_all[source == "LINX", .(Gene = gene, `Variant (c. / p.)` = driver, Consequence = "structural disruption", VAF = "—",
+                                                Callers = "LINX (SV)", `Driver likelihood` = fmt_lik(driverLikelihood), `Evidence (pipeline)` = "LINX driver catalogue", rank = 1L)],
+  if (nrow(fus)) fus[, .(Gene = name, `Variant (c. / p.)` = paste("fusion", name), Consequence = "gene fusion", VAF = "—", Callers = "LINX (SV)",
+                         `Driver likelihood` = if ("likelihood" %in% names(fus)) as.character(likelihood) else "—",
+                         `Evidence (pipeline)` = paste("LINX reported", if ("reportedType" %in% names(fus)) reportedType else ""), rank = 1L)]), fill = TRUE)
+som <- rbindlist(list(som, cn_rows, sv_rows), fill = TRUE)
+if (nrow(som)) {
+  som <- unique(som)[order(rank, Gene)][, rank := NULL]
+  som[, `:=`(Annotation = "", Tier = "")]                      # OncoKB / CIViC / ClinVar / COSMIC: knowledge-base step
+}
+fwrite(som, file.path(od, "drivers_somatic_table.csv"))
+write_md(som, file.path(od, "drivers_somatic_table.md"),
+         "Driver likelihood from PURPLE driver catalogue; Callers: SNVs out of 4 (Mutect2, Strelka2, MuSE, SAGE), indels out of 3; annotation sources: [OncoKB / CIViC / ClinVar / COSMIC]")
+message("somatic table: ", nrow(som), " rows"); print(som)
+
+# germline: PURPLE germline catalogue + its germline VCF (REPORTED or in a catalogue gene)
+germ_cat <- if (nrow(cat_all)) cat_all[source == "PURPLE germline"] else data.table()
+gv_f <- find_one(pd, "\\.purple\\.germline\\.vcf\\.gz$", required = FALSE)
+germ <- data.table()
+if (!is.na(gv_f)) {
+  gv <- read_vcf_table(gv_f)[FILTER == "PASS" & CHROM %chin% STD_CHR]
+  gi <- if ("info_IMPACT" %in% names(gv)) tstrsplit(as.character(gv$info_IMPACT), ",", fixed = TRUE, fill = NA_character_) else list()
+  gv[, `:=`(GENE = if (length(gi)) gi[[1]] else NA_character_, EFF = if (length(gi) >= 3) gi[[3]] else NA_character_,
+            HGVSC = if (length(gi) >= 6) gi[[6]] else NA_character_, HGVSP = if (length(gi) >= 7) gi[[7]] else NA_character_,
+            REP = if ("info_REPORTED" %in% names(gv)) as.character(info_REPORTED) %chin% c("TRUE", "true", "1") else FALSE)]
+  if (!"n_GT" %in% names(gv)) gv[, n_GT := NA_character_]
+  info_chr <- function(k) if (k %in% names(gv)) as.character(gv[[k]]) else rep(NA_character_, nrow(gv))
+  gv[, `:=`(CLN = info_chr("info_CLNSIG"), MACN = suppressWarnings(as.numeric(info_chr("info_PURPLE_MACN"))),
+            BIAL = info_chr("info_BIALLELIC") %chin% c("TRUE", "true", "1"))]
+  gsel <- gv[REP | GENE %chin% germ_cat$gene]
+  if (nrow(gsel)) germ <- gsel[, .(
+    Gene = GENE,
+    `Variant (c. / p.)` = paste0(fcoalesce(HGVSC, paste0(REF, ">", ALT1)), fifelse(!is.na(HGVSP) & HGVSP != "", paste0(" / ", HGVSP), "")),
+    Consequence = gsub("_", " ", EFF),
+    Zygosity = fcase(n_GT %chin% c("1/1", "1|1"), "homozygous", n_GT %chin% c("0/1", "0|1", "1|0"), "heterozygous", default = as.character(n_GT)),
+    `VAF normal → tumour` = sprintf("%.2f → %.2f", N_VAF, VAF),
+    `Tumour 2nd hit` = fcase(BIAL | (GENE %chin% germ_cat[as.character(biallelic) %chin% c("true", "TRUE"), gene]), "biallelic (PURPLE)",
+                             !is.na(MACN) & MACN < 0.5, sprintf("LOH (minor allele CN %.1f)", MACN),
+                             VAF > N_VAF + 0.1, "allelic imbalance, variant allele gained", default = "none detected"),
+    ClinVar = fcoalesce(gsub("_", " ", CLN), ""),
+    `Driver likelihood` = fmt_lik(germ_cat$driverLikelihood[match(GENE, germ_cat$gene)]),
+    `Gene–disease link` = "", Source = "PURPLE germline (Hartwig panel)")]
+}
+
+# SPRTN (not on Hartwig's germline panel): Y117C and c.718_718+3del, counted from the SPRTN slice
+# BAMs (09) with the same pileup as 11_sprtn_checks.sh; ClinVar from sprtn_clinvar_variants.tsv;
+# phasing verdicts from 12_whatshap_sprtn.sh; SPRTN copy number from PURPLE
+WGS_SCRIPTS <- Filter(dir.exists, c("../wgs", "scripts/wgs", "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN/scripts/wgs"))[1]
+sl <- file.path(OUT, "igv_slices", "SPRTN_gene")
+pile <- function(sample, pos) {
+  bam <- file.path(sl, paste0(sample, "_sarek.slice.bam"))
+  if (!file.exists(bam)) return(NA_character_)
+  out <- tryCatch(system2("samtools", c("mpileup", "-Q", "20", "-q", "20", "-f", shQuote(FASTA), "-r", sprintf("chr1:%d-%d", pos, pos), shQuote(bam)),
+                          stdout = TRUE, stderr = FALSE), error = function(e) character(0))
+  if (!length(out)) return(NA_character_)
+  strsplit(out[1], "\t", fixed = TRUE)[[1]]                     # chrom, pos, ref, depth, bases, quals
+}
+# as 11_sprtn_checks.sh: Y117C = G / (ref + G); deletion = reads with a deletion / depth
+y117 <- function(sample) { f <- pile(sample, 231347825L); if (anyNA(f)) return(NA_real_)
+  b <- toupper(gsub("\\^.|\\$", "", f[5])); r <- nchar(gsub("[^.,]", "", b)); g <- nchar(gsub("[^G]", "", b)); g / (r + g) }
+del718 <- function(sample) { f <- pile(sample, 231351569L); if (anyNA(f)) return(NA_real_)
+  n <- lengths(regmatches(f[5], gregexpr("-[0-9]+[ACGTNacgtn]+", f[5]))); n / as.numeric(f[4]) }
+cv <- if (!is.na(WGS_SCRIPTS) && file.exists(file.path(WGS_SCRIPTS, "sprtn_clinvar_variants.tsv")))
+  fread(file.path(WGS_SCRIPTS, "sprtn_clinvar_variants.tsv"), skip = "chrom") else data.table()
+cv_of <- function(st) if (nrow(cv) && any(cv$start == st)) cv[start == st, sprintf("%s (%s)", classification[1], clinvar[1])] else ""
+read_result <- function(f) if (file.exists(f)) { r <- grep("^# result:", readLines(f), value = TRUE); if (length(r)) sub("^# result: *", "", tail(r, 1)) else NA_character_ } else NA_character_
+ph_dir <- file.path(OUT, "phasing", "SPRTN")
+ph_imb <- read_result(file.path(ph_dir, "haplotype_imbalance.txt"))
+ph_wh  <- read_result(file.path(ph_dir, "normal_tumour", "result.txt"))
+in_trans <- !is.na(ph_imb) && grepl("IN TRANS", ph_imb, ignore.case = TRUE)
+cng_f <- find_one(pd, "\\.purple\\.cnv\\.gene\\.tsv$", required = FALSE)
+sprtn_cn <- if (!is.na(cng_f)) fread(cng_f)[gene == "SPRTN"][1] else data.table()
+cn_txt <- if (nrow(sprtn_cn) && all(c("minCopyNumber", "minMinorAlleleCopyNumber") %in% names(sprtn_cn)))
+  sprintf("CN %.1f, minor allele %.1f", sprtn_cn$minCopyNumber, sprtn_cn$minMinorAlleleCopyNumber) else "CN: see PURPLE"
+vaf_txt <- function(f) { n <- f(NORMAL); t <- f(TUMOUR); if (is.na(n) || is.na(t)) "see 11_sprtn_checks.sh" else sprintf("%.2f → %.2f", n, t) }
+zyg <- if (in_trans) "compound heterozygous (in trans)" else "heterozygous (phase: see 12)"
+sprtn <- data.table(
+  Gene = "SPRTN",
+  `Variant (c. / p.)` = c("c.350A>G / p.Tyr117Cys", "c.718_718+3del"),
+  Consequence = c("missense", "splice donor deletion"),
+  Zygosity = zyg,
+  `VAF normal → tumour` = c(vaf_txt(y117), vaf_txt(del718)),
+  `Tumour 2nd hit` = c(paste0(cn_txt, if (in_trans) "; Y117C allele gained (allelic imbalance)" else "; phasing: see 12"),
+                       paste0(cn_txt, if (in_trans) "; deletion allele on the less-amplified copy" else "")),
+  ClinVar = c(cv_of(231347825L), cv_of(231351571L)),
+  `Driver likelihood` = "— (not on Hartwig panel)",
+  `Gene–disease link` = "Ruijs-Aalfs syndrome (progeroid features, early-onset HCC); biallelic SPRTN loss",
+  Source = "own analysis (11, 12; not on Hartwig germline panel)")
+germ <- rbindlist(list(sprtn, germ), fill = TRUE)
+fwrite(germ, file.path(od, "drivers_germline_table.csv"))
+write_md(germ, file.path(od, "drivers_germline_table.md"),
+         paste0("Germline: PURPLE germline driver catalogue (Hartwig germline panel) + SPRTN (own analysis). VAF normal → tumour from read counts; ",
+                "WhatsHap: ", fcoalesce(ph_wh, "not run"), ". Research findings - confirm in an accredited lab before any clinical use."))
+message("germline table: ", nrow(germ), " rows"); print(germ)
+
 message("done: ", od)
