@@ -7,7 +7,8 @@
 #   PASS SNVs / indels   comparison/overlap/mutation_callers.csv (03): MNVs split, indels
 #                        normalised if 06 ran. sarek = Mutect2, Strelka2 (+ MuSE, SNVs, if run);
 #                        oncoanalyser = SAGE (PURPLE's final VCF).
-#                        Shared = PASS in Mutect2 AND Strelka2 AND SAGE.
+#                        sarek consensus: SNVs >= 2 of Mutect2, Strelka2, MuSE (indels: Mutect2 AND
+#                        Strelka2 - MuSE calls no indels). Shared = sarek consensus AND SAGE.
 #   Structural variants  PASS records of Manta (somatic) and ESVEE; shared = Manta records with a
 #                        breakpoint within SV_TOL bp of an ESVEE breakpoint (same chromosome).
 #   CN segments          ASCAT metrics n_segs / PURPLE qc CopyNumberSegments (segmentation
@@ -41,15 +42,23 @@ if (!file.exists(mc)) stop("missing ", mc, " - run 03_compare_callers.R first", 
 mut <- fread(mc)
 has <- function(cl) grepl(paste0("(^|\\+)", cl, "(\\+|$)"), mut$CALLERS)
 mut[, `:=`(m2 = has("mutect2"), st = has("strelka"), mu = has("muse"), sg = has("sage"))]
+# sarek consensus: SNVs - at least 2 of Mutect2, Strelka2, MuSE (if MuSE ran; else Mutect2 AND
+# Strelka2); indels - Mutect2 AND Strelka2 (MuSE calls no indels). Shared = sarek consensus AND SAGE.
+have_muse <- any(mut$mu)
 for (ty in c("SNV", "INDEL")) {
   x <- mut[TYPE == ty]
-  both <- x[m2 & st, .N]; sage <- x[(sg), .N]; shared <- x[m2 & st & sg, .N]
+  use_muse <- ty == "SNV" && have_muse
+  x[, cons := if (use_muse) (m2 + st + mu) >= 2 else m2 & st]
+  cons_lab <- if (use_muse) ">= 2 of 3" else "Mutect2+Strelka2"
+  n_cons <- x[(cons), .N]; sage <- x[(sg), .N]; shared <- x[cons & sg, .N]
   sarek <- paste0("Mutect2 ", fmt(x[(m2), .N]), " · Strelka2 ", fmt(x[(st), .N]),
-                  if (ty == "SNV" && any(x$mu)) paste0(" · MuSE ", fmt(x[(mu), .N])), " · Mutect2+Strelka2 ", fmt(both))
+                  if (use_muse) paste0(" · MuSE ", fmt(x[(mu), .N])),
+                  " · ", cons_lab, " ", fmt(n_cons),
+                  if (use_muse) paste0(" (all 3: ", fmt(x[m2 & st & mu, .N]), ")"))
   rows[[length(rows) + 1]] <- data.table(
     Result = paste("PASS", if (ty == "SNV") "SNVs" else "indels"), sarek = sarek,
     oncoanalyser = paste("SAGE", fmt(sage)),
-    Shared = sprintf("%s (%s of SAGE, %s of Mutect2+Strelka2)", fmt(shared), pct(shared, sage), pct(shared, both)))
+    Shared = sprintf("%s (%s of SAGE, %s of sarek %s)", fmt(shared), pct(shared, sage), pct(shared, n_cons), cons_lab))
 }
 
 # ---- 2. structural variants: Manta vs ESVEE ----------------------------------------------
@@ -125,7 +134,7 @@ tab <- rbindlist(rows)
 print(tab); fwrite(tab, file.path(od, "summary_table.csv"))
 md <- c("| Result | sarek | oncoanalyser | Shared |", "|---|---|---|---|",
         tab[, sprintf("| %s | %s | %s | %s |", Result, sarek, oncoanalyser, Shared)], "",
-        "*Shared SNVs / indels: PASS in Mutect2, Strelka2 and SAGE; matched on CHROM:POS:REF:ALT, MNVs split into SNVs, indels normalised with bcftools norm (06_normalize_vcfs.sh).*",
+        "*sarek consensus: SNVs PASS in at least 2 of Mutect2, Strelka2 and MuSE (MuSE: PASS + Tier1-5); indels PASS in Mutect2 and Strelka2 (MuSE calls no indels). Shared: sarek consensus and PASS in SAGE. Matched on CHROM:POS:REF:ALT, MNVs split into SNVs, indels normalised with bcftools norm (06_normalize_vcfs.sh).*",
         sprintf("*Shared SVs: Manta PASS records with a breakpoint within %d bp of an ESVEE PASS breakpoint.*", SV_TOL),
         "*Copy-number segment counts reflect each tool's segmentation, not agreement.*",
         "*Driver events: PURPLE somatic driver catalogue; sarek does no driver calling.*")
