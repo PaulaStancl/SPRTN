@@ -7,7 +7,7 @@
 #   VEP_CACHE_VERSION=116 ../wgs_test/04_download_references.sh vep   # once, ~25 GB
 #   cd scripts/wgs && qsub qsub_sarek_annotate.sh
 #
-# Writes to results/wgs/sarek/RJALS_annotate/annotation/<caller>/RJALS_Tm_vs_RJALS_N/.
+# Writes to results/wgs/sarek/RJALS_annotate/annotation/<caller>/<vcf name>/.
 # ---------------------------------------------------------------------------
 #PBS -q q2
 #PBS -l select=1:ncpus=16:mem=128gb

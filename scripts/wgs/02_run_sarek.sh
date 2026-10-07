@@ -17,7 +17,7 @@
 # SAREK_STEP=annotate runs only sarek's annotation (VEP $SAREK_VEP_CACHE_VERSION, the version
 # sarek 3.10 ships) on the somatic VCFs of the finished runs: the bcftools-normalised SNV/indel
 # VCFs from 06 (Mutect2, Strelka2 snvs + indels, MuSE), so they match the analysis, plus Manta's
-# somatic SVs. Output: <dataset>_annotate/annotation/<caller>/<pair>/*_VEP.ann.vcf.gz.
+# somatic SVs. Output: <dataset>_annotate/annotation/<caller>/<vcf name>/*_VEP.ann.vcf.gz.
 # Needs the VEP cache: VEP_CACHE_VERSION=116 ../wgs_test/04_download_references.sh vep
 # VEP runs with sarek's default arguments minus --filter_common, which would drop somatic
 # calls that sit on a common germline SNP position.
@@ -58,7 +58,9 @@ case "$SAREK_STEP" in
         [[ -d "$NORM" ]] || die "missing $NORM - run ./06_normalize_vcfs.sh first"
         [[ -d "$VEP_CACHE/homo_sapiens/${SAREK_VEP_CACHE_VERSION}_GRCh38" ]] \
             || die "VEP cache ${SAREK_VEP_CACHE_VERSION} missing - VEP_CACHE_VERSION=${SAREK_VEP_CACHE_VERSION} ../wgs_test/04_download_references.sh vep"
-        # patient,sample,variantcaller,vcf - one row per VCF; sarek names outputs by caller
+        # patient,sample,variantcaller,vcf - one row per VCF. sarek requires a unique
+        # patient-sample-status-lane per row, so each VCF is its own "sample", named after the
+        # file (RJALS_Tm_vs_RJALS_N.strelka.somatic_snvs ...); outputs go to annotation/<caller>/<sample>/
         {
             echo "patient,sample,variantcaller,vcf"
             for f in "$NORM"/*.norm.vcf.gz; do
@@ -66,10 +68,10 @@ case "$SAREK_STEP" in
                     *.mutect2.*) c=mutect2 ;; *.strelka.*) c=strelka ;; *.muse.*) c=muse ;;
                     *.freebayes.*) c=freebayes ;; *lofreq*) c=lofreq ;; *) continue ;;
                 esac
-                echo "$PATIENT,$PAIR,$c,$f"
+                echo "$PATIENT,$(basename "$f" .norm.vcf.gz),$c,$f"
             done
             sv=$(find "$RESULTS_BASE/sarek/$DATASET/variant_calling/manta/$PAIR" -name "${PAIR}.manta.somatic_sv.vcf.gz" 2>/dev/null | head -1)
-            [[ -n "$sv" ]] && echo "$PATIENT,$PAIR,manta,$sv"
+            [[ -n "$sv" ]] && echo "$PATIENT,$(basename "$sv" .vcf.gz),manta,$sv"
         } > "$SHEET"
         (( $(wc -l < "$SHEET") > 1 )) || die "no VCFs found for $SHEET"
         log "annotate sheet: $SHEET"; sed 's/^/    /' "$SHEET" ;;
@@ -158,7 +160,7 @@ log "sarek done: $OUT"
 if [[ "$SAREK_STEP" == mapping ]]; then
     log "Next:  ./04_run_tumourevo.sh   (then: rm -rf $NXF_WORK_BASE/$RUN)"
 elif [[ "$SAREK_STEP" == annotate ]]; then
-    log "Annotated VCFs: $OUT/annotation/<caller>/${TUMOUR_ID}_vs_${NORMAL_ID}/   VEP summaries: $OUT/reports/EnsemblVEP/"
+    log "Annotated VCFs: $OUT/annotation/<caller>/<pair>.<caller>.../   VEP summaries: $OUT/reports/EnsemblVEP/"
     log "Work dir no longer needed: rm -rf $NXF_WORK_BASE/$RUN"
 else
     log "Work dir no longer needed: rm -rf $NXF_WORK_BASE/$RUN"
