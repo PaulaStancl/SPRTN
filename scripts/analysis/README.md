@@ -32,6 +32,7 @@ and Tier1-5, as its authors recommend for WGS (CALLERS.md; `SPRTN_MUSE_TIERS` re
 same reads as one MNV record; Strelka2 and MuSE write them as separate SNVs. For overlap,
 concordance, caller totals, set QC and the summary table, each MNV is split into its SNVs
 (`atomize_mnv()`), so e.g. SAGE's 2,124 SNV + 17 MNV records give 2,158 SNVs to match.
+Not final - see Open questions 1.
 
 **Doublets count once in mutational-signature analyses (since 2026-10-07).** An SNV with
 another SNV at the neighbouring position in the same caller or set is half of a doublet base
@@ -55,6 +56,26 @@ SAGE. Matched on CHROM:POS:REF:ALT after splitting MNVs and normalising indels.
 fits the 30 COSMIC v2 signatures by least squares; `05b` matches it to the others on the
 signature number. Plot colours in `05` follow SigProfiler's `plotActivity` palette (COSMIC
 artefact signatures in grey).
+
+## Open questions
+
+**1. Compare callers in single bases (MNVs split) or in events (doublets joined)?** *Open since 2026-10-07.*
+
+The callers write the same doublet differently: SAGE and Mutect2 as one MNV record
+(`162683852 GC>CT`), Strelka2 and MuSE as two SNVs (`162683852 G>C`, `162683853 C>T`). The
+overlap matches on CHROM:POS:REF:ALT, so the formats have to be made the same first.
+
+| | A: split MNVs into SNVs (current) | B: join adjacent SNVs into doublets |
+|---|---|---|
+| unit of overlap, set QC, 04 table | single bases | mutational events |
+| SAGE count | 2,158 SNVs | 2,124 SNVs + 17 DBS |
+| a caller that found only one half of a doublet | still matches that half | does not match |
+| same unit as the signature analysis (doublets = 1 DBS) | no | yes |
+| one number per caller everywhere | no (2,158 here, 2,124 in signatures) | yes |
+
+To decide: which unit the presentation and paper should use for "SNVs per caller" and the
+overlaps. If B: join Strelka2/MuSE adjacent SNVs into MNV records before matching, report DBS as
+their own row in the 04 table, and rerun 01-04. Until decided, the scripts use A.
 
 ## Changes
 
