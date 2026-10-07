@@ -3,6 +3,7 @@
 # and FitMS fits.
 #   Rscript 05b_hartwig_sigs_check.R
 # Run after 01b_sarek_signatures.py --pipeline oncoanalyser (and 01c ... oncoanalyser for FitMS).
+# Expected: identical SNV counts and contexts - both leave doublets (MNVs) out of SBS96.
 #
 # SIGS (hmftools): PURPLE's PASS single-base SNVs (MNVs skipped), context from PURPLE's
 # annotation, least-squares fit of the 30 COSMIC v2 signatures (Sig1-Sig30); the unexplained

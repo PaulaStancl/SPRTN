@@ -191,7 +191,7 @@ grp <- rbindlist(list(
   two_plus    = snv[N_CALLERS >= 2],
   all_callers = snv[N_CALLERS == sc$n_callers]), idcol = "GROUP")
 grp[, GROUP := factor(GROUP, levels = c("two_plus", "all_callers"))]
-print(grp[, .(snvs = .N, with_context = sum(!is.na(SBS96))), by = GROUP])
+print(grp[, .(snvs = .N, in_doublets = sum(IN_DBS), in_sbs96 = sum(!is.na(SBS96))), by = GROUP])
 m96 <- dcast(grp[!is.na(SBS96)], SBS96 ~ GROUP, fun.aggregate = length, value.var = "POS", drop = FALSE)
 m96 <- m96[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
 for (cl in setdiff(names(m96), "SBS96")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
@@ -278,7 +278,7 @@ if (nrow(qs))
 
 # per caller + consensus, one panel per row on the same axis: each caller's PASS SNVs as it
 # calls them (MuSE: all tiers), then the SNVs PASS in all SNV callers, then in >= 2 of them.
-# Each SNV once per panel (MNVs split). Rows = panels, so no summed "all SNVs" row.
+# Each SNV once per panel (MNVs split; doublet halves left out, as in SBS96). Rows = panels, so no summed "all SNVs" row.
 add_sbs96(atom)
 n_snv_callers <- uniqueN(atom[TYPE == "SNV", CALLER])
 snv_callers   <- disp(sort(unique(atom[TYPE == "SNV", CALLER])))
@@ -349,7 +349,8 @@ if (nrow(cand)) {
 mut[, c("m2", "st", "mu", "sg", "VAF_MEAN", "n_sarek", "n_able", names(rules)) := NULL]
 # ---- 9. signature inputs: each caller's PASS calls and the two consensus sets -----------------
 # For 01b (SigProfiler COSMIC fit) and 01c (FitMS liver signatures) with the "comparison"
-# pipeline, one fit per set; 05_signature_summary.R then plots them side by side. Sets (MNVs split):
+# pipeline, one fit per set; 05_signature_summary.R then plots them side by side. Sets (MNVs
+# split; doublet halves go to DBS78 only, not SBS96 - write_signature_sets()):
 #   muse, mutect2, strelka, sage   that caller's PASS calls (MuSE: all tiers; SNVs only)
 #   two_plus                       PASS in >= 2 callers (each mutation once)
 #   all_callers                    PASS in every caller able to call the type (SNVs: all 4)

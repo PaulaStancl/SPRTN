@@ -26,7 +26,8 @@ writeLines(paste(names(files), files, sep = "\t"), file.path(od, "inputs_used.ts
 #              PASS only) - FILTER outcome, reasons, depth / VAF / SAGE's QUAL
 # qc_vcf/pass: PASS calls from PURPLE's somatic VCF (SAGE's calls with PAVE + PURPLE annotation,
 #              e.g. info_PURPLE_AF purity-adjusted VAF, info_PURPLE_CN, info_SUBCL) - VAF,
-#              spectrum, qcVCF plots (section 5), MNVs split as for sarek
+#              spectrum, qcVCF plots (section 5), MNVs split as for sarek (overlaps);
+#              96-context and spectrum leave doublets out (a doublet is one DBS event)
 raw_dir  <- file.path(od, "qc_vcf", "raw");  dir.create(raw_dir,  recursive = TRUE, showWarnings = FALSE)
 pass_dir <- file.path(od, "qc_vcf", "pass"); dir.create(pass_dir, recursive = TRUE, showWarnings = FALSE)
 calls_raw <- load_calls(files, if ("sage_somatic" %in% names(files)) "sage_somatic" else "purple_somatic", "sage")

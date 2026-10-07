@@ -13,7 +13,9 @@
 #        mutect2_strelka (PASS in both) - or, for oncoanalyser, sage; each file is one
 #        "sample", fitted on its own.
 # Output <OUT>/<pipeline>/signatures/sigprofiler/
-#   matrix_generator/output/{SBS,DBS,ID}/   SigProfilerMatrixGenerator matrices
+#   matrix_generator/output/SBS/            SBS96 from input/vcf_sbs/ (doublet halves removed:
+#                                           a doublet counts in DBS78 only, as in COSMIC/PCAWG)
+#   matrix_generator_all/output/{DBS,ID}/   DBS78 and ID83 from input/vcf/ (all calls)
 #   SBS96/<set>/ DBS78/<set>/ ID83/<set>/   SigProfilerAssignment cosmic_fit results - one
 #                                           cosmic_fit call per set, so each is fitted on its own
 #   activities_<context>.csv                signature, mutations assigned, fraction - all sets
@@ -68,20 +70,33 @@ os.makedirs(FIT_DIR, exist_ok=True)
 
 # ---- matrices: SigProfilerMatrixGenerator --------------------------------------
 from SigProfilerMatrixGenerator.scripts import SigProfilerMatrixGeneratorFunc as matGen  # noqa: E402
-# the generator writes output/ next to its input, so work on a copy of the VCFs
+# Two runs. The matrix generator finds doublets (adjacent SNVs) for DBS78 but also counts both
+# halves in SBS96. A doublet is one event (COSMIC/PCAWG, ICAMS, Hartwig SIGS), so:
+#   matrix_generator/      on input/vcf_sbs/ (doublet halves removed) -> SBS96
+#   matrix_generator_all/  on input/vcf/ (all calls)                  -> DBS78, ID83
+# The generator writes output/ next to its input, so each run works on a copy of the VCFs.
+def run_matgen(src, dst):
+    shutil.rmtree(dst, ignore_errors=True)
+    shutil.copytree(src, dst)
+    try:
+        matGen.SigProfilerMatrixGeneratorFunc(PATIENT, "GRCh38", dst + "/", exome=False, bed_file=None,
+                                              chrom_based=False, plot=True, tsb_stat=False, seqInfo=False)
+    except Exception as e:  # most often: the GRCh38 reference is not installed
+        sys.exit(f"SigProfilerMatrixGenerator failed: {e}\nInstall its genome once with\n"
+                 "  python -c \"from SigProfilerMatrixGenerator import install as g; g.install('GRCh38')\"")
+
+vcf_sbs_dir = os.path.join(IN_DIR, "vcf_sbs")
+if not glob.glob(os.path.join(vcf_sbs_dir, "*.vcf")):
+    sys.exit(f"No {vcf_sbs_dir} - rerun the R script that writes the signature inputs (01/02/03) first")
 mg_dir = os.path.join(FIT_DIR, "matrix_generator")
-shutil.rmtree(mg_dir, ignore_errors=True)
-shutil.copytree(vcf_dir, mg_dir)
-try:
-    matGen.SigProfilerMatrixGeneratorFunc(PATIENT, "GRCh38", mg_dir + "/", exome=False, bed_file=None,
-                                          chrom_based=False, plot=True, tsb_stat=False, seqInfo=False)
-except Exception as e:  # most often: the GRCh38 reference is not installed
-    sys.exit(f"SigProfilerMatrixGenerator failed: {e}\nInstall its genome once with\n"
-             "  python -c \"from SigProfilerMatrixGenerator import install as g; g.install('GRCh38')\"")
+mg_all = os.path.join(FIT_DIR, "matrix_generator_all")
+run_matgen(vcf_sbs_dir, mg_dir)
+if any(c.strip() != "SBS96" for c in args.contexts.split(",")):
+    run_matgen(vcf_dir, mg_all)
 matrices = {}
 for ctx in args.contexts.split(","):
     sub, name = CONTEXTS[ctx.strip()]
-    matrices[ctx.strip()] = os.path.join(mg_dir, "output", sub, f"{PATIENT}.{name}.all")
+    matrices[ctx.strip()] = os.path.join(mg_dir if ctx.strip() == "SBS96" else mg_all, "output", sub, f"{PATIENT}.{name}.all")
 
 # Comparison only - the fits below use the matrix generator's matrices, never 01_sarek.R's:
 # SBS96 per class and set, SigProfiler vs 01_sarek.R (sbs96_compare.csv, every row) and

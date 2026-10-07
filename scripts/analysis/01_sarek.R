@@ -216,7 +216,9 @@ if (!is.na(py_fit)) {
 # (the only matrices the fits use)
 # and SigProfilerAssignment fits COSMIC signatures (cosmic_fit, which replaced
 # SigProfilerSingleSample). MNVs are written split: the matrix generator rejoins adjacent
-# SNVs into doublets itself, the same way for both callers. Sets (keys CHROM:POS:REF:ALT):
+# SNVs into doublets (DBS78) itself, the same way for both callers; SBS96 is built from the
+# same sets without the doublet halves (vcf_sbs/, see write_signature_sets()), so a doublet
+# counts once. Sets (keys CHROM:POS:REF:ALT):
 #   mutect2 / strelka                 all PASS calls of that caller
 #   mutect2_strelka                   PASS in both callers (intersection)
 sig_in <- file.path(od, "signatures", "input")

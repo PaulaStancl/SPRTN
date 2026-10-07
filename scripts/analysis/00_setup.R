@@ -311,18 +311,35 @@ sbs96 <- function(ref, alt, nc3) {
 SBS96_TYPES <- sort(CJ(b5 = c("A", "C", "G", "T"), sub = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"),
                        b3 = c("A", "C", "G", "T"))[, paste0(b5, "[", sub, "]", b3)], method = "radix")
 
+# Doublets: an SNV with another SNV at the neighbouring position (same chromosome, same `by`
+# group - a caller or a set) is half of a doublet base substitution (DBS). That covers a split
+# MNV (SAGE, Mutect2) and the two separate SNVs Strelka2 / MuSE write for the same event, and is
+# how SigProfilerMatrixGenerator finds DBSs. A doublet is one mutational event, so it is left
+# out of SBS96 and counted in DBS78 only - as in COSMIC/PCAWG, ICAMS and Hartwig SIGS
+# (SigProfilerMatrixGenerator itself would count it in both). d: SNV rows only.
+in_doublet <- function(d, by = NULL) {
+  grp <- if (length(by)) do.call(paste, c(d[, by, with = FALSE], sep = "|")) else ""
+  here <- paste(grp, d$CHROM, d$POS)
+  paste(grp, d$CHROM, d$POS - 1L) %chin% here | paste(grp, d$CHROM, d$POS + 1L) %chin% here
+}
+
 # PASS SNVs of `atom` (MNVs split, from snv_indel_summary()) get their trinucleotide context
 # from the reference FASTA: NC_3 on the + strand, SBS96 the pyrimidine-strand class (A[C>T]G)
-# used by the 96-context plots and SigProfiler. Modifies atom in place.
-add_sbs96 <- function(atom) {
+# used by the 96-context plots and SigProfiler. IN_DBS flags the halves of doublets (per CALLER
+# if atom has one, else over all rows); they get no SBS96 class, so every 96-context plot and
+# matrix leaves them out. Modifies atom in place.
+add_sbs96 <- function(atom, by = intersect("CALLER", names(atom))) {
   atom[MUTTYPE == "SNV", NC_3 := trinuc_context(.SD)]
   bad <- atom[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]      # middle base must be REF
   if (bad) warning(bad, " SNVs whose REF is not the reference base - is FASTA the genome the caller used?")
-  atom[MUTTYPE == "SNV" & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT1, NC_3)]
+  atom[, IN_DBS := FALSE][MUTTYPE == "SNV", IN_DBS := in_doublet(.SD, by)]
+  atom[MUTTYPE == "SNV" & !IN_DBS & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT1, NC_3)]
+  if (atom[, any(IN_DBS)]) message(atom[IN_DBS == TRUE, .N], " SNVs are halves of doublets (DBS) - left out of SBS96",
+                                   if (length(by)) paste0(" (per ", by, ")"))
   invisible(atom)
 }
 
-# qcVCF 96-context plot of the PASS SNVs in atom (split MNVs included): one column per caller;
+# qcVCF 96-context plot of the PASS SNVs in atom (doublet halves left out - see add_sbs96()): one column per caller;
 # rows all SNVs plus, if `rowsplit` names a column (e.g. QC_SHARED), one row per value.
 # plot96_matrix() wants NC_3 on the pyrimidine strand (as palimpsest writes it) and does not
 # flip it itself, so it gets SBS96's bases, not the + strand NC_3. It returns the figure(s)
@@ -358,23 +375,32 @@ sharing_levels <- function(n_all) c("unique", if (n_all > 2) sprintf("%d of %d c
 
 # Signature sets (rows of atom with a SET column, MNVs split) -> signatures/input/ for the
 # SigProfiler script (01b) and FitMS (01c): one minimal VCF per set in vcf/ (one "sample" each;
-# the matrix generator rejoins adjacent SNVs into doublets itself), pass_sets.csv,
-# pass_set_counts.csv, and the SBS96 counts computed here in SigProfiler's matrix format -
-# NOT used for fitting, only to compare with the matrix generator's (sbs96_compare.csv).
+# all calls - the matrix generator finds the doublets for DBS78 itself) and in vcf_sbs/ (the same
+# without the doublet halves, IN_DBS - for SBS96, so a doublet is not counted twice),
+# pass_sets.csv, pass_set_counts.csv, and the SBS96 counts computed here in SigProfiler's matrix
+# format - NOT used for fitting, only to compare with the matrix generator's (sbs96_compare.csv).
+# Doublets are found again per set (a set can join calls of several callers).
 write_signature_sets <- function(sets, sig_in, source_label) {
   dir.create(file.path(sig_in, "vcf"), recursive = TRUE, showWarnings = FALSE)
   unlink(list.files(file.path(sig_in, "vcf"), "\\.vcf$", full.names = TRUE))   # no sets left from an earlier run
+  dir.create(file.path(sig_in, "vcf_sbs"), showWarnings = FALSE)
+  unlink(list.files(file.path(sig_in, "vcf_sbs"), "\\.vcf$", full.names = TRUE))
   sets <- sets[, .(SET, CHROM, POS, REF, ALT = ALT1, MUTTYPE, FROM_MNV, NC_3, SBS96)]
   sets <- unique(sets, by = c("SET", "CHROM", "POS", "REF", "ALT"))
   sets <- sets[order(SET, match(CHROM, STD_CHR), POS)]
+  sets[, IN_DBS := FALSE][MUTTYPE == "SNV", IN_DBS := in_doublet(.SD, "SET")]
+  sets[, SBS96 := fifelse(MUTTYPE == "SNV" & !IN_DBS & substr(NC_3, 2, 2) == REF, sbs96(REF, ALT, NC_3), NA_character_)]
   set_counts <- dcast(sets, SET ~ MUTTYPE, fun.aggregate = length, value.var = "POS")
+  set_counts[sets[, .(SNV_in_doublets = sum(IN_DBS), SNV_for_SBS96 = sum(MUTTYPE == "SNV" & !IN_DBS)), by = SET],
+             on = "SET", `:=`(SNV_in_doublets = i.SNV_in_doublets, SNV_for_SBS96 = i.SNV_for_SBS96)]
   print(set_counts); fwrite(set_counts, file.path(sig_in, "pass_set_counts.csv"))
   fwrite(sets, file.path(sig_in, "pass_sets.csv"))
-  for (st in unique(sets$SET)) {
-    f <- file.path(sig_in, "vcf", paste0(st, ".vcf"))
-    writeLines(c("##fileformat=VCFv4.2", paste0("##source=", source_label, " PASS set ", st),
+  for (st in unique(sets$SET)) for (sub in c("vcf", "vcf_sbs")) {
+    f <- file.path(sig_in, sub, paste0(st, ".vcf"))
+    writeLines(c("##fileformat=VCFv4.2", paste0("##source=", source_label, " PASS set ", st,
+                                                if (sub == "vcf_sbs") " (doublet halves removed, for SBS96)"),
                  "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"), f)
-    fwrite(sets[SET == st, .(CHROM, POS, ID = ".", REF, ALT, QUAL = ".", FILTER = "PASS", INFO = ".")],
+    fwrite(sets[SET == st & (sub == "vcf" | !IN_DBS), .(CHROM, POS, ID = ".", REF, ALT, QUAL = ".", FILTER = "PASS", INFO = ".")],
            f, sep = "\t", append = TRUE, col.names = FALSE)
   }
   m96 <- dcast(sets[!is.na(SBS96)], SBS96 ~ SET, fun.aggregate = length, value.var = "POS")
@@ -504,16 +530,17 @@ snv_indel_summary <- function(calls, od) {
   if (nrow(vaf_tbl)) save_plot(ggplot(vaf_tbl, aes(VAF)) + geom_histogram(bins = 50) + facet_wrap(~CALLER) +
                                  labs(x = "tumour VAF", title = "PASS SNV allele fractions"), "snv_vaf_hist", od)
 
-  # substitution spectrum: 6 classes, pyrimidine reference; split MNVs included
+  # substitution spectrum: 6 classes, pyrimidine reference; doublet halves left out (as for SBS96)
   comp <- c(A = "T", C = "G", G = "C", T = "A")
   snv  <- atom[TYPE == "SNV" & REF %chin% names(comp) & ALT1 %chin% names(comp)]
+  snv  <- snv[!in_doublet(snv, "CALLER")]
   snv[, pyr := REF %chin% c("C", "T")]
   snv[, class := paste0(fifelse(pyr, REF,  unname(comp[REF])), ">",
                         fifelse(pyr, ALT1, unname(comp[ALT1])))]
   spec <- snv[, .(n = .N), by = .(CALLER, class)]
   fwrite(spec, file.path(od, "snv_substitution_spectrum.csv"))
   save_plot(ggplot(spec, aes(class, n, fill = CALLER)) + geom_col(position = position_dodge(preserve = "single")) +
-              labs(x = NULL, y = "PASS SNVs (incl. split MNVs)", title = "Substitution spectrum"), "snv_spectrum", od)
+              labs(x = NULL, y = "PASS SNVs (doublets left out)", title = "Substitution spectrum"), "snv_spectrum", od)
 
   fwrite(calls_pass, file.path(od, "snv_indel_pass.csv"))
   fwrite(atom,       file.path(od, "snv_indel_pass_atomized.csv"))
