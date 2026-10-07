@@ -394,8 +394,9 @@ roq_qc_plot <- function(m, od, name = "mutect2_roq_qc", cut = 20, title = "Mutec
 }
 
 # Is the ROQ cut-off right? m: Mutect2 PASS SNVs with info_ROQ, VAF, REF, ALT1, CALLERS.
-# (1) per ROQ bin: % confirmed by another caller, median VAF, % C>T - a good cut-off is where the
-#     bins turn from artefact-like (low confirmation, low VAF, C>T-rich) to like the high-ROQ calls;
+# (1) per ROQ bin: % confirmed by another caller, median VAF, % C>T, against the ROQ >= 60 level -
+#     the artefact fingerprint is the C>T excess; confirmation and VAF also rise with read support
+#     (a real low-VAF call cannot reach a high ROQ), so they climb more slowly than C>T falls;
 # (2) per candidate cut-off: calls removed, and of those how many another caller confirms (real
 #     calls a plain cut would lose; a "drop unless confirmed" rule keeps them).
 # Writes <name>.pdf and <name>_bins.csv / <name>_cuts.csv to od.
@@ -409,7 +410,7 @@ roq_cutoff_plot <- function(m, od, name = "mutect2_roq_cutoff", cuts = c(5, 10, 
   m[, bin := cut(ROQ, br, right = FALSE, labels = c(paste0(head(br, -2), "-", br[-c(1, length(br))]), ">=60"))]
   bins <- m[, .(snvs = .N, confirmed_pct = round(100 * mean(conf), 1), median_VAF = round(median(VAF, na.rm = TRUE), 3),
                 C_to_T_pct = round(100 * mean(cls == "C>T"), 1)), keyby = bin]
-  ref <- m[ROQ >= 40, .(confirmed_pct = 100 * mean(conf), median_VAF = median(VAF, na.rm = TRUE), C_to_T_pct = 100 * mean(cls == "C>T"))]
+  ref <- m[ROQ >= 60, .(confirmed_pct = 100 * mean(conf), median_VAF = median(VAF, na.rm = TRUE), C_to_T_pct = 100 * mean(cls == "C>T"))]
   cutt <- rbindlist(lapply(cuts, function(k) m[, .(cut = k, removed = sum(ROQ < k), removed_confirmed = sum(ROQ < k & conf),
     removed_pct = round(100 * mean(ROQ < k), 1), kept = sum(ROQ >= k | conf))]))
   print(bins); print(cutt)
@@ -423,7 +424,7 @@ roq_cutoff_plot <- function(m, od, name = "mutect2_roq_cutoff", cuts = c(5, 10, 
     geom_hline(data = rl, aes(yintercept = value), linetype = 2, colour = "grey50") +
     facet_wrap(~measure, scales = "free_y", ncol = 1) + scale_size_area(max_size = 5) +
     labs(x = "ROQ bin", y = NULL, size = "SNVs", title = "Mutect2 PASS SNVs by ROQ bin",
-         subtitle = "dashed: level of the ROQ >= 40 calls; the cut-off belongs where bins reach it") +
+         subtitle = "dashed: level of the ROQ >= 60 calls (clean); artefacts = C>T excess + low confirmation + low VAF") +
     theme(axis.text.x = element_text(angle = 45, hjust = 1))
   lc <- melt(cutt[, .(cut, `removed, not confirmed` = removed - removed_confirmed, `removed but confirmed (lost by a plain cut)` = removed_confirmed)],
              id.vars = "cut", variable.name = "what", value.name = "n")
