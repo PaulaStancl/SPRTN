@@ -18,6 +18,7 @@
 #                                 the C-terminal truncation), c.718_718+3del, c.1246_1247del -
 #                                 the reads at each position, carried or not
 #   SPRTN_clinvar_vus.html        the same for ClinVar's variants of uncertain significance
+#   SPRTN_compound_het.html       the patient's two variants side by side: Y117C + c.718_718+3del
 #   SPRTN_gene.html               the whole gene and each exon
 # Tracks: 09's SPRTN_gene slices (RJALS_Tm / RJALS_N x sarek / oncoanalyser) + exon track.
 # The HTML files embed the patient's reads: keep them local, outside synced folders.
@@ -92,6 +93,14 @@ report "$TMP/clinvar_plp.bed" SPRTN_clinvar_pathogenic \
     "SPRTN - ClinVar pathogenic / likely pathogenic positions (Y117C, p.Lys241fs = C-terminal truncation, ...) - RJALS reads"
 [[ -s "$TMP/clinvar_vus.bed" ]] && report "$TMP/clinvar_vus.bed" SPRTN_clinvar_vus \
     "SPRTN - ClinVar variants of uncertain significance - RJALS reads"
+
+# ---- 2b. the patient's two SPRTN variants side by side (compound heterozygous) ----------------
+# Y117C (missense, exon 3) and c.718_718+3del (4-bp deletion AGGT at the exon 4 splice donor;
+# pileup places it after 231351569, ClinVar/HGVS at 231351571-574 - the same deletion).
+printf 'chr1\t231347824\t231347825\tc.350A>G p.Tyr117Cys (missense, exon 3)\n' >  "$TMP/compound_het.bed"
+printf 'chr1\t231351568\t231351574\tc.718_718+3del (4-bp deletion, exon 4 splice donor)\n' >> "$TMP/compound_het.bed"
+report "$TMP/compound_het.bed" SPRTN_compound_het \
+    "SPRTN - the two germline variants of RJALS: c.350A>G (p.Tyr117Cys) and c.718_718+3del"
 
 # ---- 3. the whole gene and each exon ------------------------------------------------------------
 awk -F'\t' 'NR > 1 { printf "%s\t%d\t%d\tsite%s %s\n", $3, $4 - 1, $5, $1, $2 }' "$SL/sites.tsv" > "$TMP/gene.bed"
