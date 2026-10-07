@@ -356,8 +356,19 @@ roq_qc_plot <- function(m, od, name = "mutect2_roq_qc", cut = 20, title = "Mutec
   th <- theme(legend.position = "bottom", legend.title = element_blank())
   pA <- ggplot(m, aes(ROQ)) + geom_histogram(bins = 60, fill = "grey40") + geom_vline(xintercept = cut, colour = "#d62728", linetype = 2) +
     labs(x = "ROQ (Phred)", y = "SNVs", title = "A  ROQ distribution", subtitle = sprintf("dashed: cut-off %g (artefact probability %.1f%%)", cut, 100 * 10^(-cut / 10)))
-  pB <- ggplot(m[!is.na(VAF)], aes(VAF, fill = grp_n)) + geom_histogram(bins = 50, position = "identity", alpha = 0.6) +
-    scale_fill_manual(values = gcol) + labs(x = "tumour VAF", y = "SNVs", title = "B  VAF per group") + th
+  # VAF compared between the groups: violin + box (line = median), diamond = mean, values printed;
+  # Wilcoxon rank-sum test low vs high ROQ
+  mv <- m[!is.na(VAF)]
+  vs <- mv[, .(median = median(VAF), mean = mean(VAF), top = max(VAF)), by = grp_n]
+  wp <- if (uniqueN(mv$grp_n) == 2) wilcox.test(VAF ~ grp_n, data = mv)$p.value else NA_real_
+  pB <- ggplot(mv, aes(grp_n, VAF, fill = grp_n)) + geom_violin(alpha = 0.5, colour = NA, scale = "width") +
+    geom_boxplot(width = 0.15, outlier.shape = NA, fill = "white") +
+    geom_point(data = vs, aes(grp_n, mean), inherit.aes = FALSE, shape = 23, size = 3, fill = "black") +
+    geom_text(data = vs, aes(grp_n, pmin(top, 1) + 0.04, label = sprintf("median %.3f\nmean %.3f", median, mean)),
+              inherit.aes = FALSE, size = 3.2, vjust = 0) +
+    scale_fill_manual(values = gcol, guide = "none") + scale_y_continuous(limits = c(0, NA), expand = expansion(mult = c(0.02, 0.18))) +
+    labs(x = NULL, y = "tumour VAF", title = "B  VAF: low vs high ROQ",
+         subtitle = sprintf("box line = median, diamond = mean; Wilcoxon p %s", fifelse(is.na(wp), "NA", fifelse(wp < 1e-3, "< 0.001", sprintf("= %.2g", wp)))))
   pC <- ggplot(m[!is.na(T_ALT) & T_ALT > 0], aes(grp_n, T_ALT, fill = grp_n)) + geom_boxplot(outlier.size = 0.4) +
     scale_y_log10() + scale_fill_manual(values = gcol, guide = "none") + labs(x = NULL, y = "tumour ALT reads (log10)", title = "C  ALT read support")
   pD <- ggplot(m[!is.na(VAF)], aes(VAF, ROQ, colour = cls)) + geom_point(size = 0.5, alpha = 0.4) +
@@ -378,7 +389,7 @@ roq_qc_plot <- function(m, od, name = "mutect2_roq_qc", cut = 20, title = "Mutec
     g <- cowplot::plot_grid(cowplot::ggdraw() + cowplot::draw_label(title, fontface = "bold", x = 0.01, hjust = 0), g, ncol = 1, rel_heights = c(0.05, 1))
     save_plot(g, name, od, w = 16, h = 9)
   } else for (k in seq_along(plots)) save_plot(plots[[k]], paste0(name, "_", LETTERS[k]), od, w = 6, h = 4.5)
-  invisible(m[, .(n = .N, median_VAF = median(VAF, na.rm = TRUE), median_alt_reads = median(T_ALT, na.rm = TRUE),
+  invisible(m[, .(n = .N, median_VAF = median(VAF, na.rm = TRUE), mean_VAF = round(mean(VAF, na.rm = TRUE), 3), median_alt_reads = median(T_ALT, na.rm = TRUE),
                   pct_VAF_below_0.1 = round(100 * mean(VAF < 0.1, na.rm = TRUE), 1)), by = grp])
 }
 
