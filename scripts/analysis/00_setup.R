@@ -437,6 +437,48 @@ roq_cutoff_plot <- function(m, od, name = "mutect2_roq_cutoff", cuts = c(5, 10, 
   invisible(list(bins = bins, cuts = cutt))
 }
 
+# QC metric by bins, the generic form of the ROQ check: one caller's PASS SNVs split into bins of a
+# metric (deciles, or its values if few), and per bin the evidence that calls are real - % confirmed
+# by another caller, median VAF, % C>T (damage fingerprint) - against the caller's overall level.
+# d: SNVs of one caller with x (the metric), CONF (confirmed by >= 1 other caller), VAF, REF, ALT1.
+# Returns list(plot, bins); the plot has 5 panels: distribution, the three per-bin measures, x vs VAF.
+metric_bins <- function(d, label, title, nbins = 10) {
+  d <- copy(d)[is.finite(x)]
+  if (nrow(d) < 20 || uniqueN(d$x) < 2) return(NULL)
+  comp <- c(A = "T", C = "G", G = "C", T = "A")
+  d[, cls := fifelse(REF %chin% c("C", "T"), paste0(REF, ">", ALT1), paste0(comp[REF], ">", comp[ALT1]))]
+  if (uniqueN(d$x) <= nbins) {
+    d[, bin := factor(format(x, digits = 3, trim = TRUE), levels = format(sort(unique(x)), digits = 3, trim = TRUE))]
+  } else {
+    br <- unique(quantile(d$x, seq(0, 1, length.out = nbins + 1), na.rm = TRUE, names = FALSE))
+    d[, bin := cut(x, br, include.lowest = TRUE, dig.lab = 4)]
+  }
+  bins <- d[, .(n = .N, from = min(x), to = max(x), confirmed_pct = round(100 * mean(CONF), 1),
+                median_VAF = round(median(VAF, na.rm = TRUE), 3), C_to_T_pct = round(100 * mean(cls == "C>T"), 1)), keyby = bin]
+  ref <- d[, .(confirmed_pct = 100 * mean(CONF), median_VAF = median(VAF, na.rm = TRUE), C_to_T_pct = 100 * mean(cls == "C>T"))]
+  logx <- min(d$x) > 0 && max(d$x) / min(d$x) > 50
+  pA <- ggplot(d, aes(x)) + geom_histogram(bins = 60, fill = "grey40") + (if (logx) scale_x_log10() else NULL) +
+    labs(x = label, y = "SNVs", title = "A  distribution")
+  per_bin <- function(col, ylab, ttl, refv) ggplot(bins, aes(bin, get(col), group = 1)) + geom_line(colour = "grey40") +
+    geom_point(aes(size = n), colour = "#1f77b4") + geom_hline(yintercept = refv, linetype = 2, colour = "grey50") +
+    scale_size_area(max_size = 4, guide = "none") + labs(x = paste(label, "(bin)"), y = ylab, title = ttl) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+  pB <- per_bin("confirmed_pct", "% confirmed", "B  confirmed by another caller", ref$confirmed_pct)
+  pC <- per_bin("median_VAF", "median VAF", "C  median tumour VAF", ref$median_VAF)
+  pD <- per_bin("C_to_T_pct", "% C>T", "D  C>T share (damage fingerprint)", ref$C_to_T_pct)
+  pE <- ggplot(d[!is.na(VAF)], aes(x, VAF, colour = CONF)) + geom_point(size = 0.4, alpha = 0.35) + (if (logx) scale_x_log10() else NULL) +
+    scale_colour_manual(values = c(`TRUE` = "#1f77b4", `FALSE` = "#d62728"), labels = c(`TRUE` = "confirmed", `FALSE` = "this caller only")) +
+    labs(x = label, y = "tumour VAF", colour = NULL, title = "E  metric vs VAF") + theme(legend.position = "bottom") +
+    guides(colour = guide_legend(override.aes = list(size = 2, alpha = 1)))
+  g <- if (requireNamespace("cowplot", quietly = TRUE)) {
+    gg <- cowplot::plot_grid(pA, pB, pC, pD, pE, ncol = 3, align = "h")
+    cowplot::plot_grid(cowplot::ggdraw() + cowplot::draw_label(paste0(title, "\ndashed: the caller's level over all its PASS SNVs; bins = deciles of the metric"),
+                                                               fontface = "bold", x = 0.01, hjust = 0, size = 11),
+                       gg, ncol = 1, rel_heights = c(0.08, 1))
+  } else pB
+  list(plot = g, bins = bins)
+}
+
 # qcVCF 96-context plot of the PASS SNVs in atom (doublet halves left out - see add_sbs96()): one column per caller;
 # rows all SNVs plus, if `rowsplit` names a column (e.g. QC_SHARED), one row per value.
 # plot96_matrix() wants NC_3 on the pyrimidine strand (as palimpsest writes it) and does not

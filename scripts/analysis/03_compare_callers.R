@@ -23,6 +23,8 @@
 #                 mutation_callers.csv             one row per PASS mutation: callers, n callers, each one's VAF
 #                 set_qc_metrics.pdf, set_qc_score.pdf, set_qc_summary.csv   QC of the >= 2 / all-callers SNV sets per caller
 #                 set_qc_tests.csv                 Wilcoxon this-caller-only vs >= 2 / vs all, BH-adjusted
+#   qc_metrics/   metric_qc_<caller>.pdf, metric_qc_bins.csv   per QC metric (depth, ALT reads, normal VAF,
+#                 score, caller-specific qualities): deciles, % confirmed / median VAF / % C>T per bin
 #   vaf/          snv_vaf_hist.pdf                 tumour VAF per caller
 #                 support_by_vaf.csv/.pdf          share of each caller's calls confirmed by >= 1 other, by VAF
 #                 vaf_agreement.csv/.pdf           tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
@@ -292,6 +294,56 @@ print(pc[, .N, by = PANEL])
 pc[, CALLER := paste0("PASS SNVs per caller, then consensus of ", paste(snv_callers, collapse = ", "))]
 plot_96context(pc, d_96, rowsplit = "PANEL", name = "snv_96context_per_caller", show_all = FALSE,
                roworder = c(snv_callers, lab_all, lab_two))
+# ---- 7c. QC metrics by bins, per caller (generic form of 01's ROQ check) ----------------------------
+# For each caller and metric: its PASS SNVs in deciles of the metric, and per bin % confirmed by
+# another caller, median VAF and % C>T. Artefact-rich bins are low on confirmation and VAF and
+# often high on C>T; for depth both tails can be suspect (low = weak evidence, high = repeats /
+# collapsed duplications). Output: qc_metrics/metric_qc_<caller>.pdf (one page per metric),
+# qc_metrics/metric_qc_bins.csv (all callers and metrics).
+d_qm <- file.path(od, "qc_metrics"); dir.create(d_qm, showWarnings = FALSE)
+alt2 <- function(x) suppressWarnings(as.numeric(fifelse(grepl(",", x, fixed = TRUE), sub("^[^,]*,([^,]*).*$", "\\1", as.character(x)), NA_character_)))
+qm_defs <- list(   # column / function, label, callers (NULL = all)
+  list(f = function(z) num1(z$t_DP),  lab = "tumour depth (DP)",  callers = NULL),
+  list(f = function(z) num1(z$n_DP),  lab = "normal depth (DP)",  callers = NULL),
+  list(f = function(z) z$T_ALT,       lab = "tumour ALT reads",   callers = NULL),
+  list(f = function(z) z$N_VAF,       lab = "normal VAF",         callers = NULL),
+  list(f = function(z) z$SCORE,       lab = "caller score (TLOD / SomaticEVS / QUAL)", callers = c("mutect2", "strelka", "sage")),
+  list(f = function(z) alt2(z$info_MBQ),  lab = "ALT median base quality (MBQ)",       callers = "mutect2"),
+  list(f = function(z) alt2(z$info_MMQ),  lab = "ALT median mapping quality (MMQ)",    callers = "mutect2"),
+  list(f = function(z) num1(z$info_MPOS), lab = "ALT median distance from read end (MPOS)", callers = "mutect2"),
+  list(f = function(z) num1(z$info_STRANDQ), lab = "strand-bias quality (STRANDQ)",     callers = "mutect2"),
+  list(f = function(z) num1(z$info_SNVSB),   lab = "somatic SNV strand bias (SNVSB)",   callers = "strelka"),
+  list(f = function(z) num1(z$info_MQ),      lab = "RMS mapping quality (MQ)",          callers = "strelka"),
+  list(f = function(z) num1(z$info_ReadPosRankSum), lab = "read-position rank sum",     callers = "strelka"),
+  list(f = function(z) alt2(z$t_BQ),         lab = "ALT average base quality (BQ)",     callers = "muse"))
+qm_bins <- list()
+for (cl in sort(unique(q$CALLER))) {
+  z <- q[CALLER == cl]
+  z[, CONF := N_CALLERS >= 2]
+  pages <- list()
+  for (md in qm_defs) {
+    if (!is.null(md$callers) && !cl %chin% md$callers) next
+    x <- tryCatch(md$f(z), error = function(e) NULL)
+    if (is.null(x) || all(is.na(x))) next
+    r <- metric_bins(z[, .(x = as.numeric(x), CONF, VAF, REF, ALT1)], md$lab,
+                     sprintf("%s PASS SNVs: %s", disp(cl), md$lab))
+    if (is.null(r)) next
+    pages[[md$lab]] <- r$plot
+    qm_bins[[length(qm_bins) + 1]] <- r$bins[, `:=`(caller = cl, metric = md$lab)]
+  }
+  if (length(pages)) {
+    pdf(file.path(d_qm, paste0("metric_qc_", cl, ".pdf")), width = 15, height = 9)
+    for (pg in pages) print(pg)
+    dev.off()
+    message("metric QC ", cl, ": ", length(pages), " metrics -> ", file.path(d_qm, paste0("metric_qc_", cl, ".pdf")))
+  }
+}
+if (length(qm_bins)) {
+  qm_bins <- rbindlist(qm_bins)[, bin := as.character(bin)]
+  setcolorder(qm_bins, c("caller", "metric"))
+  fwrite(qm_bins, file.path(d_qm, "metric_qc_bins.csv"))
+}
+
 # ---- 8. candidate final sets: which overlap to keep -------------------------------------------
 # Each set is a rule over the callers that found a mutation (PASS, MNVs split, indels normalised):
 #   mutect2+strelka         Mutect2 AND Strelka2 (others may also have it)
