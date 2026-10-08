@@ -83,8 +83,13 @@ signatures with `convertExposuresFromOrganToRefSigs`, unassigned left out, share
 SNVs - for interpretation next to SigProfiler's COSMIC fit). RefSig names match COSMIC processes
 but the profiles are not identical. Report RefSig plus the % unassigned (`fit_quality.csv`).
 
-**Germline drivers.** PURPLE's germline catalogue covers Hartwig's germline panel only (cancer
-predisposition genes, ClinVar pathogenic / loss of function). Read each row by: (1) is it truly
+**Germline drivers.** PURPLE's germline catalogue covers Hartwig's germline panel only: one fixed
+pan-cancer gene list, not cancer-type specific (`DriverGene`: per-gene reporting fields, no tissue
+field). Per gene, reporting is NONE / ANY / WILDTYPE_LOST / VARIANT_NOT_LOST, for known germline
+hotspots and likely pathogenic variants (nonsense / frameshift / splice not ClinVar benign); PURPLE
+writes `REPORTED` and `PATH` (ClinVar consolidated). Only tumourevo's driver step is cancer-type
+specific (IntOGen HCC, somatic). `06`'s germline table deliberately lists every PASS germline variant
+in a catalogue gene (broad, by choice), not only `REPORTED` ones. Read each row by: (1) is it truly
 pathogenic (ClinVar classification and stars); (2) is the gene relevant to this tumour; (3) did
 the tumour hit the other allele (`biallelic`, LOH, or tumour VAF above the normal's); (4) does the
 tumour show the phenotype (CHORD HRD / SBS3 for HR genes, MSI for MMR). SPRTN is not on the panel;
@@ -143,7 +148,7 @@ Done and checked on the server:
 - `06` run with ClinVar (release 2026-10-04): 1 somatic row annotated; germline table 42 rows with a VCV ID.
 
 Next:
-1. Germline table too long (42 rows): it takes every PASS germline variant in a PURPLE germline-catalogue gene, probably including benign polymorphisms. Check (`cut -d, -f1,2,7 drivers/drivers_germline_table.csv`, count "benign"); if so, keep only PURPLE-reported variants or ClinVar Pathogenic / Likely pathogenic / conflicting (+ SPRTN).
+1. ~~Germline table filter~~ - decided 2026-10-08: keep it broad (every PASS germline variant in a PURPLE germline-catalogue gene, ~42 rows, incl. benign polymorphisms); PURPLE's `REPORTED` flag and the ClinVar column show which matter.
 2. Compare the ROQ check on sarek's original Mutect2 VCF (`roq_original_mutect2.log`, `qc_vcf/pass/mutect2_original_roq_qc.pdf`) with the analysis-set result, and record it under Method decisions.
 3. Decide Open questions 1 (MNV split vs doublet join) and 2 (ROQ < 30 unless confirmed; then extra tumourevo runs on filtered and consensus calls).
 4. OncoKB (API allowed for this patient's data? not decided) / CIViC for the somatic table's Annotation and Tier columns.
