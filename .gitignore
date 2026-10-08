@@ -5,6 +5,8 @@ results/*
 !results/.gitkeep
 work/
 logs/
+# Presentations and patient reports (ORANGE, LINX) stay local
+presentation/
 
 # Nextflow
 .nextflow/
