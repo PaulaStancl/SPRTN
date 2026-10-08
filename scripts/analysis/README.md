@@ -147,6 +147,9 @@ Done and checked on the server:
 - `01` ROQ analysis run: ROQ < 20 = 2,100 Mutect2 PASS SNVs, artefact-like (see Method decisions); per-bin table in `qc_vcf/pass/mutect2_roq_cutoff_bins.csv`.
 - `06` run with ClinVar (release 2026-10-04): 1 somatic row annotated; germline table 42 rows with a VCV ID.
 
+- MSI (2026-10-08): MSIsensor-pro (sarek `RJALS_vc`) 0.59% unstable sites (14,836 of 2,514,530 tested; MSI-high >= 3.5%) and PURPLE 0.058 MS indels/Mb (MSI > 4) - both MSS; PURPLE TMB 0.84/Mb (low).
+- ASCAT profile (purity 59%, ploidy 3.16, goodness of fit 94.4%): whole-genome doubled, mostly 2+2; 2+0 (early LOH) on 1p, 4q, 6q, 8p, 13, 16; 2+1 on 2, 3, 5, most of 9, 12, 15, 17; 1+1 on 21; 4+1 on 1q (includes SPRTN; PURPLE gene-level 6.6 copies, minor 1.9); 1+0 focal on 9; focal 0 copies at the distal end of 6q (gene still to check).
+
 Next:
 1. ~~Germline table filter~~ - decided 2026-10-08: keep it broad (every PASS germline variant in a PURPLE germline-catalogue gene, ~42 rows, incl. benign polymorphisms); PURPLE's `REPORTED` flag and the ClinVar column show which matter.
 2. Compare the ROQ check on sarek's original Mutect2 VCF (`roq_original_mutect2.log`, `qc_vcf/pass/mutect2_original_roq_qc.pdf`) with the analysis-set result, and record it under Method decisions.
