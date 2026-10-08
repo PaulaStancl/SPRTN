@@ -24,7 +24,12 @@ export ENV_ROOT="${ENV_ROOT:-$WORK_BASE/envs}"
 export PROGRAMS_DIR="${PROGRAMS_DIR:-$WORK_BASE/PROGRAMI}"
 export CONTAINER_DIR="${CONTAINER_DIR:-$WORK_BASE/singularity_cache}"   # ONE cache for all pipelines
 export NXF_HOME="${NXF_HOME:-$PROGRAMS_DIR/nextflow}"                   # pulled pipelines live here
-export TMPDIR="${TMPDIR:-$WORK_BASE/tmp}"                               # never $HOME, never /tmp
+# Never $HOME or /tmp - and not the node-local TMPDIR a PBS job gets either
+# (/var/tmp/pbs.<jobid>), so set every time, not taken from the shell. Nextflow
+# forwards TMPDIR into every container, and oncoanalyser's sambamba sort (no
+# --tmpdir) writes a whole genome's temp chunks there. Inside a PBS job it
+# failed mid-alignment with "sambamba-sort: Unable to write to stream".
+export TMPDIR="$WORK_BASE/tmp"
 
 # ---- Shared references (outside the project, reused by other projects) -----
 export REF_BASE="${REF_BASE:-$WORK_BASE/references}"
