@@ -30,7 +30,8 @@
 # Output: <OUT>/qc_damage/
 #   header_check.txt, variant_table.tsv, orientation_by_class.tsv, orientation_mirror.tsv,
 #   orientation_cpg.tsv, class_excess.tsv, signature_cosine.tsv, sbs96_groups.txt,
-#   sample_summary.tsv, read_level_summary.tsv, report.md
+#   sample_summary.tsv, read_level_summary.tsv, report.md,
+#   chance_one_sided_by_class.tsv / _by_n.tsv / .pdf, tc_ag_by_context.tsv, alt_filter_vs_roq.tsv (section 2b)
 #   orientation_pooled.pdf (main), orientation_hist.pdf, vaf_vs_roq.pdf, roq_by_class.pdf,
 #   orient_biased_by_class.pdf, vaf_ct_by_group.pdf, signature_cosine.pdf, snv_96context_by_group.pdf,
 #   read_level.pdf;  read_level/sites.tsv (input for 13_damage_metrics.sh)
@@ -161,6 +162,58 @@ ex <- rbindlist(lapply(c(G_LO, G_OR), function(g) {
 }))
 ex[, q := signif(p.adjust(p, "BH"), 3)]
 print(ex); fwrite(ex, file.path(od, "class_excess.tsv"), sep = "\t")
+
+# ---- 2b. follow-up checks ------------------------------------------------------------------------
+# (a) Chance: with n ALT orientation reads split 50/50, P(all on one side) = 2 * 0.5^n. Observed vs
+#     expected one-sided calls per class (n >= 2; n = 1 is always one-sided) and per n. Both groups
+#     are SELECTED on one-sidedness (ROQ / the orientation filter), so some excess is built in; the
+#     telling part is n >= 6, where chance one-sidedness is <= 3%.
+ch <- d[group %chin% c(G_LO, G_OR) & !is.na(orient_n) & orient_n >= 1]
+ch[, `:=`(one_sided = F1R2_alt == 0 | F2R1_alt == 0, p_exp = pmin(1, 2 * 0.5^orient_n),
+          n_bin = factor(fcase(orient_n <= 5, as.character(orient_n), orient_n <= 9, "6-9", default = ">=10"),
+                         levels = c(1:5, "6-9", ">=10")))]
+chance <- function(x, by) x[, .(n_var = .N, observed = sum(one_sided), expected = sum(p_exp),
+                                sd = sqrt(sum(p_exp * (1 - p_exp)))), by = by][
+  , `:=`(obs_exp = round(observed / expected, 2), z = fifelse(sd > 0, round((observed - expected) / sd, 1), NA_real_),
+         expected = round(expected, 1))][, sd := NULL][]
+ch_cls <- rbind(chance(ch[orient_n >= 2], c("group", "mutation12")), chance(ch[orient_n >= 2], "group")[, mutation12 := "all"])
+ch_cls <- ch_cls[order(group, match(mutation12, c(M12, "all")))]
+ch_n <- chance(ch, c("group", "n_bin"))[order(group, n_bin)]
+print(ch_n); fwrite(ch_cls, file.path(od, "chance_one_sided_by_class.tsv"), sep = "\t")
+fwrite(ch_n, file.path(od, "chance_one_sided_by_n.tsv"), sep = "\t")
+save_plot(ggplot(ch_n, aes(n_bin, observed / n_var, colour = group, group = group)) + geom_line() + geom_point(aes(size = n_var)) +
+            geom_line(aes(y = expected / n_var), linetype = 2) + scale_colour_manual(values = GCOL) +
+            scale_y_continuous(labels = function(x) paste0(100 * x, "%"), limits = c(0, 1)) +
+            labs(x = "ALT orientation reads (F1R2_alt + F2R1_alt)", y = "calls with all ALT reads on one side", colour = NULL, size = "calls",
+                 title = "One-sided ALT support: observed (solid) vs chance 2 x 0.5^n (dashed)",
+                 subtitle = "both groups are selected on one-sidedness; chance is <= 3% from n = 6"),
+          "chance_one_sided", od, w = 8, h = 4.5)
+
+# (b) T>C / A>G calls by trinucleotide context (+ strand, REF-based), orientation-filtered vs clean
+tc <- d[group %chin% c(G_OR, G_HI) & mutation12 %chin% c("T>C", "A>G") & !is.na(NC_3),
+        .(n = .N, F1R2_alt = sum(F1R2_alt, na.rm = TRUE), F2R1_alt = sum(F2R1_alt, na.rm = TRUE)), by = .(group, mutation12, context = NC_3)]
+tc[, `:=`(pct_of_class = round(100 * n / sum(n), 1), frac_F1R2_alt = round(F1R2_alt / (F1R2_alt + F2R1_alt), 3)), by = .(group, mutation12)]
+tc <- dcast(tc, mutation12 + context ~ group, value.var = c("n", "pct_of_class", "frac_F1R2_alt"), fill = NA)
+setnames(tc, gsub(paste0("_", G_OR, "$"), "_filtered", gsub(paste0("_", G_HI, "$"), "_clean", names(tc), fixed = FALSE), fixed = FALSE))
+if ("n_filtered" %in% names(tc)) setorder(tc, mutation12, -n_filtered)
+fwrite(tc, file.path(od, "tc_ag_by_context.tsv"), sep = "\t")
+
+# (c) ROQ decision: a minimum-ALT-read filter vs ROQ < 30 on the PASS SNVs - how many each removes,
+#     their overlap, the share C>T, and (with 03's mutation_callers.csv) how many removed calls
+#     another caller confirms. Nothing is filtered here.
+d[, KEY := paste(CHROM, POS, REF, ALT1, sep = ":")]
+mcf <- file.path(OUT, "comparison", "overlap", "mutation_callers.csv")
+if (file.exists(mcf)) d[fread(mcf, select = c("KEY", "N_CALLERS")), on = "KEY", confirmed := i.N_CALLERS >= 2]
+if (!"confirmed" %in% names(d)) { d[, confirmed := NA]; message("no ", mcf, " - confirmation left out (run 03)") }
+ps <- d[FILTER == "PASS"]
+r30 <- ps$ROQ < 30
+rules <- c(list("ROQ < 30" = r30, "ROQ < 30 unless confirmed" = r30 & !(ps$confirmed %in% TRUE)),
+           setNames(lapply(3:6, function(k) ps$T_ALT < k), sprintf("ALT reads < %d", 3:6)))
+af <- rbindlist(lapply(names(rules), function(r) { x <- rules[[r]] %in% TRUE
+  data.table(rule = r, removed = sum(x), pct_of_pass = round(100 * mean(x), 1),
+             removed_confirmed = sum(x & ps$confirmed %in% TRUE), pct_CT = round(100 * mean(ps$mutation6[x] == "C>T"), 1),
+             also_ROQ30 = sum(x & r30), only_this = sum(x & !r30), only_ROQ30 = sum(!x & r30)) }))
+print(af); fwrite(af, file.path(od, "alt_filter_vs_roq.tsv"), sep = "\t")
 
 # ---- 3. plots ---------------------------------------------------------------------------------
 d[, m12 := factor(mutation12, levels = M12)]; oc[, m12 := factor(mutation12, levels = M12)]
@@ -351,6 +404,19 @@ for (g in intersect(c(G_LO, G_OR), as.character(excl$group))) {
             paste(ocg[group == g, sprintf("%s %s %.2f (n %d)", mutation12, CpG_class, frac_F1R2_alt, n_var)], collapse = "; ")),
     sprintf("- cosine to: %s", paste(sc[group == g, sprintf("%s %.2f", reference, cosine)], collapse = ", ")), "")
 }
+hi_n <- ch[orient_n >= 6, .(n = .N, obs = 100 * mean(one_sided), exp = 100 * mean(p_exp)), by = group]
+rep_lines <- c(rep_lines, "## Chance one-sidedness (chance_one_sided_*.tsv, chance_one_sided.pdf)", "",
+  "Expected P(all ALT reads on one side) = 2 x 0.5^n. Both groups are selected on one-sidedness, so some excess over chance is built in; n >= 6 is the telling part (chance <= 3%).", "",
+  paste0("- ", ch_cls[mutation12 == "all", sprintf("%s, n >= 2: %d calls, %d one-sided vs %.1f expected (obs/exp %.2f)", group, n_var, observed, expected, obs_exp)]),
+  paste0("- ", hi_n[, sprintf("%s, n >= 6: %d calls, %.1f%% one-sided vs %.1f%% expected", group, n, obs, exp)]), "",
+  "## T>C / A>G by context (tc_ag_by_context.tsv)", "",
+  if ("n_filtered" %in% names(tc)) paste0("- ", head(tc[!is.na(n_filtered)][order(-n_filtered)], 6)[
+    , sprintf("%s %s: %d filtered calls (%s%% of the class; clean %s%%), F1R2 share %s", mutation12, context, n_filtered,
+              pct_of_class_filtered, fifelse(is.na(pct_of_class_clean), "0", as.character(pct_of_class_clean)), frac_F1R2_alt_filtered)]),
+  "", "Flagged as unexplained (possibly adenine deamination: hypoxanthine pairs with C, giving A>G / T>C) unless a context stands out.", "",
+  "## Minimum ALT reads vs ROQ < 30, PASS SNVs (alt_filter_vs_roq.tsv; nothing applied)", "",
+  paste0("- ", af[, sprintf("%s: removes %d (%.1f%% of PASS; %d confirmed by another caller; %.1f%% C>T); overlap with ROQ < 30: %d, only this rule: %d, only ROQ < 30: %d",
+                            rule, removed, pct_of_pass, removed_confirmed, pct_CT, also_ROQ30, only_this, only_ROQ30)]), "")
 rep_lines <- c(rep_lines, "## Tumour vs normal", "", tn_txt, "",
   if (!is.null(rl_sum)) c("## Read level (tumour)", "",
     paste0("- ", rl_sum[, sprintf("%s, %s, %s reads: n %d, median distance to fragment end %s, within 10 bp %s%%, median BQ %s, R1 %s%% (ALT vs REF distance p = %s)",

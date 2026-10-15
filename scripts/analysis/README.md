@@ -119,10 +119,37 @@ In RJALS (`01` section 5b; `qc_vcf/pass/mutect2_roq_qc.pdf`, `mutect2_roq_spectr
 - Per ROQ bin the C>T excess persists up to 20-30 (72% at 0-5, 36% at 20-25) and is gone from 30
   (~20%, clean group >= 60: 30%); 30-60 have normal C>T but rising confirmation and VAF - real
   low-VAF calls (a call with few ALT reads cannot reach a high ROQ).
-- Conclusion: mostly deamination-like orientation artefacts passing `FilterMutectCalls`; the
-  consensus sets remove most of them (three quarters have no second caller). Affected:
-  Mutect2-only counts, the `mutect2` signature set, and tumourevo (Mutect2 PASS only). See Open
-  questions 2.
+- ~~Conclusion: mostly deamination-like orientation artefacts~~ - not supported by the damage QC
+  below (2026-10-15). The low-ROQ calls are low-support, rarely confirmed calls; the consensus sets
+  remove most of them (three quarters have no second caller). Affected: Mutect2-only counts, the
+  `mutect2` signature set, and tumourevo (Mutect2 PASS only). See Open questions 2.
+
+**Damage QC (`07_roq_damage.R` + `../wgs/13_damage_metrics.sh`, 2026-10-15; `qc_damage/`).** One
+tumour, one normal, so storage vs library prep cannot be separated.
+- **Oxidation (8-oxoG): yes, mostly removed by Mutect2.** Orientation-filtered G>T vs C>A: F1R2
+  share of ALT reads 0.92 vs 0.09 (~4,500 calls each) - the opposite skew of one-strand damage.
+  Read-level metrics agree: GIV G>T 1.82 in the tumour (> 1.5 = damaged; C>A 0.51), 1.27 in the
+  normal (C>A 0.77); Picard pre-adapter OxoG Q 38 tumour vs 44 normal. ~50 is the background Q
+  of the other substitution rows; OxoG 38 is the only clear outlier, and the tumour library carries
+  more oxidation than the normal.
+- **Residual 8-oxoG in low-ROQ PASS calls:** G>T vs C>A 0.58 vs 0.41 (q = 3e-6; 152 + 146 calls).
+  Taking the orientation-filtered skew as the pure-artefact level, the artefact share is
+  f = (0.58 - 0.5) / (0.92 - 0.5) ~ 0.20 (0.22 from the C>A side), i.e. ~60 of the 298 low-ROQ PASS
+  G>T/C>A calls.
+- **Deamination: no.** Low-ROQ PASS C>T vs G>A 0.50 vs 0.51 (1,237 calls); Picard Deamination
+  (C>T) Q 100 in both samples (no artefact; the complementary G>A row, 52-53, is at background);
+  GIV C>T 1.02 in both. The C>T excess of the low-ROQ calls is therefore not a one-strand damage
+  artefact.
+- **Why low ROQ, then:** few ALT reads. With 2-4 ALT reads all of them land in one orientation by
+  chance often, in a random direction, and that is what lowers ROQ; pooled, such calls are 50/50.
+  The orientation-filtered C>T/G>A calls (~17,600) also pool to 0.51 vs 0.47, so Mutect2's
+  orientation filter is likewise removing chance one-sided low-depth calls, not deamination. Check:
+  `chance_one_sided_*` (observed vs 2 x 0.5^n expected one-sided calls, per class and by n). What
+  the low-VAF C>T calls are (orientation-neutral PCR / sequencing noise, real low-VAF mutations, or
+  both) stays open; the low confirmation rate points to noise.
+- **Unexplained:** orientation-filtered T>C vs A>G is mirrored (0.38 vs 0.62, ~6,400 calls each) -
+  not a classic damage pattern; possibly adenine deamination (hypoxanthine read as G). Contexts in
+  `tc_ag_by_context.tsv`; not interpreted further unless a context stands out.
 
 Literature. No paper defines "low ROQ" as a deamination signature (ROQ is Mutect2-specific); the
 link is: (1) mechanism - cytosine deamination to uracil is read as T, giving C>T/G>A artefacts
@@ -135,10 +162,11 @@ FilterByOrientationBias / LearnReadOrientationModel (Diossy et al. 2021, Brief B
 SOBDetector; Khan & Shih 2025, Brief Bioinform, doi 10.1093/bib/bbaf631.054); (4) the Mutect2
 filter itself: F-score threshold, orientation-bias model "crucial for good performance on FFPE
 samples" (Benjamin et al. 2019, bioRxiv 10.1101/861054; GATK docs LearnReadOrientationModel,
-FilterMutectCalls). Our inference (from our data): the low-ROQ calls are C>T-enriched, low-VAF
-and rarely confirmed - the features of deamination-*type* orientation artefacts. The samples are
-fresh-frozen, not FFPE; single-strand damage also arises from DNA handling, shearing and heat in
-library prep (Chen et al. 2017), so "deamination-type", not "FFPE", artefacts.
+FilterMutectCalls). Our first inference (C>T-enriched, low-VAF, rarely confirmed, so
+deamination-*type* orientation artefacts) was tested with the damage QC above and does not hold:
+the C>T calls carry no orientation skew. The orientation artefact present is 8-oxoG oxidation
+(Costello et al. 2013; Chen et al. 2017), which in fresh-frozen DNA arises mainly from shearing and
+handling in library prep.
 
 ## Status and next steps (end of 2026-10-07)
 
@@ -183,7 +211,9 @@ their own row in the 04 table, and rerun 01-04. Until decided, the scripts use A
 **2. Filter Mutect2's low-ROQ calls?** *Open since 2026-10-07; nothing applied yet.*
 
 Proposed rule (from the ROQ bins, see Method decisions): remove Mutect2 PASS SNVs with
-ROQ < 30 unless another caller confirms them. 30 removes the bins still carrying the C>T excess
+ROQ < 30 unless another caller confirms them. Since the damage QC (2026-10-15) the reason is
+"too few ALT reads, rarely confirmed" (plus ~60 residual 8-oxoG calls), not deamination; a plain
+minimum-ALT-read filter is compared with ROQ < 30 in `qc_damage/alt_filter_vs_roq.tsv`. 30 removes the bins still carrying the C>T excess
 (20-30) and keeps the 30-60 calls, which look real; "unless confirmed" keeps ~126 confirmed calls
 from 20-30 that a plain cut would lose. 40 or 60 would be too harsh.
 Once agreed: an *additional* tumourevo run (next to the existing one) on (a) the ROQ-filtered
@@ -197,6 +227,7 @@ were removed unless also called by another caller."
 **2026-10-15**
 - 03 pairwise overlap: extra row and column `mutect2+strelka` (PASS in both Mutect2 and Strelka2, others may also have it) - % of that set found by each caller, and % of each caller's calls in it. `Rscript 03_compare_callers.R pairwise` reruns only this section from `pass_calls/snv_indel_pass_atomized.csv`.
 - 03 signature inputs: `mutect2_strelka` set (PASS in Mutect2 and Strelka2) next to each caller, `two_plus` and `all_callers`, so 01b / 01c / 05 `comparison` fit it too (already a row in `snv_96context_candidate_sets.pdf`).
+- `07` section 2b: chance one-sidedness (observed vs 2 x 0.5^n, by class and by n), T>C/A>G by context, minimum-ALT-read filter vs ROQ < 30 (counts, overlap, confirmed); README ROQ conclusion revised: oxidation yes (mostly filtered), deamination no.
 - `07_roq_damage.R` added (damage QC of Mutect2's low-ROQ calls, steps 0-3, 6 as tumour vs normal, 7, read level) with `../wgs/13_damage_metrics.sh` + `qsub_damage.sh` (Picard CollectSequencingArtifactMetrics from sarek's GATK4 image, `damage_giv.py`, `damage_read_positions.py`; env `../wgs/env_qc_damage.yml`). `ref/FFPE_signatures_Guo2022.tsv`: the repaired / unrepaired FFPE signatures of Guo et al. 2022 (Nat Commun 13:4487), from github.com/QingliGuo/FFPEsig `Data/FFPE_signatures_96-channel.csv` (GPL-3, commit 3f85d53), channel names converted to SigProfiler notation.
 - `../wgs/04_run_tumourevo.sh`: `TEVO_VCF=sage` runs tumourevo on PURPLE's final somatic VCF (outdir `tumourevo/RJALS_sage`, same ASCAT CN).
 
