@@ -5,6 +5,7 @@
 #   oncoanalyser: SAGE, as in PURPLE's final somatic VCF
 # A caller that has not run yet is simply absent; re-run this once it has.
 # Run:  Rscript 03_compare_callers.R   (or line by line in R)
+#       Rscript 03_compare_callers.R pairwise   only section 4, from pass_calls/ of the last full run
 #
 # Before it: scripts/wgs/06_normalize_vcfs.sh, so every caller's indels are left-aligned the
 # same way (otherwise identical indels written differently count as different mutations).
@@ -18,6 +19,7 @@
 #   overlap/      snv_indel_concordance.csv/.pdf   every exact combination of callers (MNVs split)
 #                 concordance_groups.csv/.pdf      the same + each caller's total + summary bars two_plus, all_callers
 #                 pairwise_overlap.csv, pairwise_overlap_<SNV|INDEL>.pdf   % of row caller's calls in column caller
+#                                                  (+ row and column mutect2+strelka: PASS in both)
 #                 n_callers_per_caller.csv/.pdf    of each caller's calls, how many callers found them
 #                 consensus_summary.csv            union, >= 2 callers, all callers - per type
 #                 mutation_callers.csv             one row per PASS mutation: callers, n callers, each one's VAF
@@ -47,6 +49,50 @@ for (d in c(d_pass, d_ovl, d_vaf, d_96)) dir.create(d, showWarnings = FALSE)
 # outputs of earlier versions, written straight into comparison/ - removed so only the subfolders hold results
 unlink(setdiff(list.files(od, full.names = TRUE, recursive = FALSE),
                c(file.path(od, "inputs_used.csv"), d_pass, d_ovl, d_vaf, d_96)), recursive = FALSE)
+
+# Section 4: % of the row set's calls also PASS in the column set. The sets are each caller plus
+# "mutect2+strelka" (found by both, others may also have it), as an extra row and column.
+# atom: PASS calls, MNVs split, one row per KEY and CALLER.
+pairwise_overlap <- function(atom, d_ovl) {
+  pw <- rbindlist(lapply(c("SNV", "INDEL"), function(ty) {
+    a <- atom[TYPE == ty, .(KEY, CALLER)]
+    cl <- sort(unique(a$CALLER))
+    if (length(cl) < 2) return(NULL)
+    if (all(c("mutect2", "strelka") %chin% cl)) {
+      a <- rbind(a, data.table(KEY = intersect(a[CALLER == "mutect2", KEY], a[CALLER == "strelka", KEY]),
+                               CALLER = "mutect2+strelka"))
+      cl <- c(cl, "mutect2+strelka")
+    }
+    rbindlist(lapply(cl, function(x) rbindlist(lapply(cl, function(y) {
+      kx <- a[CALLER == x, KEY]
+      data.table(TYPE = ty, caller = x, in_caller = y, n = length(kx), shared = sum(kx %chin% a[CALLER == y, KEY]))
+    }))))
+  }))
+  pw[, pct := round(100 * shared / n, 1)]
+  fwrite(pw, file.path(d_ovl, "pairwise_overlap.csv"))
+  for (ty in unique(pw$TYPE)) {
+    lv <- unique(pw[TYPE == ty, caller])               # callers, then the mutect2+strelka set last
+    save_plot(ggplot(pw[TYPE == ty], aes(factor(in_caller, lv), factor(caller, rev(lv)), fill = pct)) +
+                geom_tile(colour = "white") +
+                geom_text(aes(label = sprintf("%.1f%%\n%d", pct, shared)), size = 3.2) +
+                scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 100)) +
+                labs(x = "... also PASS in", y = "PASS calls of", fill = "%",
+                     title = paste0(ty, ": % of each caller's calls found by the other"),
+                     subtitle = "mutect2+strelka: PASS in both (others may also have it)"),
+              paste0("pairwise_overlap_", ty), d_ovl, w = 7.5, h = 5.5)
+  }
+  invisible(pw)
+}
+
+# Rscript 03_compare_callers.R pairwise - only section 4, from the PASS table of the last full run
+if (identical(commandArgs(TRUE)[1], "pairwise")) {
+  f <- file.path(d_pass, "snv_indel_pass_atomized.csv")
+  if (!file.exists(f)) stop("no ", f, " - run 03 in full once first", call. = FALSE)
+  atom <- fread(f, select = c("CHROM", "POS", "REF", "ALT1", "CALLER", "TYPE"))
+  atom[, KEY := paste(CHROM, POS, REF, ALT1, sep = ":")]
+  print(pairwise_overlap(unique(atom, by = c("KEY", "CALLER")), d_ovl))
+  quit(save = "no")
+}
 
 # ---- 1. input files ---------------------------------------------------------
 vcfs <- find_caller_vcfs()
@@ -130,24 +176,7 @@ save_plot(ggplot(nc, aes(CALLER, N, fill = factor(N_CALLERS))) + geom_col(positi
           "n_callers_per_caller", d_ovl, w = 9, h = 5)
 
 # ---- 4. pairwise overlap: % of the row caller's calls also PASS in the column caller --------
-pw <- rbindlist(lapply(c("SNV", "INDEL"), function(ty) {
-  a <- atom[TYPE == ty, .(KEY, CALLER)]
-  cl <- sort(unique(a$CALLER))
-  if (length(cl) < 2) return(NULL)
-  rbindlist(lapply(cl, function(x) rbindlist(lapply(cl, function(y) {
-    kx <- a[CALLER == x, KEY]
-    data.table(TYPE = ty, caller = x, in_caller = y, n = length(kx), shared = sum(kx %chin% a[CALLER == y, KEY]))
-  }))))
-}))
-pw[, pct := round(100 * shared / n, 1)]
-fwrite(pw, file.path(d_ovl, "pairwise_overlap.csv"))
-for (ty in unique(pw$TYPE))
-  save_plot(ggplot(pw[TYPE == ty], aes(in_caller, caller, fill = pct)) + geom_tile(colour = "white") +
-              geom_text(aes(label = sprintf("%.1f%%\n%d", pct, shared)), size = 3.2) +
-              scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 100)) +
-              labs(x = "... also PASS in", y = "PASS calls of", fill = "%",
-                   title = paste0(ty, ": % of each caller's calls found by the other")),
-            paste0("pairwise_overlap_", ty), d_ovl, w = 6.5, h = 5)
+pairwise_overlap(atom, d_ovl)
 
 # ---- 5. confirmation by another caller, by VAF ---------------------------------------
 # among callers able to call the type; low-VAF calls are where callers disagree most

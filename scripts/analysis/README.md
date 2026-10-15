@@ -12,7 +12,7 @@ Run `../wgs/06_normalize_vcfs.sh` once before, so indels are compared after `bcf
 |---|---|---|---|
 | 1 | `01_sarek.R` | r-mutation | sarek: SNV/indel QC (raw + PASS), Mutect2/Strelka2/MuSE overlap, 96-context, SV, CN, signature inputs |
 | 1 | `02_oncoanalyser.R` | r-mutation | oncoanalyser: SAGE/PURPLE QC, 96-context, ESVEE/LINX SV, PURPLE CN, signature inputs |
-| 1 | `03_compare_callers.R` | r-mutation | all four SNV callers: overlap, VAF agreement, set QC (Wilcoxon), 96-context per caller and consensus, signature inputs per set |
+| 1 | `03_compare_callers.R [pairwise]` | r-mutation | all four SNV callers: overlap, VAF agreement, set QC (Wilcoxon), 96-context per caller and consensus, signature inputs per set |
 | 1 | `04_summary_table.R` | r-mutation | sarek vs oncoanalyser results table (`summary/summary_table.csv/.md`) |
 | 2 | `01b_sarek_signatures.py [--pipeline sarek\|oncoanalyser\|comparison]` | sigprofiler | SigProfilerMatrixGenerator + SigProfilerAssignment `cosmic_fit` (SBS96, DBS78, ID83), one fit per set |
 | 3 | `01c_sarek_signatures_organ.R <pipeline>` | signature-tools (`Rscript --no-environ`) | FitMS, liver common + rare signatures (signature.tools.lib; needs NNLM) |
@@ -191,6 +191,9 @@ same filter for the `mutect2` signature set. Methods wording: "Mutect2 PASS SNVs
 were removed unless also called by another caller."
 
 ## Changes
+
+**2026-10-15**
+- 03 pairwise overlap: extra row and column `mutect2+strelka` (PASS in both Mutect2 and Strelka2, others may also have it) - % of that set found by each caller, and % of each caller's calls in it. `Rscript 03_compare_callers.R pairwise` reruns only this section from `pass_calls/snv_indel_pass_atomized.csv`.
 
 **2026-10-07**
 - MuSE (extra sarek run `RJALS_vc`) added to QC, overlaps and the summary table; PASS + Tier1-5 count as calls.
