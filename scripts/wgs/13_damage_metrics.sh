@@ -55,11 +55,15 @@ if [[ ",$STEPS," == *",metrics,"* ]]; then
     # sarek 3.10's GATK4 image is a Seqera community image, cached under its URL with / -> -
     # (community-cr-prod.seqera.io-docker-registry-v2-blobs-sha256-..-<hash>-data.img), so the
     # name has no "gatk4" in it: take the hash from the pulled sarek's own module. GATK_IMG overrides.
-    IMG="${GATK_IMG:-}"
+    # The module's location depends on the Nextflow version (assets/nf-core/sarek or
+    # assets/.repos/...), hence find; sarek 3.10.0's hash is the fallback. Every lookup ends in
+    # "|| true": under set -e + pipefail a grep with no match would end the script silently.
+    IMG="${GATK_IMG:-}"; H=""
     if [[ -z "$IMG" ]]; then
-        MOD="$NXF_HOME/assets/nf-core/sarek/modules/nf-core/gatk4/filtermutectcalls/main.nf"
-        H=$(grep -o 'sha256/[0-9a-f]*/[0-9a-f]\{64\}' "$MOD" 2>/dev/null | head -1 | sed 's#.*/##')
-        [[ -n "$H" ]] && IMG=$(find "$CONTAINER_DIR" -maxdepth 1 -name "*${H}*" \( -name '*.img' -o -name '*.sif' \) | head -1)
+        MOD=$(find "$NXF_HOME/assets" -path '*sarek*' -path '*gatk4/filtermutectcalls/main.nf' 2>/dev/null | head -1 || true)
+        [[ -n "$MOD" ]] && H=$(grep -o 'sha256/[0-9a-f]*/[0-9a-f]\{64\}' "$MOD" 2>/dev/null | head -1 | sed 's#.*/##' || true)
+        H="${H:-ced519873646379e287bc28738bdf88e975edd39a92e7bc6a34bccd37153d9d0}"
+        IMG=$(find "$CONTAINER_DIR" -maxdepth 1 -name "*${H}*" \( -name '*.img' -o -name '*.sif' \) 2>/dev/null | head -1 || true)
     fi
     [[ -n "$IMG" ]] || IMG=$(find "$CONTAINER_DIR" -maxdepth 1 -iname '*gatk4*' ! -iname '*spark*' \( -name '*.img' -o -name '*.sif' \) | sort | tail -1)
     [[ -n "$IMG" && -f "$IMG" ]] || die "no GATK4 image in $CONTAINER_DIR (looked for sarek's ${H:-?} and *gatk4*) - set GATK_IMG=<path>"
