@@ -7,6 +7,7 @@
 #   ./13_damage_metrics.sh                      # or directly
 #   DAMAGE_REGIONS=chr2,chr20 ./13_damage_metrics.sh   # more of the genome (default chr20)
 #   STEPS=reads ./13_damage_metrics.sh          # only the read-position step (after 07)
+#   GATK_IMG=/path/to/gatk4.img ./13_damage_metrics.sh   # if the GATK4 image is not found
 #
 # Per sample, on a slice of sarek's recalibrated CRAM (DAMAGE_REGIONS, written to $TMPDIR as BAM
 # and deleted afterwards - artefact rates need millions of bases, not the whole genome):
@@ -51,8 +52,18 @@ find_cram() {   # <sample>: sarek's recalibrated CRAM (else markduplicates)
 }
 
 if [[ ",$STEPS," == *",metrics,"* ]]; then
-    IMG=$(find "$CONTAINER_DIR" -maxdepth 1 -iname '*gatk4*' ! -iname '*spark*' \( -name '*.img' -o -name '*.sif' \) | sort | tail -1)
-    [[ -n "$IMG" ]] || die "no GATK4 image in $CONTAINER_DIR - sarek pulls one"
+    # sarek 3.10's GATK4 image is a Seqera community image, cached under its URL with / -> -
+    # (community-cr-prod.seqera.io-docker-registry-v2-blobs-sha256-..-<hash>-data.img), so the
+    # name has no "gatk4" in it: take the hash from the pulled sarek's own module. GATK_IMG overrides.
+    IMG="${GATK_IMG:-}"
+    if [[ -z "$IMG" ]]; then
+        MOD="$NXF_HOME/assets/nf-core/sarek/modules/nf-core/gatk4/filtermutectcalls/main.nf"
+        H=$(grep -o 'sha256/[0-9a-f]*/[0-9a-f]\{64\}' "$MOD" 2>/dev/null | head -1 | sed 's#.*/##')
+        [[ -n "$H" ]] && IMG=$(find "$CONTAINER_DIR" -maxdepth 1 -name "*${H}*" \( -name '*.img' -o -name '*.sif' \) | head -1)
+    fi
+    [[ -n "$IMG" ]] || IMG=$(find "$CONTAINER_DIR" -maxdepth 1 -iname '*gatk4*' ! -iname '*spark*' \( -name '*.img' -o -name '*.sif' \) | sort | tail -1)
+    [[ -n "$IMG" && -f "$IMG" ]] || die "no GATK4 image in $CONTAINER_DIR (looked for sarek's ${H:-?} and *gatk4*) - set GATK_IMG=<path>"
+    singularity exec "$IMG" gatk --version >/dev/null 2>&1 || die "$IMG has no working gatk"
     log "GATK4 image: $(basename "$IMG")"
     log "regions    : $DAMAGE_REGIONS"
     for s in "$TUMOUR_ID" "$NORMAL_ID"; do
