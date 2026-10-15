@@ -19,6 +19,7 @@ Run `../wgs/06_normalize_vcfs.sh` once before, so indels are compared after `bcf
 | 4 | `05_signature_summary.R <pipeline>` | r-mutation | attributions of all sets side by side (SigProfiler + FitMS), fit quality |
 | 4 | `05b_hartwig_sigs_check.R` | r-mutation | SAGE set: Hartwig SIGS vs our SBS96 counts, and SIGS / SigProfiler / FitMS signatures |
 | 5 | `06_drivers.R` | r-mutation | driver candidates: PURPLE + LINX vs tumourevo (IntOGen HCC), per gene and per mutation, callers per driver mutation, HCC watchlist incl. TERT promoter; slide tables `drivers_somatic_table` and `drivers_germline_table` (.csv/.md, germline incl. SPRTN) |
+| 6 | `07_roq_damage.R` | r-mutation | are Mutect2's low-ROQ calls DNA damage? F1R2/F2R1 orientation per REF-based class (pooled, mirrored pairs C>T\|G>A and G>T\|C>A, CpG split), plots, cosine to SBS1/5/45 and the Guo 2022 FFPE signatures, tumour vs normal Picard/GIV, read positions; `qc_damage/report.md`. Run, then `cd ../wgs && qsub qsub_damage.sh`, then run again |
 
 qcVCF (private repo PaulaStancl/qcVCF) must be installed in r-mutation, otherwise the qcVCF
 plots (96-context, pairwise shared) are skipped with a message. Install from a clone:
@@ -157,6 +158,7 @@ Next:
 4. OncoKB (API allowed for this patient's data? not decided) / CIViC for the somatic table's Annotation and Tier columns.
 5. Optional: VEP annotation from the sarek annotate run into `06` (consequences for Strelka2 / MuSE-only candidates).
 6. Not yet confirmed on the server: FitMS (01c) after installing NNLM, and the reruns of 01b / 01c / 05 / 05b after the doublet change (05b should show SIGS 2,124 = SigProfiler 2,124, 96/96 channels).
+7. Damage QC of the low-ROQ calls: run `07_roq_damage.R`, `qsub qsub_damage.sh` (needs the `qc-damage` env), `07` again; record the verdict under Method decisions.
 
 ## Open questions
 
@@ -195,6 +197,7 @@ were removed unless also called by another caller."
 **2026-10-15**
 - 03 pairwise overlap: extra row and column `mutect2+strelka` (PASS in both Mutect2 and Strelka2, others may also have it) - % of that set found by each caller, and % of each caller's calls in it. `Rscript 03_compare_callers.R pairwise` reruns only this section from `pass_calls/snv_indel_pass_atomized.csv`.
 - 03 signature inputs: `mutect2_strelka` set (PASS in Mutect2 and Strelka2) next to each caller, `two_plus` and `all_callers`, so 01b / 01c / 05 `comparison` fit it too (already a row in `snv_96context_candidate_sets.pdf`).
+- `07_roq_damage.R` added (damage QC of Mutect2's low-ROQ calls, steps 0-3, 6 as tumour vs normal, 7, read level) with `../wgs/13_damage_metrics.sh` + `qsub_damage.sh` (Picard CollectSequencingArtifactMetrics from sarek's GATK4 image, `damage_giv.py`, `damage_read_positions.py`; env `../wgs/env_qc_damage.yml`). `ref/FFPE_signatures_Guo2022.tsv`: the repaired / unrepaired FFPE signatures of Guo et al. 2022 (Nat Commun 13:4487), from github.com/QingliGuo/FFPEsig `Data/FFPE_signatures_96-channel.csv` (GPL-3, commit 3f85d53), channel names converted to SigProfiler notation.
 - `../wgs/04_run_tumourevo.sh`: `TEVO_VCF=sage` runs tumourevo on PURPLE's final somatic VCF (outdir `tumourevo/RJALS_sage`, same ASCAT CN).
 
 **2026-10-07**

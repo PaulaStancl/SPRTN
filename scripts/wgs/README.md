@@ -37,6 +37,8 @@ TEVO_VCF=sage ./04_run_tumourevo.sh   # after 02 + 03: PURPLE's final somatic VC
 ./06_normalize_vcfs.sh        # after 02/03 (+ extra callers); bcftools norm of every caller's SNV/indel VCF, for analysis/01 and 03
 VEP_CACHE_VERSION=116 ../wgs_test/04_download_references.sh vep   # once: VEP cache for sarek 3.10
 SAREK_STEP=annotate ./02_run_sarek.sh   # after 06: VEP 116 on every sarek caller's VCF (qsub qsub_sarek_annotate.sh)
+./13_damage_metrics.sh        # after 02 + analysis/07: Picard artefact metrics + GIV (tumour, normal), read positions (qsub qsub_damage.sh)
+                              # once before: micromamba create -y -p /common/WORK/pstancl/envs/qc-damage -f env_qc_damage.yml
 ```
 
 - **Run directly on lobsang, 02 and 03 must go one after the other,** because each one takes all 8 cores. As PBS jobs they can run at the same time. Either order works; if the patient's sex isn't confirmed yet, start with 03.
@@ -51,6 +53,7 @@ There is one job per pipeline. Each job runs Nextflow with the local executor on
 | `qsub_sarek.sh` | `ncpus=40:mem=1000gb` | 240 h | q2's maximum. bwa-mem2 gets 20 cpus per chunk so two chunks align at once; sarek's default of 24 would leave 16 idle. |
 | `qsub_oncoanalyser.sh` | `ncpus=40:mem=400gb` | 240 h | q2's maximum. Its heavy steps (bwa-mem2, REDUX, SAGE, ESVEE, AMBER, COBALT) ask for 12 cpus / 72 GB each, so three run side by side and the small steps use the rest. |
 | `qsub_tumourevo.sh` | `ncpus=40:mem=512gb` | 240 h | VEP plus clonality. Light, but its tasks ask for up to 84 GB (`process_high`) or 200 GB (`process_high_memory`), and its per-task time limits are tighter than sarek's (2 h by default), so `04` lifts them to 240 h too. |
+| `qsub_damage.sh` | `ncpus=4:mem=32gb` | 48 h | `13_damage_metrics.sh`: CRAM slice (chr20 by default, `DAMAGE_REGIONS`), Picard and GIV per sample - single-threaded, cpus only for slicing. |
 | `qsub_check.sh` | `ncpus=2:mem=2gb` | 15 min | pre-flight: node, singularity, mounts, internet |
 
 Memory needs at least about 8 GB per cpu, because more cpus means more tasks running at once; 250 GB for 24 cpus leaves headroom. **Limits (checked 2026-09-22):** q2 allows **2 to 40 cpus per job**, with no memory or walltime limit. A request outside that range is rejected at `qsub` with `Job violates queue and/or server resource limits`. PBS has a single execution node with 400 cpus and about 7 TB RAM, so sarek and oncoanalyser fit side by side, and 40 cpus per job is the ceiling. To change a job's size, edit `ncpus=`/`mem=` and set `JOB_MEMORY_GB` to the same value as `mem=`.

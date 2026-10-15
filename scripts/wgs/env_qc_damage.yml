@@ -1,0 +1,11 @@
+# Python env for the read-level damage QC (13_damage_metrics.sh: damage_giv.py,
+# damage_read_positions.py). Create next to the other envs:
+#   micromamba create -y -p /common/WORK/pstancl/envs/qc-damage -f env_qc_damage.yml
+name: qc-damage
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - numpy
+  - pysam
