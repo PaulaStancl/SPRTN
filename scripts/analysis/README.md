@@ -194,6 +194,8 @@ were removed unless also called by another caller."
 
 **2026-10-15**
 - 03 pairwise overlap: extra row and column `mutect2+strelka` (PASS in both Mutect2 and Strelka2, others may also have it) - % of that set found by each caller, and % of each caller's calls in it. `Rscript 03_compare_callers.R pairwise` reruns only this section from `pass_calls/snv_indel_pass_atomized.csv`.
+- 03 signature inputs: `mutect2_strelka` set (PASS in Mutect2 and Strelka2) next to each caller, `two_plus` and `all_callers`, so 01b / 01c / 05 `comparison` fit it too (already a row in `snv_96context_candidate_sets.pdf`).
+- `../wgs/04_run_tumourevo.sh`: `TEVO_VCF=sage` runs tumourevo on PURPLE's final somatic VCF (outdir `tumourevo/RJALS_sage`, same ASCAT CN).
 
 **2026-10-07**
 - MuSE (extra sarek run `RJALS_vc`) added to QC, overlaps and the summary table; PASS + Tier1-5 count as calls.

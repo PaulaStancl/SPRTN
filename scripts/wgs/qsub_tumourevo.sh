@@ -11,6 +11,9 @@
 # Clonality on CNAqc-PASS segments only (own outdir, tumourevo/RJALS_cnaqcPASS):
 #   qsub -v TEVO_FILTER=true qsub_tumourevo.sh
 #
+# On SAGE/PURPLE's final somatic VCF instead of Mutect2 (own outdir, tumourevo/RJALS_sage):
+#   qsub -v TEVO_VCF=sage qsub_tumourevo.sh
+#
 # Light compared with sarek/oncoanalyser (VEP + clonal deconvolution), but sized
 # for what its tasks ask: process_high wants 12 cpus / 84 GB and
 # process_high_memory 200 GB. 40 cpus (q2's max) lets three heavy tasks run at

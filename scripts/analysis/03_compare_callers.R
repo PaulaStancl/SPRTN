@@ -30,7 +30,7 @@
 #   vaf/          snv_vaf_hist.pdf                 tumour VAF per caller
 #                 support_by_vaf.csv/.pdf          share of each caller's calls confirmed by >= 1 other, by VAF
 #                 vaf_agreement.csv/.pdf           tumour VAF of shared SNVs, caller vs caller (n, Pearson, Spearman)
-#   signatures/input/  each caller's PASS calls + two_plus + all_callers, for 01b / 01c / 05 (section 9)
+#   signatures/input/  each caller's PASS calls + mutect2_strelka + two_plus + all_callers, for 01b / 01c / 05 (section 9)
 #   context_96/   snv_spectrum.pdf, snv_substitution_spectrum.csv   6 substitution classes per caller
 #                 snv_96context_per_caller.pdf/.csv  each caller's PASS SNVs, then all callers, then >= 2 callers (one row each)
 #                 snv_96context_groups.pdf/.csv      two_plus / all_callers SNVs (callers named)
@@ -428,11 +428,12 @@ if (nrow(cand)) {
   plot_96context(cand, d_96, rowsplit = "SET", name = "snv_96context_candidate_sets", show_all = FALSE)
 }
 mut[, c("m2", "st", "mu", "sg", "VAF_MEAN", "n_sarek", "n_able", names(rules)) := NULL]
-# ---- 9. signature inputs: each caller's PASS calls and the two consensus sets -----------------
+# ---- 9. signature inputs: each caller's PASS calls and the consensus sets ---------------------
 # For 01b (SigProfiler COSMIC fit) and 01c (FitMS liver signatures) with the "comparison"
 # pipeline, one fit per set; 05_signature_summary.R then plots them side by side. Sets (MNVs
 # split; doublet halves go to DBS78 only, not SBS96 - write_signature_sets()):
 #   muse, mutect2, strelka, sage   that caller's PASS calls (MuSE: all tiers; SNVs only)
+#   mutect2_strelka                PASS in Mutect2 and Strelka2 (others may also have it)
 #   two_plus                       PASS in >= 2 callers (each mutation once)
 #   all_callers                    PASS in every caller able to call the type (SNVs: all 4)
 # Output: comparison/signatures/input/ (vcf/<set>.vcf, pass_sets.csv, pass_set_counts.csv, ...)
@@ -440,6 +441,9 @@ if (!"SBS96" %in% names(atom)) add_sbs96(atom)
 cons_rows <- unique(atom, by = "KEY")                     # one row per mutation for the consensus sets
 sig_sets <- rbindlist(c(
   lapply(split(atom, by = "CALLER"), function(x) x),
+  if (all(c("mutect2", "strelka") %chin% atom$CALLER))
+    list(mutect2_strelka = cons_rows[KEY %chin% mut[grepl("(^|\\+)mutect2(\\+|$)", CALLERS) &
+                                                    grepl("(^|\\+)strelka(\\+|$)", CALLERS), KEY]]),
   list(two_plus    = cons_rows[N_CALLERS >= 2],
        all_callers = cons_rows[N_CALLERS == n_able])), idcol = "SET")
 write_signature_sets(sig_sets, file.path(od, "signatures", "input"), "03_compare_callers.R")

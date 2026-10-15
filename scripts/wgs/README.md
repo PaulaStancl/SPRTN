@@ -33,6 +33,7 @@ SAREK_STEP=variant_calling SAREK_TOOLS=muse,msisensorpro ./02_run_sarek.sh
                               # after 02; extra callers from the recalibrated CRAMs -> results/wgs/sarek/RJALS_vc
 ./03_run_oncoanalyser.sh      # FASTQ -> Hartwig WiGiTS + ORANGE report; independent of sarek
 ./04_run_tumourevo.sh         # after 02; builds its sheet from sarek output
+TEVO_VCF=sage ./04_run_tumourevo.sh   # after 02 + 03: PURPLE's final somatic VCF + ASCAT CN -> tumourevo/RJALS_sage
 ./06_normalize_vcfs.sh        # after 02/03 (+ extra callers); bcftools norm of every caller's SNV/indel VCF, for analysis/01 and 03
 VEP_CACHE_VERSION=116 ../wgs_test/04_download_references.sh vep   # once: VEP cache for sarek 3.10
 SAREK_STEP=annotate ./02_run_sarek.sh   # after 06: VEP 116 on every sarek caller's VCF (qsub qsub_sarek_annotate.sh)
