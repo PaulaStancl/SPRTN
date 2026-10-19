@@ -189,6 +189,44 @@ Next:
 6. Not yet confirmed on the server: FitMS (01c) after installing NNLM, and the reruns of 01b / 01c / 05 / 05b after the doublet change (05b should show SIGS 2,124 = SigProfiler 2,124, 96/96 channels).
 7. Damage QC of the low-ROQ calls: run `07_roq_damage.R`, `qsub qsub_damage.sh` (needs the `qc-damage` env), `07` again; record the verdict under Method decisions.
 
+### Chromothripsis (2026-10-19)
+
+`run_chromothripsis.R` (env `chromothripsis`, ShatterSeek from GitHub; step 1 `../wgs/14_chromothripsis_inspect.sh`),
+outputs in `results/wgs/analysis/chromothripsis/`. Set A = ESVEE/PURPLE SVs + PURPLE CN, set B = Manta + ASCAT.
+Criteria: Cortes-Ciriano 2020 (tutorial section 3, Supplementary Note p. 22), BH q <= 0.2 across this sample's
+chromosomes, fragment joins passed at q > 0.2.
+
+Result:
+- **chr9p (chr9:14,348-26,576,244): high-confidence chromothripsis in both sets.** 53 / 49 interleaved intrachromosomal
+  SVs (59 / 55 incl. 6 translocations each), 2-state CN oscillations 13 / 17, raw p fragment joins 0.96 / 0.98,
+  enrichment and exponential p < 0.005; region Jaccard 0.977; 53 of 59 ESVEE SVs match Manta at both ends
+  (+/-500 bp, same strands), 53 of 56 the other way. CN alternates 1 (minor 0, LOH) and 3 (minor 1) from ~9 Mb;
+  0-9 Mb at CN 5 / 3 without LOH. LOH fraction: low state 1.00, high state heterozygous 0.99 (PURPLE).
+  LINX: cluster 5, COMPLEX, 63 SVs, chromosomes 1, 4, 8, 9, 22.
+- **Partners (translocations from the chr9 region):** chr8:40,116,355-40,119,984 (8p11, 3 TRA, both callers, all
+  matched); chr4:80,280,329 (4q21, 1 TRA, both callers). Single-caller only: chr22:50,808,272 (ESVEE),
+  chr4:158,372,429 and chr1:121,498,887 (Manta; chr1 near the centromere). ShatterSeek's "Links with other chrs"
+  shows the partner chromosome's own largest SV cluster span (8q 88-137 Mb), NOT where the translocations land.
+- **chr6 (127.5-163.9 Mb): not chromothripsis.** 5 interleaved SVs in both sets (< 6); set B "high" only via rule 2
+  on exactly 4 translocations that ESVEE does not have (number_TRA A = 0); both CN states LOH (6q 2+0 background).
+  LINX cluster 40, COMPLEX, 6 SVs, chr6 only.
+- chr1: 2 interleaved SVs at 1p13 (111.6-118.6 Mb) in both sets - no call. No other chromosome called.
+- Purity / ploidy agree (PURPLE 0.60 / 3.15, ASCAT 0.59 / 3.16). LINX and the PURPLE SV VCF agree on all 81 SVs.
+- Interpretation (not proven): 1+0 / 1+2 states fit chromothripsis of one chr9 copy before WGD, then loss of one 9p
+  copy; consistent with a micronucleus (8p11 fragment joined in).
+- Email to Maria drafted 2026-10-19 (Croatian): chr9p chromothripsis, 8p/4q links (1, 22 weaker), chr6 small complex event;
+  attachments shatterseek_chr9.png (paper-style with Minor CN), LINX cluster 5 plot.
+
+Still to do:
+1. Artefact flag: server has no internet - download UCSC hg38 `centromeres.txt.gz` and `genomicSuperDups.txt.gz` on
+   the Mac, `scp` to `results/wgs/analysis/chromothripsis/ref/`, rerun; check `A_/B_centromere`, `A_/B_segdup`.
+2. Genes in the 9p region: CDKN2A/CDKN2B, MTAP, PTPRD, JAK2, CD274 from `purple.cnv.gene.tsv` (minCopyNumber < 0.5 =
+   homozygous deletion; minMinorAlleleCopyNumber 0 = LOH); is cluster 5 in `linx/somatic_plots/reportable/`?
+3. IGV of the 13 single-caller SVs (`igv_regions_unmatched.tsv`: B chr6 4, A chr9 6, B chr9 3) with
+   `REGIONS=... SOFT_CLIPS=true OUT_IGV=results/wgs/igv/chromothripsis ../wgs/05_igv_snapshots.sh`
+   (interactive job) - decides chr6 for good and the chr4:158 Mb / chr22 / chr1 partners.
+4. Timing relative to WGD (allele-specific CN / phasing) if Maria wants it.
+
 ## Open questions
 
 **1. Compare callers in single bases (MNVs split) or in events (doublets joined)?** *Open since 2026-10-07.*
