@@ -364,6 +364,23 @@ save_both <- function(p, name, w, h) {
 # so one SV far from the cluster zooms a panel out to the whole chromosome. The main plot keeps
 # only SVs with both breakends in the shared window (union of the A and B regions), so A and B
 # share an x-axis; *_full.png is ShatterSeek's unmodified view.
+# plot_chromothripsis()'s table (4th grob) labels a row "Oscillating CN (2 and 3 states)" but shows
+# only the 3-state count (plot_function.R cols_sel); the criteria use the 2-state count. Relabel
+# rows (and optionally replace their value) in the tableGrob: rows are text grobs in column 1,
+# values in column 2.
+relabel_table <- function(tg, map) {
+  is_txt <- vapply(tg$grobs, inherits, logical(1), "text")
+  for (i in which(is_txt)) {
+    m <- map[[as.character(tg$grobs[[i]]$label)]]
+    if (is.null(m) || tg$layout$l[i] != 1) next
+    tg$grobs[[i]]$label <- m[[1]]
+    if (!is.null(m[[2]])) {
+      j <- which(is_txt & tg$layout$t == tg$layout$t[i] & tg$layout$l == 2)
+      if (length(j)) tg$grobs[[j[1]]]$label <- m[[2]]
+    }
+  }
+  tg
+}
 ss_panel <- function(k, cc, win = NULL) tryCatch({
   o <- ss[[k]]
   if (!is.null(win)) {
@@ -372,6 +389,11 @@ ss_panel <- function(k, cc, win = NULL) tryCatch({
   }
   p <- plot_chromothripsis(ShatterSeek_output = o, chr = paste0("chr", cc),
                            sample_name = paste(TUM, "-", SET_LAB[[k]]), genome = "hg38")
+  r <- summ[set == k & chrom == cc]
+  p[[4]] <- relabel_table(p[[4]], list(
+    "Oscillating CN (2 and 3 states)" = list("Oscillating CN segments, 2 / 3 states",
+      paste(r$max_number_oscillating_CN_segments_2_states, "/", r$max_number_oscillating_CN_segments_3_states)),
+    "Links with other chrs" = list("Linked SV cluster on other chr (>= 2 transl.)", NULL)))
   arrangeGrob(p[[1]], p[[2]], p[[3]], p[[4]], nrow = 4, ncol = 1, heights = c(0.2, 0.4, 0.4, 0.4))
 }, error = function(e) textGrob(paste0(SET_LAB[[k]], ": no ShatterSeek plot for chr", cc, "\n(", conditionMessage(e), ")")))
 for (cc in cand) {
