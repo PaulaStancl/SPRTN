@@ -1,0 +1,25 @@
+# R environment for run_chromothripsis.R (ShatterSeek on oncoanalyser and sarek SV + CN).
+# Create on the server next to the other envs:
+#   micromamba create -y -p /common/WORK/pstancl/envs/chromothripsis -f env_chromothripsis.yml
+#   micromamba activate /common/WORK/pstancl/envs/chromothripsis
+# ShatterSeek is not on conda; install it from GitHub afterwards (free for academic use only):
+#   Rscript -e 'remotes::install_github("parklab/ShatterSeek", upgrade = "never")'
+name: chromothripsis
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base>=4.3
+  - r-data.table
+  - r-ggplot2
+  - r-gridextra          # ShatterSeek plots (arrangeGrob)
+  - r-cowplot            # side-by-side A / B panels
+  - r-circlize           # genome-wide circos
+  - r-optparse           # CLI arguments
+  - r-foreach            # ShatterSeek dependency
+  - r-mass               # ShatterSeek dependency (fitdistr)
+  - r-remotes            # to install ShatterSeek from GitHub
+  - bioconductor-graph   # ShatterSeek dependency (SV cluster graph)
+  - bioconductor-genomicranges
+  - bioconductor-variantannotation
+  - bioconductor-structuralvariantannotation
