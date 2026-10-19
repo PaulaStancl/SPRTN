@@ -412,8 +412,10 @@ ss_panel <- function(k, cc, win = NULL) tryCatch({
     scale_x_continuous(expand = c(0.01, 0.01), limits = xr, labels = function(x) paste(x / 1e6, "MB")) +
     scale_y_continuous(minor_breaks = NULL, breaks = sort(unique(m$minor)),
                        limits = range(c(0, m$minor)) + c(-0.35, 0.35)) +
-    labs(x = NULL, y = "Minor CN") + theme_bw() +
-    theme(panel.grid = element_blank(), plot.margin = unit(c(0, 0.5, 0.2, 0), "cm"))
+    labs(x = NULL, y = "Minor CN") + theme_bw() +    # ShatterSeek's common_ggplot2 sizes (plot_function.R)
+    theme(panel.grid = element_blank(), axis.text = element_text(size = 7), axis.title.y = element_text(size = 7),
+          axis.line = element_line(linewidth = 0.5, colour = "black"), plot.background = element_blank(),
+          plot.margin = unit(c(0, 0.5, 0.2, 0), "cm"))
   g5 <- ggplotGrob(gm)
   if (length(g5$widths) == length(p[[2]]$widths)) g5$widths <- p[[2]]$widths
   p[[3]] <- relabel_grob(p[[3]], "CN", "Absolute CN")
