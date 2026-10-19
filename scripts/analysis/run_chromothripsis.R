@@ -381,6 +381,13 @@ relabel_table <- function(tg, map) {
   }
   tg
 }
+# replace a text label anywhere inside a grob tree (ShatterSeek's CN panel is labelled "CN")
+relabel_grob <- function(g, from, to) {
+  if (inherits(g, "text") && identical(as.character(g$label), from)) g$label <- to
+  if (!is.null(g$grobs)) g$grobs <- lapply(g$grobs, relabel_grob, from, to)
+  if (!is.null(g$children)) g$children <- do.call(gList, lapply(g$children, relabel_grob, from, to))
+  g
+}
 ss_panel <- function(k, cc, win = NULL) tryCatch({
   o <- ss[[k]]
   if (!is.null(win)) {
@@ -394,7 +401,26 @@ ss_panel <- function(k, cc, win = NULL) tryCatch({
     "Oscillating CN (2 and 3 states)" = list("Oscillating CN segments, 2 / 3 states",
       paste(r$max_number_oscillating_CN_segments_2_states, "/", r$max_number_oscillating_CN_segments_3_states)),
     "Links with other chrs" = list("Linked SV cluster on other chr (>= 2 transl.)", NULL)))
-  arrangeGrob(p[[1]], p[[2]], p[[3]], p[[4]], nrow = 4, ncol = 1, heights = c(0.2, 0.4, 0.4, 0.4))
+  # minor-allele CN panel under ShatterSeek's absolute CN, as in Cortes-Ciriano et al. 2020 Fig. 1
+  # (ShatterSeek's own BAF= panel needs read counts). Same x range as the package's panels: min
+  # pos1 to max pos2 of the intrachromosomal SVs plotted (plot_function.R)
+  sc <- o@detail$SV[o@detail$SV$chrom1 == cc, ]
+  xr <- if (nrow(sc)) c(min(sc$pos1), max(sc$pos2)) else c(0, 10)
+  m <- seg[[k]][chr == cc & end >= xr[1] & start <= xr[2] & !is.na(minor),
+                .(start = pmax(start, xr[1]), end = pmin(end, xr[2]), minor = pmax(round(minor), 0))]
+  gm <- ggplot(m) + geom_segment(aes(x = start, xend = end, y = minor, yend = minor), linewidth = 2) +
+    scale_x_continuous(expand = c(0.01, 0.01), limits = xr, labels = function(x) paste(x / 1e6, "MB")) +
+    scale_y_continuous(minor_breaks = NULL, breaks = sort(unique(m$minor)),
+                       limits = range(c(0, m$minor)) + c(-0.35, 0.35)) +
+    labs(x = NULL, y = "Minor CN") + theme_bw() +
+    theme(panel.grid = element_blank(), plot.margin = unit(c(0, 0.5, 0.2, 0), "cm"))
+  g5 <- ggplotGrob(gm)
+  if (length(g5$widths) == length(p[[2]]$widths)) g5$widths <- p[[2]]$widths
+  p[[3]] <- relabel_grob(p[[3]], "CN", "Absolute CN")
+  ttl <- sprintf("%s - %s: chr. %s: %s-%s", TUM, SET_LAB[[k]], cc,
+                 format(r$start, big.mark = ","), format(r$end, big.mark = ","))
+  arrangeGrob(p[[1]], p[[2]], p[[3]], g5, p[[4]], nrow = 5, ncol = 1, heights = c(0.2, 0.4, 0.35, 0.25, 0.4),
+              top = textGrob(ttl, gp = gpar(fontsize = 12)))
 }, error = function(e) textGrob(paste0(SET_LAB[[k]], ": no ShatterSeek plot for chr", cc, "\n(", conditionMessage(e), ")")))
 for (cc in cand) {
   win <- conc[chrom == cc, c(region_start, region_end)]
@@ -402,8 +428,8 @@ for (cc in cand) {
     s0 <- ss[[k]]@detail$SV; out <- sum(s0$chrom1 == cc & !(s0$pos1 >= win[1] & s0$pos2 <= win[2]))
     if (out) note(k, " chr", cc, ": ", out, " intrachromosomal SV(s) outside the plot window ", win[1], "-", win[2], " (shown in _full)")
   }
-  save_both(arrangeGrob(ss_panel("A", cc, win), ss_panel("B", cc, win), ncol = 2), paste0("shatterseek_chr", cc), 18, 10)
-  save_both(arrangeGrob(ss_panel("A", cc), ss_panel("B", cc), ncol = 2), paste0("shatterseek_chr", cc, "_full"), 18, 10)
+  save_both(arrangeGrob(ss_panel("A", cc, win), ss_panel("B", cc, win), ncol = 2), paste0("shatterseek_chr", cc), 18, 12)
+  save_both(arrangeGrob(ss_panel("A", cc), ss_panel("B", cc), ncol = 2), paste0("shatterseek_chr", cc, "_full"), 18, 12)
 }
 
 # total CN and minor-allele CN along the chromosome, both callers, candidate region shaded
