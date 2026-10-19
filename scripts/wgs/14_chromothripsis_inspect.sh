@@ -9,7 +9,7 @@
 # Defaults: $RESULTS_BASE/oncoanalyser/RJALS/RJALS and $RESULTS_BASE/sarek/RJALS
 # Output: stdout and $RESULTS_BASE/analysis/chromothripsis/inspect.txt
 # ---------------------------------------------------------------------------
-set -euo pipefail
+set -eu   # no pipefail: the "| head" pipelines below end early by design (SIGPIPE upstream)
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source ./00_config.sh
 activate_tools
