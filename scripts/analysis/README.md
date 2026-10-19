@@ -20,6 +20,7 @@ Run `../wgs/06_normalize_vcfs.sh` once before, so indels are compared after `bcf
 | 4 | `05b_hartwig_sigs_check.R` | r-mutation | SAGE set: Hartwig SIGS vs our SBS96 counts, and SIGS / SigProfiler / FitMS signatures |
 | 5 | `06_drivers.R` | r-mutation | driver candidates: PURPLE + LINX vs tumourevo (IntOGen HCC), per gene and per mutation, callers per driver mutation, HCC watchlist incl. TERT promoter; slide tables `drivers_somatic_table` and `drivers_germline_table` (.csv/.md, germline incl. SPRTN) |
 | 6 | `07_roq_damage.R` | r-mutation | are Mutect2's low-ROQ calls DNA damage? F1R2/F2R1 orientation per REF-based class (pooled, mirrored pairs C>T\|G>A and G>T\|C>A, CpG split), plots, cosine to SBS1/5/45 and the Guo 2022 FFPE signatures, tumour vs normal Picard/GIV, read positions; `qc_damage/report.md`. Run, then `cd ../wgs && qsub qsub_damage.sh`, then run again |
+| 7 | `run_chromothripsis.R` | chromothripsis | ShatterSeek on A = ESVEE/PURPLE SVs + PURPLE CN and B = Manta + ASCAT; Cortes-Ciriano 2020 high/low tiers (BH q <= 0.2), A vs B concordance (+/-500 bp, same strands), LOH per CN state, LINX clusters, centromere/segdup flags, ShatterSeek / CN-LOH / circos plots, `report.md`. Step 1: `../wgs/14_chromothripsis_inspect.sh`. CLI: `--oncoanalyser_dir --sarek_dir --tumor_id --normal_id --outdir` |
 
 qcVCF (private repo PaulaStancl/qcVCF) must be installed in r-mutation, otherwise the qcVCF
 plots (96-context, pairwise shared) are skipped with a message. Install from a clone:

@@ -87,7 +87,7 @@ find_all orange.pdf            "$ONCO" '*.orange.pdf'
 find_all orange.json           "$ONCO" '*.orange.json'
 
 section "sarek files"
-find_all manta.somaticSV       "$SAREK" '*.somaticSV.vcf.gz' -path '*manta*'
+find_all manta.somatic_sv       "$SAREK" '*.somatic_sv.vcf.gz' -path '*manta*'
 find_all ascat.segments        "$SAREK" '*.segments.txt'    -path '*ascat*'
 find_all ascat.purityploidy    "$SAREK" '*purityploidy*'    -path '*ascat*'
 find_all ascat.metrics         "$SAREK" '*metrics*'         -path '*ascat*'
@@ -103,7 +103,7 @@ echo "LINX images in NXF_SINGULARITY_CACHEDIR (${NXF_SINGULARITY_CACHEDIR:-unset
 
 section "VCF headers"
 for f in $(find "$ONCO" -name '*.purple.sv.vcf.gz' 2>/dev/null) \
-         $(find "$SAREK" -path '*manta*' -name '*.somaticSV.vcf.gz' 2>/dev/null); do
+         $(find "$SAREK" -path '*manta*' -name '*.somatic_sv.vcf.gz' 2>/dev/null); do
     vcf_meta "$f"
 done
 
