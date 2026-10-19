@@ -263,6 +263,8 @@ match_one <- function(a, b) if (!nrow(a) || !nrow(b)) rep(FALSE, nrow(a)) else {
   hit <- function(c0, p0, s0) any(bb$c == c0 & abs(bb$p - p0) <= TOL & bb$s == s0)
   vapply(seq_len(nrow(a)), function(i) a[i, hit(chr1, pos1, strand1) || hit(chr2, pos2, strand2)], logical(1))
 }
+# NA (not 0) when the UCSC tracks could not be read
+nflag <- function(x) if (!length(x) || all(is.na(x))) NA_integer_ else sum(x, na.rm = TRUE)
 in_region <- function(d, cc, s0, e0) d[(chr1 == cc & pos1 >= s0 & pos1 <= e0) | (chr2 == cc & pos2 >= s0 & pos2 <= e0)]
 
 # LOH: the two most common total-CN states (by bp) in the region; chromothripsis typically has
@@ -312,8 +314,8 @@ conc <- rbindlist(lapply(cand, function(cc) {
     sv_A_in_region = nrow(ra), sv_B_in_region = nrow(rb),
     A_matched_both_ends = sum(match_both(ra, rb)), A_matched_one_end = sum(match_one(ra, rb)),
     B_matched_both_ends = sum(match_both(rb, ra)),
-    A_centromere = sum(ra$centromere, na.rm = TRUE), A_segdup = sum(ra$segdup, na.rm = TRUE),
-    B_centromere = sum(rb$centromere, na.rm = TRUE), B_segdup = sum(rb$segdup, na.rm = TRUE),
+    A_centromere = nflag(ra$centromere), A_segdup = nflag(ra$segdup),
+    B_centromere = nflag(rb$centromere), B_segdup = nflag(rb$segdup),
     cn_states_A = la$states, low_state_loh_A = la$low_state_loh_frac, high_state_het_A = la$high_state_het_frac,
     cn_states_B = lb$states, low_state_loh_B = lb$low_state_loh_frac, high_state_het_B = lb$high_state_het_frac,
     purity_purple = pp$purity[1], ploidy_purple = pp$ploidy[1], purity_ascat = pp$purity[2], ploidy_ascat = pp$ploidy[2],
