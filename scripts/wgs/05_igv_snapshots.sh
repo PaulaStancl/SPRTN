@@ -6,6 +6,8 @@
 #   ./05_igv_snapshots.sh                          # every region in igv_regions.tsv
 #   ./05_igv_snapshots.sh chr1:231351254-231351621 # or loci given here instead
 #   PIPELINES=sarek ./05_igv_snapshots.sh          # only one of the two
+#   SV breakpoints (e.g. run_chromothripsis.R's igv_regions_unmatched.tsv): show soft clips, own folder
+#   REGIONS=<file> SOFT_CLIPS=true OUT_IGV=$RESULTS_BASE/igv/chromothripsis ./05_igv_snapshots.sh
 #
 # Run it in an interactive job (qsub -I ... mem=16gb), not on the login node.
 # Output: $RESULTS_BASE/igv/<pipeline>/<region>.png, plus the IGV batch files.
@@ -21,7 +23,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/00_config.sh"
 PIPELINES="${PIPELINES:-sarek oncoanalyser}"
 REGIONS="${REGIONS:-$WGS_SCRIPTS/igv_regions.tsv}"
 TRACKS="${TRACKS:-$WGS_SCRIPTS/igv_SPRTN_exons.bed}"        # extra feature tracks, space-separated
-OUT_IGV="$RESULTS_BASE/igv"
+OUT_IGV="${OUT_IGV:-$RESULTS_BASE/igv}"
+SOFT_CLIPS="${SOFT_CLIPS:-false}"     # true for SV breakpoints: clipped bases are the split-read evidence
 IGV_VERSION="${IGV_VERSION:-2.19.8}"
 
 SAREK_FASTA="$IGENOMES_BASE/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta"
@@ -121,7 +124,7 @@ for pl in $PIPELINES; do
         for t in $TRACKS; do [[ -r "$t" ]] && echo "load $t"; done
         echo "snapshotDirectory $od"
         echo "maxPanelHeight 1000"
-        echo "preference SAM.SHOW_SOFT_CLIPPED false"
+        echo "preference SAM.SHOW_SOFT_CLIPPED $SOFT_CLIPS"
         for r in "${regions[@]}"; do
             name="${r%%	*}"; locus="${r#*	}"
             echo "goto $locus"

@@ -340,19 +340,49 @@ sv_detail <- rbindlist(lapply(cand, function(cc) {
         cbind(set = "B", rb, matched_both_ends = match_both(rb, ra), matched_one_end = match_one(rb, ra)))[, region_chrom := cc]
 }), fill = TRUE)
 if (nrow(sv_detail)) fwrite(sv_detail, file.path(OD, "concordance_svs.tsv"), sep = "\t")
+# breakends of SVs that only one caller has in a candidate region, as IGV loci (+/-300 bp) for
+#   REGIONS=<this file> SOFT_CLIPS=true OUT_IGV=<...>/igv/chromothripsis ../wgs/05_igv_snapshots.sh
+only <- if (nrow(sv_detail)) sv_detail[matched_both_ends == FALSE] else sv_detail
+if (nrow(only)) {
+  locus <- function(cc, p) sprintf("chr%s:%d-%d", cc, pmax(1L, as.integer(p) - 300L), as.integer(p) + 300L)
+  only[, tag := sprintf("%s_only_chr%s_%s_chr%s_%d_chr%s_%d", set, region_chrom, type, chr1, as.integer(pos1), chr2, as.integer(pos2))]
+  igv <- rbind(only[, .(name = paste0(tag, "_end1"), locus = locus(chr1, pos1))],
+               only[, .(name = paste0(tag, "_end2"), locus = locus(chr2, pos2))])
+  writeLines(c("# SVs in candidate regions found by one caller only (run_chromothripsis.R); name <TAB> locus",
+               paste(igv$name, igv$locus, sep = "\t")), file.path(OD, "igv_regions_unmatched.tsv"))
+  note("IGV loci for ", nrow(only), " single-caller SVs: igv_regions_unmatched.tsv (",
+       paste(only[, .N, by = .(set, region_chrom)][, paste0(set, " chr", region_chrom, " ", N)], collapse = ", "), ")")
+}
 
 # ---- 6. plots ---------------------------------------------------------------------------------
 save_both <- function(p, name, w, h) {
   ggsave(file.path(PLOTS, paste0(name, ".pdf")), p, width = w, height = h)
   ggsave(file.path(PLOTS, paste0(name, ".png")), p, width = w, height = h, dpi = 150, bg = "white")
 }
-# ShatterSeek's own plot (SVs, CN, region), set A next to set B
-ss_panel <- function(k, cc) tryCatch({
-  p <- plot_chromothripsis(ShatterSeek_output = ss[[k]], chr = paste0("chr", cc),
+# ShatterSeek's own plot (SVs, CN, region), set A next to set B. plot_chromothripsis() sets its
+# x-axis from ALL intrachromosomal SVs on the chromosome (plot_function.R, min/max of pos1/pos2),
+# so one SV far from the cluster zooms a panel out to the whole chromosome. The main plot keeps
+# only SVs with both breakends in the shared window (union of the A and B regions), so A and B
+# share an x-axis; *_full.png is ShatterSeek's unmodified view.
+ss_panel <- function(k, cc, win = NULL) tryCatch({
+  o <- ss[[k]]
+  if (!is.null(win)) {
+    s0 <- o@detail$SV
+    o@detail$SV <- s0[s0$chrom1 != cc | (s0$pos1 >= win[1] & s0$pos2 <= win[2]), ]
+  }
+  p <- plot_chromothripsis(ShatterSeek_output = o, chr = paste0("chr", cc),
                            sample_name = paste(TUM, "-", SET_LAB[[k]]), genome = "hg38")
   arrangeGrob(p[[1]], p[[2]], p[[3]], p[[4]], nrow = 4, ncol = 1, heights = c(0.2, 0.4, 0.4, 0.4))
 }, error = function(e) textGrob(paste0(SET_LAB[[k]], ": no ShatterSeek plot for chr", cc, "\n(", conditionMessage(e), ")")))
-for (cc in cand) save_both(arrangeGrob(ss_panel("A", cc), ss_panel("B", cc), ncol = 2), paste0("shatterseek_chr", cc), 18, 10)
+for (cc in cand) {
+  win <- conc[chrom == cc, c(region_start, region_end)]
+  for (k in names(ss)) {
+    s0 <- ss[[k]]@detail$SV; out <- sum(s0$chrom1 == cc & !(s0$pos1 >= win[1] & s0$pos2 <= win[2]))
+    if (out) note(k, " chr", cc, ": ", out, " intrachromosomal SV(s) outside the plot window ", win[1], "-", win[2], " (shown in _full)")
+  }
+  save_both(arrangeGrob(ss_panel("A", cc, win), ss_panel("B", cc, win), ncol = 2), paste0("shatterseek_chr", cc), 18, 10)
+  save_both(arrangeGrob(ss_panel("A", cc), ss_panel("B", cc), ncol = 2), paste0("shatterseek_chr", cc, "_full"), 18, 10)
+}
 
 # total CN and minor-allele CN along the chromosome, both callers, candidate region shaded
 for (cc in cand) {
