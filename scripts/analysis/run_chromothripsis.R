@@ -159,6 +159,11 @@ seg <- list(
   B = asc[, .(chr = norm_chr(chr), start = startpos, end = endpos, cn_raw = nMajor + nMinor, minor = nMinor,
               total_cn = nMajor + nMinor, loh = nMinor == 0)])
 seg <- lapply(seg, function(x) setorder(x[chr %chin% CHROMS], chr, start))
+# segments without a CN (ASCAT can leave nMajor/nMinor empty) are dropped, as in the ShatterSeek README
+for (k in names(seg)) if (any(is.na(seg[[k]]$total_cn))) {
+  note(k, " CN: dropped ", sum(is.na(seg[[k]]$total_cn)), " segment(s) without a copy number")
+  seg[[k]] <- seg[[k]][!is.na(total_cn)]
+}
 # ShatterSeek wants adjacent segments with different CN: merge runs of equal total CN
 merge_cn <- function(x) x[, .(start = min(start), end = max(end), total_cn = total_cn[1]),
                           by = .(chr, run = rleid(chr, total_cn))][, run := NULL][]
