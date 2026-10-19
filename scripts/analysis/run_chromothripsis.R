@@ -197,13 +197,18 @@ ss <- list(A = run_ss(sv$A, cn$A), B = run_ss(sv$B, cn$B))
 # FDR method. The level of significance was set to q <= 0.2." Here BH across the chromosomes of
 # this sample (the paper corrected across its cohort). The fragment joins test is passed when the
 # SV types do NOT differ from equal proportions: q > 0.2 (--fragment_joins raw: p > 0.05).
-# Columns: clusterSize = interleaved intrachromosomal SVs, number_TRA = interchromosomal SVs in the
+# Columns: clusterSize = interleaved intrachromosomal SVs (sum of the four number_* by type, see
+# call_tiers), number_TRA = interchromosomal SVs in the
 # cluster, max_number_oscillating_CN_segments_2_states, pval_exp_cluster = exponential test on the
 # cluster's breakpoints, chr_breakpoint_enrichment = enrichment test.
 bh <- function(p) { q <- rep(NA_real_, length(p)); ok <- !is.na(p); q[ok] <- p.adjust(p[ok], "BH"); q }
 yes <- function(x) !is.na(x) & x
 call_tiers <- function(o, set) {
   s <- as.data.table(o@chromSummary)
+  # statistical_criteria() replaces chromSummary and drops clusterSize; its number_DEL / DUP /
+  # h2hINV / t2tINV count the intrachromosomal SVs of the interleaved cluster (connComp) by type
+  need_cols(s, c("number_DEL", "number_DUP", "number_h2hINV", "number_t2tINV"), "ShatterSeek chromSummary")
+  s[, clusterSize := number_DEL + number_DUP + number_h2hINV + number_t2tINV]
   need_cols(s, c("chrom", "start", "end", "clusterSize", "number_TRA", "pval_fragment_joins",
                  "chr_breakpoint_enrichment", "pval_exp_cluster", "max_number_oscillating_CN_segments_2_states"),
             "ShatterSeek chromSummary")
