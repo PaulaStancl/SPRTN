@@ -1,0 +1,110 @@
+# ---------------------------------------------------------------------------
+# cross_species/h2m - human tumour (RJALS, oncoanalyser) -> expected mouse alterations.
+# One config for every script. "{key}" in a string is replaced by another top-level
+# value (e.g. "{results_base}"); "{ensembl_release}" is the resolved release number.
+# Every script takes --config and --release (overrides ensembl_release).
+# ---------------------------------------------------------------------------
+
+python: python                 # interpreter with bioh2m (01 calls scripts/h2m_model.py with it)
+
+# ---- sample -----------------------------------------------------------------
+patient: RJALS
+tumour_id: RJALS_Tm
+normal_id: RJALS_N
+
+# ---- paths (server) ---------------------------------------------------------
+results_base: /common/WORK/pstancl/projects/MariaBoskovic/SPRTN/results/wgs
+oncoanalyser_dir: "{results_base}/oncoanalyser/RJALS/RJALS"     # purple/ linx/ sigs/ esvee/ ...
+out_dir: "{results_base}/cross_species/h2m/ens{ensembl_release}"  # human_predictions/ comparison/ logs/
+resources_dir: /common/WORK/pstancl/references/cross_species     # downloads (not in git)
+# GRCh38 FASTA (chr-prefixed, + .fai) for H2M and the SBS96 contexts. The iGenomes GATK
+# GRCh38 copy has the same coordinates as GRCh38_hmf but no masked regions.
+human_fasta: /common/WORK/pstancl/references/igenomes/Homo_sapiens/GATK/GRCh38/Sequence/WholeGenomeFasta/Homo_sapiens_assembly38.fasta
+
+# ---- Ensembl ------------------------------------------------------------------
+# 110 = the release H2M 1.0.3's bundled tables were built from (GENCODE v44 / vM33).
+# "latest" = current Ensembl (number looked up at run time); run the whole chain with
+# --release latest to get a second, separate output folder (ens<N>/).
+ensembl_release: 110
+# 00_resources also downloads this release's ortholog table and writes a per-gene diff
+# against ensembl_release (null to skip).
+ensembl_release_check: latest
+# BioMart host per release (archive hosts: https://www.ensembl.org/info/website/archives/)
+biomart_hosts:
+  110: jul2023.archive.ensembl.org
+  latest: www.ensembl.org
+
+# ---- mouse builds -------------------------------------------------------------
+# gtf_release "current" = ensembl_release. GRCm38's last Ensembl release is 102.
+mouse_builds:
+  GRCm39: {ucsc: mm39, gtf_release: current}
+  GRCm38: {ucsc: mm10, gtf_release: 102}
+h2m_mouse_build: GRCm39        # H2M models in GRCm39 only; GRCm38 coordinates by mm39ToMm10 liftOver
+
+# ---- downloads ------------------------------------------------------------------
+max_download_gb: 5             # 00_resources stops (asks) above this unless --allow-large
+
+# ---- thresholds -----------------------------------------------------------------
+cn:
+  deep_del_abs: 0.5            # CN < 0.5 copies -> DEEP_DEL (absolute)
+  loss_rel: 0.75               # CN / ploidy < 0.75 -> LOSS
+  gain_rel: 1.25               # CN / ploidy >= 1.25 -> GAIN
+  amp_rel: 3.0                 # CN / ploidy >= 3 -> AMP (Hartwig's driver AMP threshold)
+  loh_minor_max: 0.5           # minor-allele CN < 0.5 -> LOH (not with DEEP_DEL)
+  merge_max_gap_bp: 5000000    # adjacent same-direction mouse genes further apart -> new interval
+  split_on_block: true         # start a new interval when the synteny block changes
+  crosscheck_bin_bp: 100000    # PURPLE segments cut into bins of this size for direct liftOver
+  # per-segment mapping confidence (03): fractions of the segment's genes (1:1, in build) and
+  # of its length (bins lifted) that reach mouse
+  conf_high_gene_frac: 0.8
+  conf_high_len_frac: 0.5
+  conf_min_len_frac: 0.1       # below this, and no gene mapped -> confidence none
+synteny:
+  max_rank_jump: 5             # 1:1 orthologs stay in one block while their human gene ranks
+                               # move by <= this many genes (and human chromosome is the same)
+liftover:
+  min_match: 0.1               # human -> mouse
+  min_match_mouse: 0.95        # GRCm39 -> GRCm38 (same species)
+sv:
+  breakend_flank_bp: 25000     # each breakend lifted as +/- this window
+  # human regions called as chromothripsis elsewhere (e.g. run_chromothripsis.R), "chr:start-end"
+  chromothripsis_regions: []
+noncoding:
+  promoter_upstream_bp: 2000   # promoter = TSS - upstream .. TSS + downstream (canonical transcript)
+  promoter_downstream_bp: 200
+  tert_promoter: "chr5:1295000-1295400"
+snv:
+  coding_effects: [MISSENSE, NONSENSE_OR_FRAMESHIFT, SPLICE, SYNONYMOUS]   # PAVE canonicalCodingEffect
+  h2m_search_alternative: true
+  h2m_max_alternative: 5
+  model_homology: [ortholog_one2one, ortholog_one2many, ortholog_many2many]
+  # run through H2M before the patient's variants (GRCh38, + strand REF/ALT; REF is checked
+  # against human_fasta). expected_mouse = the mouse protein change H2M must return.
+  h2m_validation:
+    - {gene: KRAS,   chrom: chr12, pos: 25245350,  ref: C, alt: T, protein: G12D,   expected_mouse: G12D}
+    - {gene: TP53,   chrom: chr17, pos: 7675088,   ref: C, alt: T, protein: R175H,  expected_mouse: R172H}
+    - {gene: CTNNB1, chrom: chr3,  pos: 41224646,  ref: C, alt: T, protein: S45F,   expected_mouse: S45F}
+    - {gene: PIK3CA, chrom: chr3,  pos: 179234297, ref: A, alt: G, protein: H1047R, expected_mouse: H1047R}
+    - {gene: BRAF,   chrom: chr7,  pos: 140753336, ref: A, alt: T, protein: V600E,  expected_mouse: V637E}
+
+# ---- optional inputs ----------------------------------------------------------------
+# SigProfilerMatrixGenerator SBS96 of the same SAGE set, for a cross-check in 05
+sbs96_reference: "{results_base}/analysis/oncoanalyser/signatures/sigprofiler/matrix_generator/output/SBS/RJALS.SBS96.all"
+# COSMIC-format signature matrix (column 'Type' or 'MutationType' = A[C>A]A, one column per
+# signature) matching SIGS' signature names; if set, 05 rescales exposures to mouse opportunity
+signature_definitions: null
+# gene frequency table for 06: columns gene_symbol, freq_HCC, freq_HB (fractions)
+tumour_frequency_table: null
+
+# ---- pathways (05b) ---------------------------------------------------------------------
+# COSMIC Cancer Gene Census needs a COSMIC login - download it yourself
+# (cancer.sanger.ac.uk/census, "Cancer Gene Census" TSV/CSV, columns 'Gene Symbol',
+# 'Role in Cancer', 'Tier', 'Synonyms') and put the path and version here.
+cosmic_cgc: null
+cosmic_cgc_version: null
+# Reactome: 00_resources downloads the current release into <resources_dir>/reactome/v<N>/
+# and records N. Set version to that N to pin it (05b then refuses any other).
+reactome:
+  version: null
+
+seed: 1

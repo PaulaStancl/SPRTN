@@ -1,0 +1,35 @@
+# Environment for cross_species/h2m: R for every script, Python only for H2M (scripts/h2m_model.py),
+# plus bcftools (PURPLE VCF) and UCSC liftOver. Create next to the other envs:
+#   micromamba create -y -p /common/WORK/pstancl/envs/cross-species-h2m -f envs/environment.yml
+#   micromamba activate /common/WORK/pstancl/envs/cross-species-h2m
+# bioh2m 1.0.3 imports Bio.pairwise2, so biopython stays at 1.84.
+name: cross-species-h2m
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  # R
+  - r-base>=4.3
+  - r-data.table
+  - r-yaml
+  - r-jsonlite
+  - r-httr
+  - r-digest
+  - r-ggplot2
+  - r-base64enc
+  - r-testthat
+  - bioconductor-rsamtools        # FASTA access (pulls GenomicRanges, IRanges, GenomeInfoDb)
+  - bioconductor-biostrings       # trinucleotide counts
+  # command-line tools
+  - bcftools
+  - ucsc-liftover
+  # Python, only for H2M
+  - python=3.11
+  - pandas=2.2
+  - numpy=1.26
+  - pysam=0.22
+  - biopython=1.84
+  - gffutils=0.13
+  - pip
+  - pip:
+      - bioh2m==1.0.3

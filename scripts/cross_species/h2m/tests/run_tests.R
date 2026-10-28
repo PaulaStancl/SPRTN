@@ -1,0 +1,6 @@
+# Run the unit tests:  Rscript tests/run_tests.R   (from scripts/cross_species/h2m)
+suppressPackageStartupMessages(library(testthat))
+here <- dirname(normalizePath(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE))))
+env <- new.env()
+sys.source(file.path(here, "..", "scripts", "common.R"), envir = env)
+test_dir(file.path(here, "testthat"), env = env, reporter = "summary", stop_on_failure = TRUE)
