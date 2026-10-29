@@ -1,0 +1,16 @@
+# ---------------------------------------------------------------------------
+# cross_species/synteny - our gene-order synteny blocks vs public human-mouse synteny datasets.
+# Uses the H2M pipeline's config for shared paths (resources, orthologs, gene tables, chains, Ensembl
+# release, results_base) and its 03 output (synteny_blocks.GRCm39.tsv); writes only to out_dir.
+# "{key}" is replaced by a top-level value of the H2M config (e.g. {results_base}).
+# ---------------------------------------------------------------------------
+h2m_config: ../h2m/config/config.yaml          # relative to this file
+out_dir: "{results_base}/cross_species/synteny"
+
+min_block_kb: 100           # UCSC chains / synNet fills shorter than this (human side) are left out
+plot_chroms: [chr1, chr9]   # human chromosomes for the dot plots
+
+# extra datasets you prepare yourself (Synteny Portal, Genomicus, halSynteny on Cactus/Zoonomia, MCScanX, ...):
+# TSV with columns h_chrom h_start h_end m_chrom m_start m_end strand (1-based, GRCh38 vs GRCm39, strand + / -)
+external: []
+#  - {name: synteny_portal_150kb, file: /common/WORK/pstancl/references/cross_species/synteny/synteny_portal_hg38_mm39_150kb.tsv}
