@@ -301,13 +301,40 @@ gene_ids_for <- function(symbol, genes, tx, transcript = NULL) {
   fcoalesce(out, unname(by_sym[symbol]))
 }
 
-BIOMART_ATTRS <- c(
-  ensembl_gene_id = "gene_id_h", external_gene_name = "symbol_h",
-  mmusculus_homolog_ensembl_gene = "gene_id_m", mmusculus_homolog_associated_gene_name = "symbol_m",
-  mmusculus_homolog_chromosome = "chrom_m_biomart", mmusculus_homolog_chrom_start = "start_m_biomart",
-  mmusculus_homolog_chrom_end = "end_m_biomart", mmusculus_homolog_orthology_type = "homology_type",
-  mmusculus_homolog_perc_id = "perc_id_m_to_h", mmusculus_homolog_perc_id_r1 = "perc_id_h_to_m",
-  mmusculus_homolog_orthology_confidence = "orthology_confidence")
+COMPARA_URL <- "https://ftp.ensembl.org/pub/release-%s/tsv/ensembl-compara/homologies/%s/Compara.%s.%s_default.homologies.tsv.gz"
+COMPARA_SETS <- data.table(dir = rep(c("homo_sapiens", "mus_musculus"), each = 2), set = rep(c("protein", "ncrna"), 2))
+compara_url <- function(release, dir, set) sprintf(COMPARA_URL, release, dir, release, set)
+compara_files <- function(P, release) file.path(P$resources, paste0("ensembl", release),
+                                                sprintf("Compara.%s.%s.%s_default.homologies.tsv.gz", release, COMPARA_SETS$dir, COMPARA_SETS$set))
+
+# human -> mouse orthologs from the Ensembl Compara homology dumps (protein + ncRNA) of one release.
+# Compara stores each human-mouse pair once, in either the homo_sapiens or the mus_musculus folder
+# (release 110: 16,242 + 6,877 protein pairs, no overlap), so both are read; mouse-side rows are swapped.
+# Every human gene of that release's GTF gets a row (gene_id_m NA when it has no mouse ortholog).
+# identity = % of the human protein identical in the alignment (BioMart perc_id_r1), homology_identity
+# = the same for the mouse protein (BioMart perc_id); is_high_confidence -> orthology_confidence.
+# files: named by the species folder they come from ("homo_sapiens" / "mus_musculus").
+orthologs_from_compara <- function(files, human_genes, mouse_genes, release) {
+  read_side <- function(f, other) {
+    cmd <- sprintf("gzip -dc %s | awk -F'\\t' 'NR==1 || ($8==\"%s\" && $5 ~ /^ortholog/)'", shQuote(f), other)
+    fread(cmd = cmd, sep = "\t", quote = "", na.strings = "NULL", colClasses = "character")
+  }
+  hs <- rbindlist(lapply(files[names(files) == "homo_sapiens"], read_side, other = "mus_musculus"))
+  ms <- rbindlist(lapply(files[names(files) == "mus_musculus"], read_side, other = "homo_sapiens"))
+  h <- rbind(hs[, .(gene_id_h = gene_stable_id, gene_id_m = homology_gene_stable_id, homology_type,
+                    perc_id_h_to_m = as.numeric(identity), perc_id_m_to_h = as.numeric(homology_identity),
+                    orthology_confidence = is_high_confidence)],
+             ms[, .(gene_id_h = homology_gene_stable_id, gene_id_m = gene_stable_id, homology_type,
+                    perc_id_h_to_m = as.numeric(homology_identity), perc_id_m_to_h = as.numeric(identity),
+                    orthology_confidence = is_high_confidence)])
+  h <- unique(h, by = c("gene_id_h", "gene_id_m"))
+  o <- h[human_genes[, .(gene_id_h = gene_id, symbol_h = gene_name, chrom_h = chrom, start_h = start, end_h = end)], on = "gene_id_h"]
+  o[mouse_genes, on = c(gene_id_m = "gene_id"), `:=`(symbol_m = i.gene_name, chrom_m = i.chrom, start_m = i.start, end_m = i.end)]
+  o[, ensembl_release := as.character(release)]
+  setcolorder(o, c("ensembl_release", "gene_id_h", "symbol_h", "gene_id_m", "symbol_m", "homology_type", "perc_id_h_to_m",
+                   "perc_id_m_to_h", "orthology_confidence", "chrom_h", "start_h", "end_h", "chrom_m", "start_m", "end_m"))
+  o[order(gene_id_h, gene_id_m)]
+}
 
 read_orthologs <- function(f) {
   o <- fread(f, colClasses = "character", na.strings = c("", "NA"))

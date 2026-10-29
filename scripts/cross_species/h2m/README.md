@@ -41,7 +41,7 @@ All outputs are under `<out_dir>/human_predictions/`. Column lists are in each s
 
 | step | reads | writes |
 |---|---|---|
-| `00_resources.R` | Ensembl FTP + BioMart, UCSC, Reactome | in `resources_dir`: ortholog table (gene IDs, symbols, homology type, % identity, confidence, coordinates in both species), human GTF (release R), mouse GTFs (GRCm39 R, GRCm38 102), mouse FASTAs, chains hg38→mm39/mm10 and mm39→mm10, Reactome; `ortholog_release_diff_<R>_vs_<R2>.tsv` |
+| `00_resources.R` | Ensembl FTP (GTFs, FASTAs, Compara homologies), UCSC, Reactome | in `resources_dir`: ortholog table (gene IDs, symbols, homology type, % identity, confidence, coordinates in both species), human GTF (release R), mouse GTFs (GRCm39 R, GRCm38 102), mouse FASTAs, chains hg38→mm39/mm10 and mm39→mm10, Reactome; `ortholog_release_diff_<R>_vs_<R2>.tsv` |
 | `01_snv_coding_h2m.R` (+ `h2m_model.py`) | `purple/*.purple.somatic.vcf.gz`, `*.purple.driver.catalog.somatic.tsv` | `expected_mouse_snv.tsv`, `h2m_raw.tsv`, `h2m_failed.tsv`, `h2m_validation.tsv` |
 | `02_snv_noncoding_liftover.R` | PURPLE somatic VCF | `expected_mouse_noncoding.tsv`, `expected_mouse_noncoding_multihits.tsv` |
 | `03_cn_to_mouse.R` | `*.purple.cnv.gene.tsv`, `*.purple.cnv.somatic.tsv`, `*.purple.purity.tsv` | `expected_mouse_cn.<build>.bed`, `expected_mouse_cn_genes.tsv`, `cn_one2many.tsv`, `cn_segment_mapping.tsv`, `cn_liftover_crosscheck.tsv` |
@@ -82,7 +82,7 @@ All outputs are under `<out_dir>/human_predictions/`. Column lists are in each s
 - **Ensembl 110** is the pinned release, because H2M 1.0.3's bundled tables were built from GENCODE v44 / vM33, which is Ensembl 110. `--release latest` reruns the whole chain on the current release into its own folder, and `00` writes a per-gene ortholog diff between the two releases.
 - **H2M** is used only for its modelling engine (`model_batch`, `ver=38`):
   - Its mouse side is **GRCm39 only**; GRCm38 coordinates come from an mm39→mm10 liftOver.
-  - Orthologs come from Ensembl BioMart, not H2M's own name table.
+  - Orthologs come from the Ensembl Compara homology files of the release (not BioMart: the archive BioMart returned HTTP 500), not H2M's own name table.
   - Transcripts are PAVE's transcript, otherwise the Ensembl canonical one.
   - Its annotation DBs are built from only the transcripts in use, and its genome is read lazily from the iGenomes GRCh38 FASTA (same coordinates as GRCh38_hmf, no masked regions). That avoids H2M's Dropbox downloads and whole genomes held in memory.
   - Five known hotspots (KRAS G12D, TP53 R175H→Trp53 R172H, CTNNB1 S45F, PIK3CA H1047R, BRAF V600E→Braf V637E) are run first. Any failure stops `01` unless `--skip-validation` is given.

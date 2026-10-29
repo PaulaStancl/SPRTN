@@ -6,7 +6,7 @@
 #
 # H2M builds: human GRCh38 (ver=38) against mouse GRCm39 - H2M's mouse side is GRCm39 only (its
 # bundled transcripts are GENCODE vM33). GRCm38 coordinates come from a liftOver of the GRCm39
-# result (mm39ToMm10, liftover.min_match_mouse). Orthologs: Ensembl BioMart (config release),
+# result (mm39ToMm10, liftover.min_match_mouse). Orthologs: Ensembl Compara (config release),
 # not H2M's own name table, so everything stays keyed on Ensembl gene IDs. Transcripts: PAVE's
 # transcript if it has a CDS in the release GTF, else the Ensembl canonical one; mouse: the
 # Ensembl canonical transcript of each ortholog. H2M itself is Python - this script writes its
@@ -205,7 +205,7 @@ main <- function() {
                    resources = list(orthologs = P$orthologs, human_gtf = P$human_gtf, mouse_gtf = M$gtf, mm39_to_mm10 = P$mm39_to_mm10),
                    outputs = c(f, f_raw, f_fail),
                    extra = list(h2m = list(human_ver = 38, mouse_build = hb, transcripts = "PAVE else Ensembl canonical",
-                                           orthologs = paste("Ensembl BioMart", cfg$ensembl_release),
+                                           orthologs = paste("Ensembl Compara", cfg$ensembl_release),
                                            validation_pass = sum(val$pass), validation_n = nrow(val))))
   log("done")
 }

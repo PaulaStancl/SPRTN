@@ -6,9 +6,11 @@
 #   Rscript scripts/00_resources.R --dry-run           # list files and sizes only
 #
 # Into <resources_dir>/ (files already there are skipped):
-#   ensembl<R>/orthologs_hsapiens_mmusculus.tsv  BioMart human -> mouse homologs: gene IDs, symbols,
-#                                                homology type, %id both ways, confidence, mouse
-#                                                BioMart coords + human coords from the release GTF
+#   ensembl<R>/orthologs_hsapiens_mmusculus.tsv  human -> mouse orthologs from the release's Ensembl Compara
+#                                                homology dumps, homo_sapiens + mus_musculus folders (each pair
+#                                                is stored in one of them), protein + ncRNA, kept: gene IDs, symbols, homology type, %id both ways,
+#                                                high-confidence flag, coords from the release GTFs (GRCm39).
+#                                                Not BioMart: the archive BioMart returned HTTP 500 (2026-10-28).
 #   ensembl<R>/Homo_sapiens.GRCh38.<R>.gtf.gz    + human_genes.tsv.gz, human_transcripts.tsv.gz
 #   ensembl<R>/Mus_musculus.GRCm39.<R>.gtf.gz    + mouse_GRCm39_{genes,transcripts}.tsv.gz
 #   ensembl102/Mus_musculus.GRCm38.102.gtf.gz    + mouse_GRCm38_{genes,transcripts}.tsv.gz
@@ -17,7 +19,8 @@
 #   reactome/v<N>/Ensembl2Reactome.txt, ReactomePathways.txt, ReactomePathwaysRelation.txt
 #                                                current Reactome release N (05b); pin with reactome.version
 #   versions.json                                URL, bytes, sha256, download date per file
-# With ensembl_release_check set, also that release's ortholog table and
+# With ensembl_release_check set, also that release's Compara files, human / GRCm39 GTF tables,
+# ortholog table and
 #   <out_dir>/human_predictions/ortholog_release_diff_<R>_vs_<R2>.tsv
 #
 # Stops before downloading more than max_download_gb (config) unless --allow-large.
@@ -47,25 +50,6 @@ download <- function(url, dest, log) {
   file.rename(tmp, dest)
 }
 
-biomart <- function(host, log) {
-  attrs <- paste0('<Attribute name="', names(BIOMART_ATTRS), '"/>', collapse = "")
-  xml <- paste0('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE Query>',
-                '<Query virtualSchemaName="default" formatter="TSV" header="1" uniqueRows="1" ',
-                'completionStamp="1" datasetConfigVersion="0.6">',
-                '<Dataset name="hsapiens_gene_ensembl" interface="default">', attrs, '</Dataset></Query>')
-  url <- sprintf("https://%s/biomart/martservice", host)
-  log("BioMart query %s", url)
-  r <- httr::POST(url, body = list(query = xml), encode = "form", httr::timeout(1800))
-  httr::stop_for_status(r)
-  txt <- httr::content(r, as = "text", encoding = "UTF-8")
-  lines <- strsplit(sub("\n$", "", txt), "\n", fixed = TRUE)[[1]]
-  if (trimws(lines[length(lines)]) != "[success]") stop("BioMart answer incomplete (no [success] stamp)", call. = FALSE)
-  d <- fread(text = paste(lines[-length(lines)], collapse = "\n"), sep = "\t", header = TRUE,
-             colClasses = "character", na.strings = "")
-  setnames(d, unname(BIOMART_ATTRS))
-  d
-}
-
 main <- function() {
   a <- parse_cli(c("allow-large", "dry-run"))
   cfg <- load_config(a$config, a$release, query_latest = TRUE)
@@ -87,6 +71,8 @@ main <- function() {
       list(url = sprintf(UCSC, "hg38", basename(M$chain)), dest = M$chain)))
   }
   files <- c(files, list(list(url = sprintf(UCSC, "mm39", basename(P$mm39_to_mm10)), dest = P$mm39_to_mm10)))
+  cf <- compara_files(P, R)
+  files <- c(files, lapply(seq_along(cf), function(i) list(url = compara_url(R, COMPARA_SETS$dir[i], COMPARA_SETS$set[i]), dest = cf[i])))
   todo <- list()
   for (f in files) {
     done <- file.exists(f$dest) || (!is.null(f$final) && file.exists(f$final))
@@ -130,25 +116,31 @@ main <- function() {
     write_tsv(g$tx, t$tx, log)
   }
 
-  # ---- orthologs ------------------------------------------------------------------------------
-  hosts <- cfg$biomart_hosts
-  orth_for <- function(release, tag, dest) {
+  # ---- orthologs (Ensembl Compara homology dumps of the release) ------------------------------------
+  fetch <- function(url, dest) if (!file.exists(dest)) { download(url, dest, log); stamp(dest, url) }
+  tables <- function(gtf, gf, tf) if (!(file.exists(gf) && file.exists(tf))) {
+    log("parsing %s", basename(gtf)); g <- read_gtf_tables(gtf); write_tsv(g$genes, gf, log); write_tsv(g$tx, tf, log)
+  }
+  orth_for <- function(release) {
+    rd <- file.path(P$resources, paste0("ensembl", release))
+    dest <- file.path(rd, "orthologs_hsapiens_mmusculus.tsv")
     if (file.exists(dest)) return(read_orthologs(dest))
-    host <- hosts[[as.character(release)]] %||% hosts[[as.character(tag)]]
-    if (is.null(host)) stop("no BioMart host for release ", release, " in config biomart_hosts", call. = FALSE)
-    o <- biomart(host, log)
-    o[, ensembl_release := as.character(release)]
-    setcolorder(o, "ensembl_release")
+    ftp <- sprintf(ENSEMBL_FTP, release)
+    hgtf <- file.path(rd, sprintf("Homo_sapiens.GRCh38.%s.gtf.gz", release))
+    mgtf <- file.path(rd, sprintf("Mus_musculus.GRCm39.%s.gtf.gz", release))
+    fetch(sprintf("%s/gtf/homo_sapiens/Homo_sapiens.GRCh38.%s.gtf.gz", ftp, release), hgtf)
+    fetch(sprintf("%s/gtf/mus_musculus/Mus_musculus.GRCm39.%s.gtf.gz", ftp, release), mgtf)
+    tables(hgtf, file.path(rd, "human_genes.tsv.gz"), file.path(rd, "human_transcripts.tsv.gz"))
+    tables(mgtf, file.path(rd, "mouse_GRCm39_genes.tsv.gz"), file.path(rd, "mouse_GRCm39_transcripts.tsv.gz"))
+    cf <- compara_files(P, release)
+    for (i in seq_along(cf)) fetch(compara_url(release, COMPARA_SETS$dir[i], COMPARA_SETS$set[i]), cf[i])
+    log("building human -> mouse ortholog table from %s", paste(basename(cf), collapse = ", "))
+    o <- orthologs_from_compara(setNames(cf, COMPARA_SETS$dir), load_genes(file.path(rd, "human_genes.tsv.gz")),
+                                load_genes(file.path(rd, "mouse_GRCm39_genes.tsv.gz")), release)
     write_tsv(o, dest, log)
-    stamp(dest, sprintf("https://%s/biomart (hsapiens_gene_ensembl, mmusculus homologs)", host))
     read_orthologs(dest)
   }
-  orth <- orth_for(R, cfg$ensembl_release_tag, P$orthologs)
-  if (!"chrom_h" %chin% names(orth)) {
-    hg <- load_genes(P$human_genes)
-    orth[hg, on = c(gene_id_h = "gene_id"), `:=`(chrom_h = i.chrom, start_h = i.start, end_h = i.end)]
-    write_tsv(orth, P$orthologs, log)
-  }
+  orth <- orth_for(R)
   cls <- classify_orthologs(orth)
   log("orthologs (release %s): %s", R, paste(cls[, .N, by = homology][, paste0(homology, "=", N)], collapse = ", "))
 
@@ -157,7 +149,7 @@ main <- function() {
   if (!is.null(check)) {
     R2 <- resolve_release(check, cfg$resources_dir, query = TRUE)
     if (R2 != R) {
-      o2 <- orth_for(R2, as.character(check), file.path(P$resources, paste0("ensembl", R2), "orthologs_hsapiens_mmusculus.tsv"))
+      o2 <- orth_for(R2)
       d <- ortholog_release_diff(orth, o2, R, R2)
       f <- write_tsv(d, file.path(P$hp, sprintf("ortholog_release_diff_%s_vs_%s.tsv", R, R2)), log)
       log("orthologs differing between %s and %s: %s", R, R2, paste(d[, .N, by = change][, paste0(change, "=", N)], collapse = ", "))

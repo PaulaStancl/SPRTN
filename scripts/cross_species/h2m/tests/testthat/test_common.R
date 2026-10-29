@@ -187,3 +187,20 @@ test_that("config substitution and chain names", {
   expect_equal(ucsc_chain_name("hg38", "mm10"), "hg38ToMm10.over.chain.gz")
   expect_equal(norm_chrom(c("1", "chrX", "MT")), c("chr1", "chrX", "chrM"))
 })
+
+test_that("orthologs_from_compara merges the human- and mouse-folder files", {
+  hdr <- "gene_stable_id\tprotein_stable_id\tspecies\tidentity\thomology_type\thomology_gene_stable_id\thomology_protein_stable_id\thomology_species\thomology_identity\tdn\tds\tgoc_score\twga_coverage\tis_high_confidence\thomology_id"
+  fh <- tempfile(fileext = ".tsv.gz"); fm <- tempfile(fileext = ".tsv.gz")
+  writeLines(c(hdr, "H1\tP\thomo_sapiens\t90\tortholog_one2one\tM1\tQ\tmus_musculus\t80\tNULL\tNULL\tNULL\tNULL\t1\t1",
+               "H1\tP\thomo_sapiens\t50\tortholog_one2one\tX1\tQ\tmus_spretus\t50\tNULL\tNULL\tNULL\tNULL\t1\t2",
+               "H3\tP\thomo_sapiens\t40\tother_paralog\tH4\tQ\thomo_sapiens\t40\tNULL\tNULL\tNULL\tNULL\tNULL\t3"), gzfile(fh))
+  writeLines(c(hdr, "M2\tQ\tmus_musculus\t70\tortholog_one2one\tH2\tP\thomo_sapiens\t60\tNULL\tNULL\tNULL\tNULL\t0\t4"), gzfile(fm))
+  hg <- data.table(gene_id = c("H1", "H2", "H3"), gene_name = c("A", "B", "C"), chrom = "chr1", start = 1L, end = 2L)
+  mg <- data.table(gene_id = c("M1", "M2"), gene_name = c("a", "b"), chrom = "chr4", start = 1L, end = 2L)
+  o <- orthologs_from_compara(c(homo_sapiens = fh, mus_musculus = fm), hg, mg, 110)
+  expect_equal(o[gene_id_h == "H1", gene_id_m], "M1")                  # other Mus species ignored
+  expect_equal(o[gene_id_h == "H2", .(gene_id_m, perc_id_h_to_m, perc_id_m_to_h)],
+               data.table(gene_id_m = "M2", perc_id_h_to_m = 60, perc_id_m_to_h = 70))   # mouse-side row swapped
+  expect_true(is.na(o[gene_id_h == "H3", gene_id_m]))                  # paralogs ignored, gene kept
+  expect_equal(o[gene_id_h == "H2", symbol_m], "b")
+})

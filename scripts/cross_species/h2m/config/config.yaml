@@ -29,10 +29,7 @@ ensembl_release: 110
 # 00_resources also downloads this release's ortholog table and writes a per-gene diff
 # against ensembl_release (null to skip).
 ensembl_release_check: latest
-# BioMart host per release (archive hosts: https://www.ensembl.org/info/website/archives/)
-biomart_hosts:
-  110: jul2023.archive.ensembl.org
-  latest: www.ensembl.org
+# orthologs: Ensembl Compara homology dumps of the release (ftp.ensembl.org/pub/release-<R>/tsv/ensembl-compara)
 
 # ---- mouse builds -------------------------------------------------------------
 # gtf_release "current" = ensembl_release. GRCm38's last Ensembl release is 102.
