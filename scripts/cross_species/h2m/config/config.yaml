@@ -65,7 +65,7 @@ liftover:
 sv:
   breakend_flank_bp: 25000     # each breakend lifted as +/- this window
   # human regions called as chromothripsis elsewhere (e.g. run_chromothripsis.R), "chr:start-end"
-  chromothripsis_regions: []
+  chromothripsis_regions: ["chr9:14348-26576244"]   # chr9p, high confidence in both pipelines (analysis/README.md)
 noncoding:
   promoter_upstream_bp: 2000   # promoter = TSS - upstream .. TSS + downstream (canonical transcript)
   promoter_downstream_bp: 200
