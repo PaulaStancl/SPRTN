@@ -2,7 +2,7 @@
 # check_class4.R - are H2M class 4 calls ("mutated sequences are not identical") real, or an
 # artefact of H2M's alignment / transcript choice? Run after 01.
 #
-#   Rscript scripts/check_class4.R [--config ...] [--release ...] [--all-classes] [--h2m-plots]
+#   Rscript scripts/check_class4.R [--config ...] [--release ...] [--all-classes] [--h2m-plots] [--build GRCm38]
 #
 # H2M aligns the human and mouse canonical proteins with pairwise2.globalxx (match +1, no mismatch or
 # gap penalty) and calls class 4 when the mutated residue(s) are not identical in that alignment. Here,
@@ -17,6 +17,9 @@
 #      artefact of transcript choice), gap_in_mouse (no mouse residue at that position in any isoform),
 #      confirmed_differs (a different residue in every isoform), not_protein_level (no HGVSp: splice /
 #      non-coding), hgvsp_mismatch.
+# --build GRCm38 repeats the protein check against the GRCm38 / Ensembl 102 isoforms (H2M itself models in
+# GRCm39 only): class4_check.GRCm38.tsv / class4_alignments.GRCm38.html. Same verdicts = the class 4 calls hold
+# for GRCm38. Transcript IDs missing from Ensembl 102 count as "no canonical"; the other isoforms are still used.
 # --all-classes checks every modelled variant, not only class 4 (a sanity run of the method).
 # --h2m-plots adds H2M's own result plot (h2m_visualize.py: model(show_sequence=True) + visualization(), as in
 # the H2M tutorial) for the checked variants and for every modelled PURPLE-reported / driver-gene / hotspot
@@ -97,13 +100,17 @@ main <- function() {
   P <- paths(cfg)
   make_dirs(P)
   log <- make_logger("check_class4", P)
-  M <- P$mouse[[cfg$h2m_mouse_build]]
+  build <- if (is.null(a$build)) cfg$h2m_mouse_build else a$build   # --build GRCm38: same check on Ensembl 102 isoforms
+  if (!build %chin% names(P$mouse)) stop("unknown --build ", build, call. = FALSE)
+  M <- P$mouse[[build]]
+  sfx <- if (build == cfg$h2m_mouse_build) "" else paste0(".", build)
+  log("mouse build %s (H2M modelled in %s)", build, cfg$h2m_mouse_build)
 
   snv <- read_layer(P, "expected_mouse_snv.tsv")
   if (is.null(snv)) stop("expected_mouse_snv.tsv missing - run 01 first", call. = FALSE)
   x <- if (isTRUE(a$all_classes)) snv[!is.na(h2m_class) & !is.na(gene_id_m)] else snv[h2m_class %in% 4L]
   log("%d variants to check (%s)", nrow(x), if (isTRUE(a$all_classes)) "all modelled" else "H2M class 4")
-  if (!nrow(x)) { write_tsv(data.table(), file.path(P$hp, "class4_check.tsv"), log); return(invisible()) }
+  if (!nrow(x)) { write_tsv(data.table(), file.path(P$hp, paste0("class4_check", sfx, ".tsv")), log); return(invisible()) }
 
   pp <- parse_hgvsp(x$hgvsp_h)
   x[, `:=`(human_aa = pp$aa, protein_pos = pp$pos)]
@@ -156,12 +163,13 @@ main <- function() {
     out
   }))
   if (!"html" %chin% names(res)) res[, html := NA_character_]
-  f <- write_tsv(res[, !"html"], file.path(P$hp, "class4_check.tsv"), log)
+  f <- write_tsv(res[, !"html"], file.path(P$hp, paste0("class4_check", sfx, ".tsv")), log)
   # ---- H2M's own plot (tutorial: model(show_sequence=True) + visualization) ------------------------------
   # for the checked variants (class 4: H2M cannot draw, the message says so) and the modelled driver variants
   res[, h2m_plot := NA_character_]
   drv_html <- character()
-  if (isTRUE(a$h2m_plots)) {
+  if (isTRUE(a$h2m_plots) && build != cfg$h2m_mouse_build) log("--h2m-plots only for %s (H2M's build) - skipped", cfg$h2m_mouse_build, level = "WARNING")
+  if (isTRUE(a$h2m_plots) && build == cfg$h2m_mouse_build) {
     lab <- function(d) gsub("[^A-Za-z0-9]+", "_", paste(d$variant_id, d$gene_id_m))
     drv <- snv[h2m_class %in% 0:2 & !is.na(gene_id_m) & (truthy(reported) | truthy(purple_driver_gene) | truthy(hotspot))]
     sel <- unique(rbind(x[, .(variant_id, gene_id_m, gene_symbol_h, hgvsp_h, pos, ref, alt, tx_h, tx_m, set = "checked")],
@@ -191,7 +199,7 @@ main <- function() {
     drv_html <- vapply(seq_len(nrow(d)), function(i) sprintf("<h2>%s %s</h2>%s", d$gene_symbol_h[i], fcoalesce(d$hgvsp_h[i], ""), plot_html(d$label[i])), "")
   }
 
-  fh <- file.path(P$hp, "class4_alignments.html")
+  fh <- file.path(P$hp, paste0("class4_alignments", sfx, ".html"))
   css <- "body{font:14px system-ui,sans-serif;max-width:1100px;margin:auto;padding:16px}pre{font:13px/1.35 ui-monospace,Menlo,monospace;overflow-x:auto}
 .id{background:#d4efdf}.mm{background:#fad7a0}.gap{color:#999;background:#eee}.var{outline:2px solid #c0392b;font-weight:bold}
 .v{display:inline-block;padding:1px 8px;border-radius:9px;background:#eee;font-size:12px}h2{font-size:16px;margin-top:28px;border-top:1px solid #ccc;padding-top:10px}
@@ -203,7 +211,7 @@ main <- function() {
     fcoalesce(as.character(mouse_pos_canonical), ""), fcoalesce(as.character(local_identity_canonical), "NA"),
     paste0(fcoalesce(html, ""), fcoalesce(h2m_plot, "")))), "")
   writeLines(c("<!doctype html><html><head><meta charset='utf-8'><title>H2M class 4 alignments</title><style>", css, "</style></head><body>",
-               "<h1>H2M class 4 - alignment check</h1>",
+               sprintf("<h1>H2M class 4 - alignment check (mouse %s)</h1>", build),
                "<p>Green = identical, orange = different amino acid, grey = gap, red box = the mutated position. ",
                "First block: H2M's own scoring (globalxx). Second: a proper protein alignment (BLOSUM62, gap open 10, extend 0.5). ",
                "If the residue is identical in the second block but not the first, class 4 comes from H2M's alignment; if identical only ",
