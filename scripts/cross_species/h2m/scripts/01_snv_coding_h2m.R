@@ -26,7 +26,17 @@
 #     same_dna_<build>_{chrom,start,end,ref,alt} same_dna_hgvsc_m same_dna_hgvsp_m   (H2M "_ori")
 #     same_protein_<build>_{chrom,start,end,ref,alt} same_protein_hgvsc_m same_protein_hgvsp_m
 #     alternatives_hgvsc_m alternatives_hgvsp_m (all H2M routes, ';'; class 1 = same protein via other codons;
-#     at most snv.h2m_max_alternative) uncertain_effect uncertain_reason prediction_status counterpart
+#     at most snv.h2m_max_alternative) uncertain_effect uncertain_reason prediction_status
+#     equivalence_level functional_equivalence mouse_aligned_residue mouse_hypothesis counterpart
+# equivalence_level (H2M's class is kept as it is; this is a separate interpretation):
+#   exact       H2M class 0 - same nucleotide change                         functional_equivalence = exact
+#   functional  H2M class 1 - same protein change via other codons             supported
+#               H2M class 2 - modelled, effect may differ                      predicted
+#   gene_level  H2M could not model (class 3-6 / failed) a truncating or splice variant of a gene with a 1:1
+#               ortholog: the mouse gene can be disrupted (near mouse_aligned_residue), but equivalence to this
+#               specific human variant is not shown                            predicted_not_validated
+#   none        everything else (missense not modelable, no ortholog, ...)    not_applicable
+# counterpart: yes (exact / functional class 1), gene_level, uncertain, no.
 #   h2m_raw.tsv, h2m_failed.tsv   H2M output as returned (all alternatives) / inputs it rejected
 #   h2m_validation.tsv            the validation variants with H2M's answer and PASS/FAIL
 #   summary/snv_coding.tsv
@@ -189,20 +199,65 @@ main <- function() {
   x[uncertain_reason == "" & h2m_class %in% 2L, uncertain_reason := "h2m_class2"]
   x[mg, on = c(gene_id_m = "gene_id"), symbol_m := fcoalesce(symbol_m, i.gene_name)]
 
+  # ---- equivalence level, next to (never replacing) H2M's class -----------------------------------------
+  # exact (class 0) / functional (class 1 supported, class 2 predicted) / gene_level (H2M could not model a
+  # truncating or splice variant of a gene with a 1:1 ortholog: the mouse gene can be disrupted, equivalence to
+  # this specific human variant is not shown) / none
+  x[, equivalence_level := fcase(
+    h2m_class %in% 0L, "exact", h2m_class %in% 1:2, "functional",
+    prediction_status %chin% c("not_modelable", "h2m_failed") & pave_coding_effect %chin% c("NONSENSE_OR_FRAMESHIFT", "SPLICE") &
+      homology_type == "ortholog_one2one" & !is.na(tx_m), "gene_level",
+    default = "none")]
+  x[, functional_equivalence := fcase(equivalence_level == "exact", "exact", h2m_class %in% 1L, "supported",
+                                      h2m_class %in% 2L, "predicted", equivalence_level == "gene_level", "predicted_not_validated",
+                                      default = "not_applicable")]
+  x[equivalence_level == "gene_level", counterpart := "gene_level"]
+  # gene-level rows: mouse residue aligned to the human HGVSp position (BLOSUM62 protein alignment)
+  x[, mouse_aligned_residue := NA_integer_]
+  gl <- x[equivalence_level == "gene_level"]
+  if (nrow(gl)) {
+    hprot <- proteins_from(attach_seq(read_tx_features(P$human_gtf, tx_ids = unique(gl$tx_h)), cfg$human_fasta))
+    mprot <- proteins_from(attach_seq(read_tx_features(M$gtf, tx_ids = unique(gl$tx_m)), M$fasta))
+    hp <- parse_hgvsp(gl$hgvsp_h)
+    ar <- vapply(seq_len(nrow(gl)), function(i) {
+      h <- hprot[gl$tx_h[i]]; m <- mprot[gl$tx_m[i]]
+      if (is.na(h) || is.na(m) || is.na(hp$pos[i])) return(NA_integer_)
+      al <- align_proteins(h, m)
+      fcoalesce(map_aligned_pos(al$p, al$s, hp$pos[i])$mouse_pos, NA_integer_)
+    }, 0L)
+    x[gl[, .(index)][, ar := ar], on = "index", mouse_aligned_residue := i.ar]
+    log("gene-level equivalence: %d variant x ortholog rows", nrow(gl))
+  }
+  eff <- fifelse(x$pave_coding_effect == "SPLICE", "splice", "truncating")
+  x[, mouse_hypothesis := fcase(
+    equivalence_level %chin% c("exact", "functional"),
+    paste0(symbol_m, " ", fcoalesce(fifelse(h2m_class %in% 1L, same_protein_hgvsp_m, same_dna_hgvsp_m), same_dna_hgvsc_m, ""),
+           " (H2M class ", h2m_class, ")"),
+    equivalence_level == "gene_level",
+    paste0("loss of function of ", symbol_m, " (", eff, ")",
+           fifelse(is.na(mouse_aligned_residue), "", paste0(" near aligned residue ", mouse_aligned_residue)),
+           "; gene-level - the exact variant is not modelable (H2M class ", fcoalesce(as.character(h2m_class), "NA"), ")"),
+    default = NA_character_)]
+
   lead <- c("variant_id", "chrom", "pos", "ref", "alt", "vtype", "gene_symbol_h", "gene_id_h", "transcript_h", "hgvsc_h",
             "hgvsp_h", "pave_effect", "pave_coding_effect", "reported", "hotspot", "purple_driver_gene", "purple_af",
             "biallelic", "homology_type", "n_mouse", "gene_id_m", "symbol_m", "perc_id_h_to_m", "perc_id_m_to_h",
             "tx_h", "tx_m", "h2m_class", "h2m_statement", "n_alternatives")
   mid <- sort(grep("^same_(dna|protein)_", names(x), value = TRUE))
-  tail <- c("alternatives_hgvsc_m", "alternatives_hgvsp_m", "uncertain_effect", "uncertain_reason", "prediction_status", "counterpart")
+  tail <- c("alternatives_hgvsc_m", "alternatives_hgvsp_m", "uncertain_effect", "uncertain_reason", "prediction_status",
+            "equivalence_level", "functional_equivalence", "mouse_aligned_residue", "mouse_hypothesis", "counterpart")
   out <- x[order(chrom_order(chrom), pos, variant_id, gene_id_m), intersect(c(lead, mid, tail), names(x)), with = FALSE]
   f <- write_tsv(out, file.path(P$hp, "expected_mouse_snv.tsv"), log)
 
   # per human variant: the best counterpart over its orthologs
-  best <- out[order(match(counterpart, c("yes", "uncertain", "no")))][!duplicated(variant_id)]
+  best <- out[order(match(counterpart, c("yes", "gene_level", "uncertain", "no")))][!duplicated(variant_id)]
   rows <- rbind(srow("variants_total", nrow(best), "info"),
+                # H2M's own result per variant (unchanged by the equivalence level)
                 best[, .(n = .N), by = prediction_status][order(prediction_status),
-                     .(category = paste0("variant_", prediction_status), n, counterpart = fcoalesce(unname(COUNTERPART[prediction_status]), "uncertain"))],
+                     .(category = paste0("h2m_", prediction_status), n, counterpart = "info")],
+                # counterpart per variant: exact / functional = yes, gene_level = gene-level only, rest uncertain / no
+                best[, .(n = .N), by = .(counterpart, equivalence_level)][order(match(counterpart, c("yes", "gene_level", "uncertain", "no")), equivalence_level),
+                     .(category = paste0("equivalence_", equivalence_level), n, counterpart)],
                 srow("uncertain_effect", best[uncertain_effect == TRUE, .N], "info"),
                 srow("h2m_validation_pass", sum(val$pass), "info"), srow("h2m_validation_fail", sum(!val$pass), "info"))
   write_summary(P, "snv_coding", rows, log)

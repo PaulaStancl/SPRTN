@@ -138,20 +138,22 @@ main <- function() {
   hb <- cfg$primary_mouse_build      # main build for counterpart calls, event table, report
 
   sm <- rbindlist(lapply(list.files(P$summary, "\\.tsv$", full.names = TRUE), fread), use.names = TRUE, fill = TRUE)
-  ov <- sm[layer %chin% names(LAYERS) & counterpart %chin% c("yes", "uncertain", "no"),
+  ov <- sm[layer %chin% names(LAYERS) & counterpart %chin% c("yes", "gene_level", "uncertain", "no"),
            .(n = sum(n)), by = .(layer, counterpart)]
   ov <- dcast(ov, layer ~ counterpart, value.var = "n", fill = 0)
-  for (c in c("yes", "uncertain", "no")) if (!c %chin% names(ov)) ov[, (c) := 0L]
+  for (c in c("yes", "gene_level", "uncertain", "no")) if (!c %chin% names(ov)) ov[, (c) := 0L]
   ov <- ov[match(intersect(names(LAYERS), layer), layer)]
-  ov[, `:=`(Layer = LAYERS[layer], total = yes + uncertain + no)]
-  ov <- ov[, .(Layer, `human events` = total, `predicted mouse counterpart` = yes, `uncertain / not assessable` = uncertain,
-               `no possible counterpart` = no)]
+  ov[, `:=`(Layer = LAYERS[layer], total = yes + gene_level + uncertain + no)]
+  ov <- ov[, .(Layer, `human events` = total, `predicted mouse counterpart` = yes, `gene-level only` = gene_level,
+               `uncertain / not assessable` = uncertain, `no possible counterpart` = no)]
 
   sec <- list()
   sec$overview <- paste0("<h2>Mouse counterpart per layer</h2>",
     "<p>Counts are human events (variants, genes, SNVs in the spectrum). <b>No possible counterpart</b> = no mouse ortholog, ",
     "not modelable by H2M, outside the mouse build or not lifting over; it is its own category, not a discordance. ",
-    "<b>Uncertain</b> = 1:many orthologs, multi-mapped, H2M class 2, or LOH (not assessable in inbred mice).</p>", html_table(ov))
+    "<b>Uncertain</b> = 1:many orthologs, multi-mapped, H2M class 2, or LOH (not assessable in inbred mice). ",
+    "<b>Gene-level only</b> = H2M could not model the exact variant (it keeps its H2M class), but it truncates or affects splicing of a ",
+    "gene with a 1:1 mouse ortholog: disruption of the mouse gene is a hypothesis, equivalence to the specific human variant is not shown.</p>", html_table(ov))
   sec$layers <- paste0("<h2>Per-layer detail</h2>", paste(vapply(split(sm, by = "layer"), function(d)
     paste0("<h3>", esc(d$layer[1]), "</h3>", html_table(d[, .(category, n, counterpart)])), ""), collapse = ""))
 

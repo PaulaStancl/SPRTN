@@ -217,3 +217,52 @@ test_that("parse_hgvsp, map_aligned_pos, cds_protein", {
   rc <- function(x) as.character(Biostrings::reverseComplement(Biostrings::DNAString(x)))
   expect_equal(cds_protein(data.table(start = c(1, 20), strand = "-", frame = "0"), c(rc("CGTTAA"), rc("ATGAAA"))), "MKR*")
 })
+
+# two-exon transcript: CDS ATG AAA CCC | GGG TTT, stop TAA, then 3' UTR; mRNA = ATGAAACCC + GGGTTTTAAGCAGCA
+mk_plus <- function() rbind(
+  data.table(chrom = "1", feature = "exon", start = c(1L, 21L), end = c(9L, 35L), strand = "+", frame = ".", transcript_id = "T",
+             gene_id = "G", seq = c("ATGAAACCC", "GGGTTTTAAGCAGCA")),
+  data.table(chrom = "1", feature = "CDS", start = c(1L, 21L), end = c(9L, 26L), strand = "+", frame = "0", transcript_id = "T",
+             gene_id = "G", seq = c("ATGAAACCC", "GGGTTT")))
+mk_minus <- function() {                     # same mRNA on the minus strand: exon 1 at 21-29, exon 2 at 1-15
+  rc <- function(x) as.character(Biostrings::reverseComplement(Biostrings::DNAString(x)))
+  rbind(data.table(chrom = "1", feature = "exon", start = c(21L, 1L), end = c(29L, 15L), strand = "-", frame = ".", transcript_id = "T",
+                   gene_id = "G", seq = c(rc("ATGAAACCC"), rc("GGGTTTTAAGCAGCA"))),
+        data.table(chrom = "1", feature = "CDS", start = c(21L, 10L), end = c(29L, 15L), strand = "-", frame = "0", transcript_id = "T",
+                   gene_id = "G", seq = c(rc("ATGAAACCC"), rc("GGGTTT"))))
+}
+
+test_that("tx_model builds the mRNA, CDS bounds and last junction on both strands", {
+  for (tm in list(tx_model(mk_plus()), tx_model(mk_minus()))) {
+    expect_equal(tm$mrna, "ATGAAACCCGGGTTTTAAGCAGCA")
+    expect_equal(c(tm$cds_start, tm$cds_end, tm$last_junction), c(1L, 15L, 9L))
+    expect_equal(translate_from(tm$mrna, tm$cds_start), list(protein = "MKPGF", stop = 16L))
+  }
+  expect_equal(proteins_from(mk_plus())[["T"]], "MKPGF")
+})
+
+test_that("apply_vcf_to_tx: same 1-bp deletion written in + and - strand VCF terms", {
+  # + strand: delete genomic 5 (2nd A of AAA): VCF 4 AA>A ; - strand: same mRNA base is genomic 25: VCF 24 TT>T
+  mp <- apply_vcf_to_tx(tx_model(mk_plus()), 4L, "AA", "A")
+  mm <- apply_vcf_to_tx(tx_model(mk_minus()), 24L, "TT", "T")
+  for (m in list(mp, mm)) {
+    expect_equal(m$mrna, "ATGAACCCGGGTTTTAAGCAGCA"); expect_equal(c(m$first, m$delta), c(5L, -1L))
+  }
+  cq <- mrna_consequence(tx_model(mk_plus()), mp$mrna, mp$first, mp$delta)
+  expect_equal(cq$outcome, "no_stop_in_transcript")        # frameshift reads through the 3' UTR end
+  # nonsense: genomic 4 A>T makes codon 2 TAA
+  ns <- apply_vcf_to_tx(tx_model(mk_plus()), 4L, "A", "T")
+  expect_equal(mrna_consequence(tx_model(mk_plus()), ns$mrna, ns$first, ns$delta)[c("mut_aa", "outcome", "nmd")],
+               list(mut_aa = 1L, outcome = "premature_stop", nmd = FALSE))  # stop 3 nt before the junction: no NMD
+  # insertion of G after genomic 3 (+): ATG G AAA... ; outside exons -> NULL
+  ins <- apply_vcf_to_tx(tx_model(mk_plus()), 3L, "G", "GG")
+  expect_equal(substr(ins$mrna, 1, 5), "ATGGA"); expect_equal(ins$delta, 1L)
+  expect_null(apply_vcf_to_tx(tx_model(mk_plus()), 12L, "A", "T"))
+})
+
+test_that("NMD rule: stop more than 50 nt before the last junction", {
+  tm <- list(mrna = paste0("ATGTAA", strrep("C", 300)), cds_start = 1L, cds_end = 300L, last_junction = 200L)
+  expect_true(mrna_consequence(tm, tm$mrna, 4L, 0L)$nmd)
+  tm$last_junction <- 40L
+  expect_false(mrna_consequence(tm, tm$mrna, 4L, 0L)$nmd)
+})

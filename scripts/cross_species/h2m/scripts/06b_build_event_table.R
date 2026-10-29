@@ -20,7 +20,9 @@
 #   fusion         per LINX fusion: a feasibility flag only - hypothesis says no mouse fusion is
 #                  predicted; confidence none.
 #   signature      one row: SBS96 spectrum rescaled to mouse opportunity (05).
-# Every row: event_id layer event human_locus human_genes human_gene_ids mouse_orthologs
+# equivalence_level: exact / functional / gene_level (SNVs: from 01; CN, LOH and SV are gene-level by nature) /
+# positional (non-coding liftOver) / none (fusions, no counterpart) / spectrum (signature).
+# Every row: event_id layer event equivalence_level human_locus human_genes human_gene_ids mouse_orthologs
 # mouse_gene_ids homology mouse_locus_<build> mapping_method mapped_fraction mapping_confidence
 # hypothesis expected_direction (of the event: type + CGC role) cgc_genes reactome_top_level mouse_1 mouse_2 mouse_3 (= "pending").
 #
@@ -49,6 +51,8 @@ main <- function() {
   snv <- read_layer(P, "expected_mouse_snv.tsv")
   if (!is.null(snv) && nrow(snv)) {
     s <- copy(snv)
+    for (c in intersect(c("hgvsp_h", "hgvsc_h", "symbol_m", "gene_id_m", "mouse_hypothesis", "equivalence_level"), names(s)))
+      set(s, j = c, value = as.character(s[[c]]))            # all-NA columns are read as logical
     s[, use := fifelse(h2m_class %in% 1L, "same_protein", "same_dna")]
     for (b in builds) {
       cc <- paste0(c("same_dna_", "same_protein_"), b)
@@ -62,14 +66,18 @@ main <- function() {
                                     prediction_status %like% "^modelled" , "ambiguous", default = "none")]
     # modelled in GRCm39 but the position did not lift over to the main build -> partial
     s[mapping_confidence == "high" & is.na(get(paste0("mouse_locus_", hb))), mapping_confidence := "partial"]
-    mprot <- fcoalesce(fifelse(s$use == "same_protein", s$same_protein_hgvsp_m, s$same_dna_hgvsp_m), s$same_dna_hgvsc_m)
+    mprot <- fcoalesce(fifelse(s$use == "same_protein", as.character(colv(s, "same_protein_hgvsp_m")), as.character(colv(s, "same_dna_hgvsp_m"))),
+                       as.character(colv(s, "same_dna_hgvsc_m")))
     s[, hypothesis := fcase(
       prediction_status %chin% c("no_ortholog", "not_in_release"), paste0("no mouse counterpart: ", gene_symbol_h, " has no mouse ortholog"),
       prediction_status == "not_modelable", paste0("not modelable in mouse (H2M class ", h2m_class, "): ", gene_symbol_h, " ", fcoalesce(hgvsp_h, hgvsc_h)),
       prediction_status %like% "^modelled", paste0(fifelse(uncertain_effect %in% TRUE, "possible ", ""), symbol_m, " ", fcoalesce(mprot, ""),
                                                  " (human ", gene_symbol_h, " ", fcoalesce(hgvsp_h, hgvsc_h, ""), ")"),
       default = paste0(gene_symbol_h, " ", fcoalesce(hgvsp_h, hgvsc_h, ""), ": ", prediction_status))]
-    rows$snv <- with_loci(s, s[, .(layer = "snv_coding", event = pave_coding_effect, event_key = variant_id,
+    # gene-level equivalence (01): H2M could not model the exact variant, the mouse gene can still be disrupted
+    if (!"equivalence_level" %chin% names(s)) s[, `:=`(equivalence_level = NA_character_, mouse_hypothesis = NA_character_)]
+    s[equivalence_level == "gene_level", `:=`(mapping_confidence = "partial", hypothesis = mouse_hypothesis)]
+    rows$snv <- with_loci(s, s[, .(layer = "snv_coding", event = pave_coding_effect, event_key = variant_id, equivalence_level,
                            human_locus = paste0(chrom, ":", pos, ":", ref, ">", alt), human_genes = gene_symbol_h,
                            human_gene_ids = gene_id_h, mouse_orthologs = symbol_m, mouse_gene_ids = gene_id_m,
                            homology = homology_type, mapping_method = "H2M",
@@ -92,7 +100,7 @@ main <- function() {
     n[, hypothesis := fifelse(mapping_confidence == "none", paste0("no mouse counterpart: ", class, " variant near ", fcoalesce(gene_symbol_h, "?"), " does not lift over"),
                               paste0(class, " variant of ", fcoalesce(gene_symbol_h, "?"), " -> ", get(paste0("mouse_locus_", hb)),
                                      fifelse(get(paste0(hb, "_ref_conserved")) %in% TRUE, " (REF conserved)", " (REF differs)")))]
-    rows$nc <- with_loci(n, n[, .(layer = "snv_noncoding", event = class, event_key = variant_id,
+    rows$nc <- with_loci(n, n[, .(layer = "snv_noncoding", event = class, event_key = variant_id, equivalence_level = "positional",
                           human_locus = paste0(chrom, ":", pos, ":", ref, ">", alt), human_genes = gene_symbol_h, human_gene_ids = gene_id_h,
                           mouse_orthologs = NA_character_, mouse_gene_ids = gene_id_m, homology = homology_type,
                           mapping_method = "liftOver", mapped_fraction = fifelse(get(stc) == "unmapped", 0, 1),
@@ -120,6 +128,7 @@ main <- function() {
                                         fifelse(mouse_genes_n > 6, paste0(" (+", mouse_genes_n - 6, ")"), ""), " on mouse ", chrom,
                                         fifelse(d == "LOH", " - not assessable in inbred mice unless heterozygous regions exist", "")))]
       r <- fr[, .(layer = if (d == "LOH") "loh" else "cn", event = if (d == "LOH") "LOH" else state, event_key = paste(d, segment, sep = ":"),
+                  equivalence_level = "gene_level",
                   human_locus = segment, human_genes, human_gene_ids = NA_character_, mouse_orthologs = genes, mouse_gene_ids = NA_character_,
                   homology = "ortholog_one2one", mapping_method = "ortholog + synteny block",
                   mapped_fraction = gene_frac_mapped, mapping_confidence = fifelse(is.na(name), "none", fcoalesce(seg_conf, confidence)),
@@ -140,7 +149,7 @@ main <- function() {
                             prediction == "one2many", paste0("disruption of one of the mouse orthologs of ", gene),
                             default = paste0("no mouse counterpart: ", gene, " (", prediction, ")"))]
     for (b in builds) set(d, j = paste0("mouse_locus_", b), value = locus(d[[paste0(b, "_chrom")]], d[[paste0(b, "_start")]], d[[paste0(b, "_end")]]))
-    rows$sv <- with_loci(d, d[, .(layer = "sv", event = event, event_key = paste0("SV:", sv_ids, ":", gene), human_locus = paste0("SV ", sv_ids),
+    rows$sv <- with_loci(d, d[, .(layer = "sv", event = event, event_key = paste0("SV:", sv_ids, ":", gene), equivalence_level = "gene_level", human_locus = paste0("SV ", sv_ids),
                           human_genes = gene, human_gene_ids = gene_id_h, mouse_orthologs = get(paste0(hb, "_symbol")), mouse_gene_ids = fcoalesce(gene_id_m, mouse_targets),
                           homology = homology, mapping_method = "ortholog", mapped_fraction = fifelse(mapping_confidence == "none", 0, 1),
                           mapping_confidence = mapping_confidence, hypothesis = hypothesis)], builds)
@@ -148,7 +157,7 @@ main <- function() {
   fus <- read_layer(P, "expected_mouse_fusions.tsv")
   if (!is.null(fus) && nrow(fus)) {
     fcol <- paste0(hb, "_fusion_feasibility")
-    rows$fusion <- fus[, .(layer = "fusion", event = "FUSION", event_key = paste0("FUSION:", name), human_locus = name,
+    rows$fusion <- fus[, .(layer = "fusion", event = "FUSION", event_key = paste0("FUSION:", name), equivalence_level = "none", human_locus = name,
                            human_genes = paste(gene5, gene3, sep = ","), human_gene_ids = paste(gene_id5_h, gene_id3_h, sep = ","),
                            mouse_orthologs = NA_character_, mouse_gene_ids = paste(gene_id5_m, gene_id3_m, sep = ","),
                            homology = NA_character_, mapping_method = "ortholog (feasibility flag)", mapped_fraction = NA_real_,
@@ -163,7 +172,7 @@ main <- function() {
     cosv <- x[, sum(human_prop * expected_mouse_prop) / sqrt(sum(human_prop^2) * sum(expected_mouse_prop^2))]
     sig <- read_layer(P, "expected_signatures.tsv")
     top <- if (!is.null(sig) && nrow(sig)) paste(head(sprintf("%s %.0f%%", sig$signature, sig$human_pct), 3), collapse = ", ") else "n/a"
-    rows$sig <- data.table(layer = "signature", event = "SBS96", event_key = "SBS96", human_locus = "genome",
+    rows$sig <- data.table(layer = "signature", event = "SBS96", event_key = "SBS96", equivalence_level = "spectrum", human_locus = "genome",
                            human_genes = NA_character_, human_gene_ids = NA_character_, mouse_orthologs = NA_character_,
                            mouse_gene_ids = NA_character_, homology = NA_character_, mapping_method = "trinucleotide rescaling",
                            mapped_fraction = 1, mapping_confidence = "high",
@@ -200,7 +209,7 @@ main <- function() {
 
   et[, event_id := sprintf("E%05d", seq_len(.N))]
   et[, c("mouse_1", "mouse_2", "mouse_3") := "pending"]
-  lead <- c("event_id", "layer", "event", "human_locus", "human_genes", "human_gene_ids", "mouse_orthologs", "mouse_gene_ids", "homology",
+  lead <- c("event_id", "layer", "event", "equivalence_level", "human_locus", "human_genes", "human_gene_ids", "mouse_orthologs", "mouse_gene_ids", "homology",
             paste0("mouse_locus_", builds), "mapping_method", "mapped_fraction", "mapping_confidence", "hypothesis",
             "expected_direction", "cgc_genes", "reactome_top_level", "event_key", "mouse_1", "mouse_2", "mouse_3")
   for (c in setdiff(lead, names(et))) set(et, j = c, value = NA_character_)

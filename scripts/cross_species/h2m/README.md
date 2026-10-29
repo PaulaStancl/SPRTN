@@ -87,6 +87,14 @@ All outputs are under `<out_dir>/human_predictions/`. Column lists are in each s
   - Transcripts are PAVE's transcript, otherwise the Ensembl canonical one.
   - Its annotation DBs are built from only the transcripts in use, and its genome is read lazily from the iGenomes GRCh38 FASTA (same coordinates as GRCh38_hmf, no masked regions). That avoids H2M's Dropbox downloads and whole genomes held in memory.
   - Five known hotspots (KRAS G12D, TP53 R175H→Trp53 R172H, CTNNB1 S45F, PIK3CA H1047R, BRAF V600E→Braf V637E) are run first. Any failure stops `01` unless `--skip-validation` is given.
+- **Equivalence level next to H2M's class** (2026-10-29). `h2m_class` is never changed. 01 adds `equivalence_level`:
+  `exact` (class 0), `functional` (class 1 = same protein via other codons, `supported`; class 2, `predicted`),
+  `gene_level` (H2M could not model a truncating or splice variant of a gene with a 1:1 ortholog: disruption of the
+  mouse gene near `mouse_aligned_residue` is a hypothesis, equivalence to the specific variant is not shown,
+  `predicted_not_validated`) or `none`. Summaries and the report count gene-level separately, never as a counterpart.
+  `scripts/check_class4.R` explains each class 4 call from the transcripts (affected codons from the coding phase,
+  human vs mouse codons on the coding strand, consequence and NMD in both species for an analogous mouse change);
+  `--h2m-plots` adds H2M's own `visualization()` output.
 - **SBS96** is counted directly from the VCF and FASTA (Rsamtools / Biostrings) instead of a new SigProfilerMatrixGenerator install. It is compared with the existing SigProfiler matrix from `analysis/01b` (`sbs96_reference`). MNV records are left out, as in `analysis/01b`.
 - **Synteny blocks** come from the ortholog order: runs of 1:1 orthologs that keep their human order on one human chromosome. They are not downloaded from Ensembl.
 - **SV breakends** come from `linx.vis_sv_data.tsv`, the same columns `analysis/run_chromothripsis.R` uses. Chromothripsis regions (e.g. chr9p from that analysis) go in `sv.chromothripsis_regions`.

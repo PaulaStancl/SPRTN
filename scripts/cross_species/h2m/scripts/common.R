@@ -641,6 +641,134 @@ cds_protein <- function(cds, seqs) {
   as.character(Biostrings::translate(Biostrings::DNAString(dna), if.fuzzy.codon = "solve", no.init.codon = TRUE))
 }
 
+# ---- transcript models (01 gene-level equivalence, check_class4.R) ------------------------------------
+
+# exon + CDS rows (chrom feature start end strand frame transcript_id gene_id) of given transcripts / genes;
+# lines are pre-filtered with grep -F on the IDs, so whole GTFs are not parsed
+read_tx_features <- function(gtf, tx_ids = character(), gene_ids = character()) {
+  ids <- unique(c(tx_ids, gene_ids)); ids <- ids[!is.na(ids) & nzchar(ids)]
+  empty <- data.table(chrom = character(), feature = character(), start = integer(), end = integer(), strand = character(),
+                      frame = character(), transcript_id = character(), gene_id = character())
+  if (!length(ids)) return(empty)
+  idf <- tempfile(); writeLines(paste0('"', ids, '"'), idf); on.exit(unlink(idf))
+  cmd <- sprintf("gzip -dc %s | awk -F'\\t' '$3==\"CDS\" || $3==\"exon\"' | grep -F -f %s", shQuote(gtf), shQuote(idf))
+  g <- tryCatch(fread(cmd = cmd, header = FALSE, sep = "\t", quote = "", select = c(1, 3, 4, 5, 7, 8, 9),
+                      col.names = c("chrom", "feature", "start", "end", "strand", "frame", "attr"),
+                      colClasses = list(character = c(1, 3, 8, 9))), error = function(e) NULL)
+  if (is.null(g) || !nrow(g)) return(empty)
+  g[, `:=`(transcript_id = gtf_attr(attr, "transcript_id"), gene_id = gtf_attr(attr, "gene_id"))]
+  g[transcript_id %chin% tx_ids | gene_id %chin% gene_ids, !"attr"]
+}
+
+# add the + strand genomic sequence of every row (column seq) from an indexed FASTA ('1' / 'chr1' resolved)
+attach_seq <- function(d, fasta) {
+  d <- copy(d)
+  if (!nrow(d)) return(d[, seq := character()])
+  fa <- Rsamtools::FaFile(fasta)
+  refs <- GenomeInfoDb::seqnames(Rsamtools::seqinfo(fa))
+  d[, fa_chrom := fifelse(chrom %chin% refs, chrom, fifelse(paste0("chr", chrom) %chin% refs, paste0("chr", chrom), sub("^chr", "", chrom)))]
+  d <- d[fa_chrom %chin% refs]
+  if (nrow(d)) d[, seq := toupper(as.character(Rsamtools::scanFa(fa, GenomicRanges::GRanges(fa_chrom, IRanges::IRanges(start, end)))))]
+  d[, !"fa_chrom"]
+}
+
+# transcript_id -> protein (no trailing stop) from features with seq
+proteins_from <- function(feat) {
+  cds <- feat[feature == "CDS"]
+  if (!nrow(cds)) return(setNames(character(), character()))
+  p <- cds[, .(protein = cds_protein(.SD, seq)), by = transcript_id]
+  setNames(sub("\\*$", "", p$protein), p$transcript_id)
+}
+
+ALN <- if (requireNamespace("pwalign", quietly = TRUE)) asNamespace("pwalign") else asNamespace("Biostrings")
+
+# global protein alignment; proper = BLOSUM62, gap opening 10, extension 0.5; h2m = H2M's scoring
+# (pairwise2.globalxx: match 1, mismatch 0, free gaps - ties may be broken differently than in H2M)
+align_proteins <- function(h, m, mode = c("proper", "h2m")) {
+  mode <- match.arg(mode)
+  if (mode == "proper") {
+    a <- ALN$pairwiseAlignment(Biostrings::AAString(h), Biostrings::AAString(m), substitutionMatrix = "BLOSUM62",
+                               gapOpening = 10, gapExtension = 0.5, type = "global")
+  } else {
+    l <- sort(unique(c(strsplit(h, "")[[1]], strsplit(m, "")[[1]])))
+    idm <- diag(1, length(l)); dimnames(idm) <- list(l, l)
+    a <- ALN$pairwiseAlignment(Biostrings::AAString(h), Biostrings::AAString(m), substitutionMatrix = idm,
+                               gapOpening = 0, gapExtension = 0, type = "global")
+  }
+  list(p = as.character(ALN$alignedPattern(a)), s = as.character(ALN$alignedSubject(a)))
+}
+
+dna_revcomp <- function(x) if (!length(x)) character() else as.character(Biostrings::reverseComplement(Biostrings::DNAStringSet(x)))
+
+# one transcript (rows of read_tx_features + seq) -> mRNA model on the coding strand:
+# mrna (string), pos (genomic coordinate of every mRNA base), cds_start / cds_end (mRNA index of the first
+# coding base after the start phase / last coding base; Ensembl CDS excludes the stop codon),
+# last_junction (mRNA index of the last base before the last exon-exon junction; NA for one exon), strand
+tx_model <- function(f) {
+  ex <- f[feature == "exon"]; cd <- f[feature == "CDS"]
+  if (!nrow(ex) || !nrow(cd)) return(NULL)
+  st <- ex$strand[1]
+  ex <- if (st == "-") ex[order(-start)] else ex[order(start)]
+  s <- if (st == "-") dna_revcomp(ex$seq) else ex$seq
+  pos <- unlist(lapply(seq_len(nrow(ex)), function(i) if (st == "-") ex$end[i]:ex$start[i] else ex$start[i]:ex$end[i]))
+  cd <- if (st == "-") cd[order(-start)] else cd[order(start)]
+  first <- if (st == "-") cd$end[1] else cd$start[1]
+  last <- if (st == "-") cd$start[nrow(cd)] else cd$end[nrow(cd)]
+  fr <- suppressWarnings(as.integer(cd$frame[1])); if (is.na(fr)) fr <- 0L
+  list(mrna = paste(s, collapse = ""), pos = pos, cds_start = match(first, pos) + fr, cds_end = match(last, pos),
+       last_junction = if (nrow(ex) > 1) sum(nchar(s[-length(s)])) else NA_integer_, strand = st)
+}
+
+# translate from mRNA index `start` to the first stop: protein (without stop), stop = mRNA index of the
+# stop codon's first base (NA when the mRNA ends without a stop)
+translate_from <- function(mrna, start) {
+  s <- substring(mrna, start)
+  s <- substr(s, 1L, nchar(s) - nchar(s) %% 3L)
+  if (!nchar(s)) return(list(protein = "", stop = NA_integer_))
+  p <- as.character(Biostrings::translate(Biostrings::DNAString(s), if.fuzzy.codon = "solve", no.init.codon = TRUE))
+  k <- as.integer(regexpr("*", p, fixed = TRUE))
+  if (k < 0) list(protein = p, stop = NA_integer_) else list(protein = substr(p, 1L, k - 1L), stop = start + 3L * (k - 1L))
+}
+
+# apply a VCF variant (pos, ref, alt; indels anchored) to an mRNA model. Returns list(mrna, first, n_del, ins,
+# delta, note): first = mRNA index of the first changed base, delta = length change. NULL if a changed base is
+# not in an exon (e.g. intronic part of a splice variant)
+apply_vcf_to_tx <- function(tm, pos, ref, alt) {
+  n <- nchar(ref); a <- nchar(alt)
+  b <- strsplit(tm$mrna, "", fixed = TRUE)[[1]]
+  if (n == a) {
+    gp <- pos:(pos + n - 1L); idx <- match(gp, tm$pos)
+    if (anyNA(idx)) return(NULL)
+    new <- if (tm$strand == "-") strsplit(dna_revcomp(alt), "")[[1]] else strsplit(alt, "")[[1]]
+    o <- order(idx); b[idx[o]] <- new
+    return(list(mrna = paste(b, collapse = ""), first = min(idx), n_del = 0L, ins = "", delta = 0L))
+  }
+  del_g <- if (n > 1) (pos + 1L):(pos + n - 1L) else integer()
+  ins <- if (a > 1) substring(alt, 2L) else ""
+  if (tm$strand == "-") ins <- if (nzchar(ins)) dna_revcomp(ins) else ""
+  di <- match(del_g, tm$pos); ai <- match(pos, tm$pos)
+  if (anyNA(di) || is.na(ai)) return(NULL)
+  # insertion point in mRNA order: after the anchor on +, before it on -
+  at <- if (tm$strand == "-") ai - 1L else ai
+  if (length(di)) { keep <- setdiff(seq_along(b), di); at <- at - sum(di <= at); b <- b[keep] }
+  b <- append(b, if (nzchar(ins)) strsplit(ins, "")[[1]] else character(), after = at)
+  first <- if (length(di)) min(di) else at + 1L
+  list(mrna = paste(b, collapse = ""), first = first, n_del = length(di), ins = ins, delta = nchar(ins) - length(di))
+}
+
+# consequence of a changed mRNA: new protein length, stop, NMD (stop codon ends > 50 nt before the last
+# exon-exon junction, shifted by the length change when the junction lies downstream of the change)
+mrna_consequence <- function(tm, mut_mrna, first, delta) {
+  wt_len <- (tm$cds_end - tm$cds_start + 1L) %/% 3L
+  tr <- translate_from(mut_mrna, tm$cds_start)
+  lj <- tm$last_junction
+  if (!is.na(lj) && lj >= first) lj <- lj + delta
+  nmd <- if (is.na(tr$stop)) NA else if (is.na(lj)) FALSE else (lj - (tr$stop + 2L)) > 50L
+  list(wt_aa = wt_len, mut_aa = nchar(tr$protein), stop = tr$stop, nmd = nmd,
+       outcome = if (is.na(tr$stop)) "no_stop_in_transcript" else if (nchar(tr$protein) < wt_len) "premature_stop"
+                 else if (nchar(tr$protein) > wt_len) "extended" else "same_length")
+}
+
 # ============================================================================
 # trinucleotide contexts / spectrum rescaling
 # ============================================================================
