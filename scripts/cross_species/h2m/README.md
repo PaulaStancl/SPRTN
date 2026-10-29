@@ -92,6 +92,15 @@ All outputs are under `<out_dir>/human_predictions/`. Column lists are in each s
 - **SV breakends** come from `linx.vis_sv_data.tsv`, the same columns `analysis/run_chromothripsis.R` uses. Chromothripsis regions (e.g. chr9p from that analysis) go in `sv.chromothripsis_regions`.
 - **The COSMIC Cancer Gene Census** needs a COSMIC login, so you download it yourself and set `cosmic_cgc` / `cosmic_cgc_version`. Without it, missense and promoter directions stay `unknown`.
 
+## Open issues
+
+- **Cross-species SBS96 rescaling is not literature-validated** (noted 2026-10-29). `05` rescales the human spectrum by the
+  mouse / human trinucleotide-frequency ratio. The arithmetic is the standard exome<->genome opportunity normalisation
+  (SigProfiler, deconstructSigs `exome2genome`), but no paper validating it for human -> mouse has been found; mouse
+  signature studies usually compare to COSMIC directly. Until resolved: report it as an opportunity correction, give the
+  cosine human vs rescaled (05 log), and run the mouse comparison in `11` against both the raw and the rescaled human
+  spectrum - if the conclusion is the same, the correction does not matter.
+
 ## Mouse modules (10-12, not written yet)
 
 Agreed design, to be implemented once the mouse data details are known:
