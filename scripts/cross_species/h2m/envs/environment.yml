@@ -11,6 +11,7 @@ dependencies:
   # R
   - r-base>=4.3
   - r-data.table
+  - r-r.utils                     # fread of .gz tables
   - r-yaml
   - r-jsonlite
   - r-httr
