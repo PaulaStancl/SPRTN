@@ -603,6 +603,45 @@ same_protein_change <- function(observed, expected) {
 }
 
 # ============================================================================
+# protein-level checks (check_class4.R)
+# ============================================================================
+
+# 'p.Arg250Trp' / 'p.(R250W)' / 'p.Lys120fs' -> list(aa = "R", pos = 250); NA for p.? / splice / empty
+parse_hgvsp <- function(x) {
+  m <- regmatches(x, regexec("^p\\.\\(?([A-Z][a-z]{2}|[A-Z*])([0-9]+)", fcoalesce(as.character(x), "")))
+  aa <- vapply(m, function(z) if (length(z) == 3) z[2] else NA_character_, "")
+  pos <- vapply(m, function(z) if (length(z) == 3) as.integer(z[3]) else NA_integer_, 0L)
+  aa <- fifelse(nchar(aa) == 3, unname(AA3[aa]), aa)
+  list(aa = aa, pos = pos)
+}
+
+# position hpos of the pattern (human) in a global alignment -> list(mouse_pos, mouse_aa, local_identity):
+# ap / as_ = aligned pattern / subject strings with '-' for gaps; local_identity = identical columns / all
+# columns within +/- flank columns of the position
+map_aligned_pos <- function(ap, as_, hpos, flank = 10L) {
+  a <- strsplit(ap, "", fixed = TRUE)[[1]]; s <- strsplit(as_, "", fixed = TRUE)[[1]]
+  col <- which(cumsum(a != "-") == hpos & a != "-")[1]
+  if (is.na(col)) return(list(mouse_pos = NA_integer_, mouse_aa = NA_character_, local_identity = NA_real_))
+  w <- max(1L, col - flank):min(length(a), col + flank)
+  list(mouse_pos = if (s[col] == "-") NA_integer_ else sum(s[seq_len(col)] != "-"),
+       mouse_aa = if (s[col] == "-") "-" else s[col],
+       local_identity = mean(a[w] == s[w] & a[w] != "-"))
+}
+
+# protein of one transcript from its CDS pieces: cds = start end strand frame (one row per CDS),
+# seqs = the matching genomic + strand sequences (character, same order as cds)
+cds_protein <- function(cds, seqs) {
+  o <- if (cds$strand[1] == "-") order(-cds$start) else order(cds$start)
+  s <- seqs[o]
+  if (cds$strand[1] == "-") s <- as.character(Biostrings::reverseComplement(Biostrings::DNAStringSet(s)))
+  dna <- paste(s, collapse = "")
+  fr <- suppressWarnings(as.integer(cds$frame[o][1])); if (is.na(fr)) fr <- 0L
+  dna <- substring(dna, fr + 1L)
+  dna <- substr(dna, 1L, nchar(dna) - nchar(dna) %% 3L)
+  as.character(Biostrings::translate(Biostrings::DNAString(dna), if.fuzzy.codon = "solve", no.init.codon = TRUE))
+}
+
+# ============================================================================
 # trinucleotide contexts / spectrum rescaling
 # ============================================================================
 

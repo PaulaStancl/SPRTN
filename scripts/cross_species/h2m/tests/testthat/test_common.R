@@ -204,3 +204,16 @@ test_that("orthologs_from_compara merges the human- and mouse-folder files", {
   expect_true(is.na(o[gene_id_h == "H3", gene_id_m]))                  # paralogs ignored, gene kept
   expect_equal(o[gene_id_h == "H2", symbol_m], "b")
 })
+
+test_that("parse_hgvsp, map_aligned_pos, cds_protein", {
+  p <- parse_hgvsp(c("p.Arg250Trp", "p.(Gly12Asp)", "p.Lys120fs", "p.?", NA, "p.R175H"))
+  expect_equal(p$aa, c("R", "G", "K", NA, NA, "R")); expect_equal(p$pos, c(250L, 12L, 120L, NA, NA, 175L))
+  # human MKRLE vs mouse MK-LE: R (pos 3) faces a gap; L (pos 4) is mouse pos 3
+  expect_equal(map_aligned_pos("MKRLE", "MK-LE", 3)$mouse_aa, "-")
+  expect_equal(map_aligned_pos("MKRLE", "MK-LE", 4)[c("mouse_pos", "mouse_aa")], list(mouse_pos = 3L, mouse_aa = "L"))
+  expect_equal(map_aligned_pos("MKRLE", "MKKLE", 3)$mouse_aa, "K")
+  # + strand: ATG AAA | CGT TAA -> MKR*; - strand pieces given as + strand sequence
+  expect_equal(cds_protein(data.table(start = c(1, 20), strand = "+", frame = "0"), c("ATGAAA", "CGTTAA")), "MKR*")
+  rc <- function(x) as.character(Biostrings::reverseComplement(Biostrings::DNAString(x)))
+  expect_equal(cds_protein(data.table(start = c(1, 20), strand = "-", frame = "0"), c(rc("CGTTAA"), rc("ATGAAA"))), "MKR*")
+})
