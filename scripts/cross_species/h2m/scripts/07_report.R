@@ -135,7 +135,7 @@ main <- function() {
   P <- paths(cfg)
   make_dirs(P)
   log <- make_logger("07_report", P)
-  hb <- cfg$h2m_mouse_build
+  hb <- cfg$primary_mouse_build      # main build for counterpart calls, event table, report
 
   sm <- rbindlist(lapply(list.files(P$summary, "\\.tsv$", full.names = TRUE), fread), use.names = TRUE, fill = TRUE)
   ov <- sm[layer %chin% names(LAYERS) & counterpart %chin% c("yes", "uncertain", "no"),

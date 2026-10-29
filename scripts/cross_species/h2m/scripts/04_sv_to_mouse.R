@@ -125,7 +125,7 @@ main <- function() {
     fus[, human_sv_class := sv_class(h5_chrom, h5_start, h5_strand, h3_chrom, h3_start, h3_strand)]
   }
 
-  hb <- cfg$h2m_mouse_build
+  hb <- cfg$primary_mouse_build      # main build for counterpart calls, event table, report
   out_files <- character(); sv_rows <- list()
   for (build in names(P$mouse)) {
     M <- P$mouse[[build]]

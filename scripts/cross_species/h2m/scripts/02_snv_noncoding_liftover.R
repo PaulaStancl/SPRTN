@@ -21,7 +21,7 @@
 #     <b>_in_ortholog_promoter <b>_in_ortholog_gene; counterpart
 #   expected_mouse_noncoding_multihits.tsv  every hit of multi-mapped variants
 #   summary/snv_noncoding.tsv
-# counterpart (H2M build): yes = mapped once with the same REF; uncertain = other REF or
+# counterpart (primary_mouse_build, GRCm38): yes = mapped once with the same REF; uncertain = other REF or
 # multi-mapped; no = unmapped.
 # ---------------------------------------------------------------------------
 source(file.path(dirname(normalizePath(sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)))), "common.R"))
@@ -118,7 +118,7 @@ main <- function() {
     log("%s: %s", build, paste(v[, .N, by = c(paste0(build, "_status"))][, paste0(get(paste0(build, "_status")), "=", N)], collapse = ", "))
   }
 
-  hb <- cfg$h2m_mouse_build
+  hb <- cfg$primary_mouse_build      # main build for counterpart calls, event table, report
   v[, counterpart := fcase(get(paste0(hb, "_status")) == "unmapped", "no",
                            get(paste0(hb, "_status")) == "mapped" & get(paste0(hb, "_ref_conserved")) %in% TRUE, "yes",
                            default = "uncertain")]

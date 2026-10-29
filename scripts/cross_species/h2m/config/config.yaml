@@ -37,6 +37,7 @@ mouse_builds:
   GRCm39: {ucsc: mm39, gtf_release: current}
   GRCm38: {ucsc: mm10, gtf_release: 102}
 h2m_mouse_build: GRCm39        # H2M models in GRCm39 only; GRCm38 coordinates by mm39ToMm10 liftOver
+primary_mouse_build: GRCm38    # main build for counterpart calls, event table, matrix, circos and report
 
 # ---- downloads ------------------------------------------------------------------
 max_download_gb: 5             # 00_resources stops (asks) above this unless --allow-large

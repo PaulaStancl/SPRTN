@@ -8,7 +8,7 @@
 # AMP, GAIN, DEL, LOH, SV, FUSION. A cell without events is
 #   neutral          the gene was assessed (in PURPLE's gene table, CN assessable) and has none
 #   not_assessable   it was not assessed
-# expected_mouse: the human codes when the gene has a 1:1 ortholog placed in the H2M build;
+# expected_mouse: the human codes when the gene has a 1:1 ortholog placed in primary_mouse_build (GRCm38);
 # "one2many:<codes>" for 1:many / many:many; no_ortholog / not_in_release / not_in_build when the
 # event has no possible mouse counterpart (its own category, never a discordance); neutral /
 # not_assessable as for the human column. LOH is predicted as LOH, but a later mouse call of LOH
@@ -28,7 +28,7 @@ main <- function() {
   P <- paths(cfg)
   make_dirs(P)
   log <- make_logger("06_build_matrix", P)
-  hb <- cfg$h2m_mouse_build
+  hb <- cfg$primary_mouse_build      # main build for counterpart calls, event table, report
 
   ev <- collect_gene_events(P)[!is.na(gene_id_h)]
   cn <- read_layer(P, "expected_mouse_cn_genes.tsv")

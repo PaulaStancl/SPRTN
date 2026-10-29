@@ -12,7 +12,7 @@
 #   snv_noncoding  TERT promoter / promoter / UTR / splice-region variants (02). Method liftOver.
 #                  confidence: high (single hit, REF conserved, in the ortholog's promoter or gene),
 #                  partial (single hit otherwise), ambiguous (multi-mapped), none (unmapped).
-#   cn / loh       per non-neutral (or LOH) human segment x mouse interval of the H2M build (03).
+#   cn / loh       per non-neutral (or LOH) human segment x mouse interval of primary_mouse_build (03).
 #                  Method ortholog + synteny block. mapped_fraction = fraction of the segment's genes
 #                  placed in mouse; confidence from cn_segment_mapping.tsv.
 #   sv             per disrupted gene (04). Method ortholog. confidence high (1:1 placed), ambiguous
@@ -40,7 +40,7 @@ main <- function() {
   P <- paths(cfg)
   make_dirs(P)
   log <- make_logger("06b_build_event_table", P)
-  hb <- cfg$h2m_mouse_build
+  hb <- cfg$primary_mouse_build      # main build for counterpart calls, event table, report
   builds <- names(P$mouse)
   other <- setdiff(builds, hb)
   rows <- list()
@@ -60,6 +60,8 @@ main <- function() {
     s[, mapping_confidence := fcase(prediction_status == "modelled_original" & homology_type == "ortholog_one2one", "high",
                                     prediction_status %chin% c("modelled_alternative", "modelled_effect_uncertain") & homology_type == "ortholog_one2one", "partial",
                                     prediction_status %like% "^modelled" , "ambiguous", default = "none")]
+    # modelled in GRCm39 but the position did not lift over to the main build -> partial
+    s[mapping_confidence == "high" & is.na(get(paste0("mouse_locus_", hb))), mapping_confidence := "partial"]
     mprot <- fcoalesce(fifelse(s$use == "same_protein", s$same_protein_hgvsp_m, s$same_dna_hgvsp_m), s$same_dna_hgvsc_m)
     s[, hypothesis := fcase(
       prediction_status %chin% c("no_ortholog", "not_in_release"), paste0("no mouse counterpart: ", gene_symbol_h, " has no mouse ortholog"),

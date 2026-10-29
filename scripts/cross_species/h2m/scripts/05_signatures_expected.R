@@ -93,9 +93,9 @@ main <- function() {
   }
   f3 <- write_tsv(sig, file.path(P$hp, "expected_signatures.tsv"), log)
 
-  sp <- spectra[[cfg$h2m_mouse_build]]
+  sp <- spectra[[cfg$primary_mouse_build]]
   cosv <- if (sum(sbs) > 0) sum(sp$human_prop * sp$expected_mouse_prop) / sqrt(sum(sp$human_prop^2) * sum(sp$expected_mouse_prop^2)) else NA_real_
-  log("cosine human vs expected mouse spectrum (%s): %.4f", cfg$h2m_mouse_build, cosv)
+  log("cosine human vs expected mouse spectrum (%s): %.4f", cfg$primary_mouse_build, cosv)
   write_summary(P, "signatures", rbind(srow("snvs_in_sbs96", sum(sbs), "yes"), srow("snvs_left_out", v[ok == FALSE, .N], "no"),
                                        srow("signatures_reported", nrow(sig), "info")), log)
   write_provenance(P, cfg, "05_signatures_expected", inputs = list(purple_somatic_vcf = vcf, sigs_allocation = f_sig),

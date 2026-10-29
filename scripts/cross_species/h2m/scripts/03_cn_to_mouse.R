@@ -216,7 +216,7 @@ main <- function() {
   }
 
   # ---- per-gene prediction -----------------------------------------------------------------
-  hb <- cfg$h2m_mouse_build
+  hb <- cfg$primary_mouse_build      # main build for counterpart calls, event table, report
   g[, prediction := fcase(homology %chin% c("no_ortholog", "not_in_release"), homology,
                           homology %chin% c("ortholog_one2many", "ortholog_many2many"), "one2many",
                           !get(paste0(hb, "_in_build")), "not_in_build", default = state)]

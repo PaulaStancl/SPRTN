@@ -82,6 +82,7 @@ All outputs are under `<out_dir>/human_predictions/`. Column lists are in each s
 - **Ensembl 110** is the pinned release, because H2M 1.0.3's bundled tables were built from GENCODE v44 / vM33, which is Ensembl 110. `--release latest` reruns the whole chain on the current release into its own folder, and `00` writes a per-gene ortholog diff between the two releases.
 - **H2M** is used only for its modelling engine (`model_batch`, `ver=38`):
   - Its mouse side is **GRCm39 only**; GRCm38 coordinates come from an mm39→mm10 liftOver.
+- **GRCm38 is the main mouse build** (`primary_mouse_build`, 2026-10-29, Paula): counterpart calls, summaries, event table, matrix, circos and report use GRCm38. GRCm39 coordinates stay in the tables as secondary columns. A coding SNV modelled in GRCm39 whose position does not lift over to GRCm38 gets mapping confidence `partial`.
   - Orthologs come from the Ensembl Compara homology files of the release (not BioMart: the archive BioMart returned HTTP 500), not H2M's own name table.
   - Transcripts are PAVE's transcript, otherwise the Ensembl canonical one.
   - Its annotation DBs are built from only the transcripts in use, and its genome is read lazily from the iGenomes GRCh38 FASTA (same coordinates as GRCh38_hmf, no masked regions). That avoids H2M's Dropbox downloads and whole genomes held in memory.
