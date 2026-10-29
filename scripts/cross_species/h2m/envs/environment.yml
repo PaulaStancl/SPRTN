@@ -22,6 +22,7 @@ dependencies:
   - r-testthat
   - bioconductor-rsamtools        # FASTA access (pulls GenomicRanges, IRanges, GenomeInfoDb)
   - bioconductor-biostrings       # trinucleotide counts
+  - bioconductor-pwalign          # pairwiseAlignment (check_class4.R)
   # command-line tools
   - bcftools
   - ucsc-liftover
