@@ -8,7 +8,8 @@
 #
 # in.tsv: label tx_id_h tx_id_m start_h end_h ref_seq_h alt_seq_h type_h (MAF-style, as for h2m_model.py).
 # Writes <outdir>/<label>.png per variant and status.tsv (label, h2m_class, plotted, message).
-# H2M's plot needs the mouse mutation position, so variants it cannot model (class 3-6) are not drawn.
+# visualization() is tried for every variant, also classes H2M did not model (3-6); status.tsv records
+# the outcome (a plot, no figure, or the error H2M raised).
 # ---------------------------------------------------------------------------
 import argparse
 import os
@@ -50,14 +51,12 @@ def main():
                             int(r.start_h), int(r.end_h), r.ref_seq_h, r.alt_seq_h, ty_h=r.type_h, ver=38,
                             show_sequence=True)
             cls = res[0].get("class")
-            if not res[0].get("status") and cls not in (0, 1, 2):
-                msg = f"H2M could not draw: class {cls} ({res[0].get('statement')}) - no mouse position"
-            else:
-                plt.close("all")
-                plt.show = lambda *x, **k: plt.savefig(png, dpi=130, bbox_inches="tight")
-                h2m.visualization(res, flank_size=a.flank, print_size=a.print_size)
-                plotted = png.exists()
-                msg = "ok" if plotted else "visualization returned no figure"
+            # always try, also for classes H2M did not model, and record what happens
+            plt.close("all")
+            plt.show = lambda *x, **k: plt.savefig(png, dpi=130, bbox_inches="tight")
+            h2m.visualization(res, flank_size=a.flank, print_size=a.print_size)
+            plotted = png.exists()
+            msg = "ok" if plotted else f"visualization returned no figure (class {cls})"
         except Exception as e:  # one failing variant must not stop the others
             msg = f"error: {type(e).__name__}: {e}"
         plt.close("all")
