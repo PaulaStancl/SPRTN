@@ -84,6 +84,9 @@ snv:
     - {gene: PIK3CA, chrom: chr3,  pos: 179234297, ref: A, alt: G, protein: H1047R, expected_mouse: H1047R}
     - {gene: BRAF,   chrom: chr7,  pos: 140753336, ref: A, alt: T, protein: V600E,  expected_mouse: V637E}
 
+report:
+  circos_min_block_genes: 5    # synteny blocks with fewer 1:1 orthologs are not drawn in the circos plot
+
 # ---- optional inputs ----------------------------------------------------------------
 # SigProfilerMatrixGenerator SBS96 of the same SAGE set, for a cross-check in 05
 sbs96_reference: "{results_base}/analysis/oncoanalyser/signatures/sigprofiler/matrix_generator/output/SBS/RJALS.SBS96.all"

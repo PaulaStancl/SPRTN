@@ -27,7 +27,9 @@
 # Input   <oncoanalyser>/purple/*.purple.cnv.gene.tsv, *.purple.cnv.somatic.tsv, *.purple.purity.tsv
 # Output  human_predictions/
 #   expected_mouse_cn.<build>.bed   #chrom start end name direction states source_human_segments genes
-#                                   human_genes block_ids n_genes confidence   (0-based, half-open)
+#                                   human_genes block_ids n_genes confidence human_locus (0-based, half-open;
+#                                   human_locus = span of the interval's human genes, GRCh38)
+#   synteny_blocks.<build>.tsv      block h_chrom h_start h_end m_chrom m_start m_end n_genes orientation
 #   expected_mouse_cn_genes.tsv     every PURPLE gene: CN, state, direction, partial, loh, segment,
 #                                   homology, mouse gene, per-build coords / block / in_build,
 #                                   prediction (state, or no_ortholog / not_in_release / one2many /
@@ -132,6 +134,13 @@ main <- function() {
     oo[, block := synteny_blocks(oo, cfg$synteny$max_rank_jump, prefix = paste0(build, "_B"))]
     g[oo, on = "gene_id_m", (bcol) := i.block]
     log("%s: %d synteny blocks from %d 1:1 orthologs", build, uniqueN(oo$block), nrow(oo))
+    # block extents in both species (07: circos background); orientation + when human and mouse order agree
+    oo[hg, on = c(gene_id_h = "gene_id"), h_end := i.end]
+    oo[mg, on = c(gene_id_m = "gene_id"), m_end := i.end]
+    sb <- oo[, .(h_chrom = h_chrom[1], h_start = min(h_start), h_end = max(h_end), m_chrom = m_chrom[1],
+                 m_start = min(m_start), m_end = max(m_end), n_genes = .N,
+                 orientation = if (.N > 1 && isTRUE(cor(h_start, m_start, method = "spearman") < 0)) "-" else "+"), by = block]
+    out_files <- c(out_files, write_tsv(sb[order(chrom_order(m_chrom), m_start)], file.path(P$hp, sprintf("synteny_blocks.%s.tsv", build)), log))
 
     # ---- mapping coverage per human segment ------------------------------------------------
     lo <- run_liftover(bins, M$chain, cfg$liftover$min_match, P$tmp, paste0("cnbins_", build))
@@ -170,13 +179,25 @@ main <- function() {
     split_map <- function(s, f) vapply(strsplit(s, ",", fixed = TRUE), f, "")
     iv[, states := fifelse(direction == "LOH", "LOH", split_map(genes, function(x) paste(sort(unique(state_of[x])), collapse = ",")))]
     iv[, confidence := split_map(segments, function(x) worst_conf(fcoalesce(unname(conf_of[x]), "none")))]
+    # human span of each interval's genes (07: circos links); majority chromosome if they differ
+    hpos <- hg[, .(gene_id, chrom, start, end)]
+    iv[, c("human_chrom", "human_start", "human_end") := {
+      sp <- lapply(strsplit(human_genes, ",", fixed = TRUE), function(x) {
+        h <- hpos[gene_id %chin% x]
+        if (!nrow(h)) return(list(NA_character_, NA_real_, NA_real_))
+        ch <- names(which.max(table(h$chrom)))
+        list(ch, min(h[chrom == ch, start]), max(h[chrom == ch, end]))
+      })
+      list(vapply(sp, `[[`, "", 1), vapply(sp, `[[`, 0, 2), vapply(sp, `[[`, 0, 3))
+    }]
     iv[, genes := split_map(genes, function(x) paste(fcoalesce(unname(sym_m[x]), x), collapse = ","))]
     iv[, human_genes := split_map(human_genes, function(x) paste(fcoalesce(unname(sym_h[x]), x), collapse = ","))]
     setorder(iv, chrom, start)
     iv <- iv[order(chrom_order(chrom), start)]
     iv[, name := sprintf("%s_CN%04d", build, seq_len(.N))]
     bed <- iv[, .(`#chrom` = chrom, start = start - 1L, end, name, direction, states, source_human_segments = segments,
-                  genes, human_genes, block_ids = blocks, n_genes, confidence)]
+                  genes, human_genes, block_ids = blocks, n_genes, confidence,
+                  human_locus = fifelse(is.na(human_chrom), NA_character_, sprintf("%s:%.0f-%.0f", human_chrom, human_start, human_end)))]
     out_files <- c(out_files, write_tsv(bed, file.path(P$hp, sprintf("expected_mouse_cn.%s.bed", build)), log))
     log("%s intervals: %s", build, paste(iv[, .N, by = direction][, paste0(direction, "=", N)], collapse = ", "))
 

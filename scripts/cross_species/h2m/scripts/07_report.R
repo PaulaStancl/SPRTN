@@ -6,7 +6,9 @@
 # Sections: per layer, how many human events have a predicted mouse counterpart, how many are
 # uncertain (1:many, multi-mapped, LOH in inbred mice, H2M class 2) and how many cannot have one
 # (no ortholog, not modelable, unmapped) - from human_predictions/summary/*.tsv; H2M validation;
-# expected mouse CN map (ideogram per build, from expected_mouse_cn.<build>.bed); CN liftOver
+# human CN map (PURPLE segments) and expected mouse CN map per build (expected_mouse_cn.<build>.bed);
+# circos plot human -> mouse (synteny blocks as grey ribbons, CN regions as coloured ribbons; needs the
+# circlize package, skipped with a warning if it fails); CN liftOver
 # cross-check and per-segment mapping confidence; the human events with no possible mouse
 # counterpart (event_table.tsv, mapping_confidence none); ortholog differences between Ensembl
 # releases; software and reference versions (provenance.json).
@@ -51,22 +53,80 @@ chrom_lengths <- function(M) {
   d[chrom %chin% c(paste0("chr", 1:19), "chrX", "chrY")]
 }
 
-ideogram <- function(bed, lens, build) {
+CN_COLS <- c(gain = "#c0392b", loss = "#2471a3", LOH = "#b7950b")
+
+human_lengths <- function(cfg, P) {
+  fai <- paste0(cfg$human_fasta, ".fai")
+  d <- if (file.exists(fai)) fread(fai, header = FALSE, select = 1:2, col.names = c("chrom", "len"))
+       else load_genes(P$human_genes)[, .(len = max(end)), by = chrom]
+  d[, chrom := norm_chrom(chrom)][chrom %chin% c(paste0("chr", 1:22), "chrX", "chrY")]
+}
+
+# d: chrom start end direction (gain / loss / LOH); LOH drawn as a second, thinner track
+ideogram <- function(d, lens, title) {
   lens <- copy(lens)[, chrom := factor(chrom, levels = rev(lens$chrom[order(chrom_order(lens$chrom))]))]
-  b <- copy(bed)
-  setnames(b, "#chrom", "chrom")
-  b <- b[chrom %chin% as.character(lens$chrom)]
+  b <- copy(d)[chrom %chin% as.character(lens$chrom)]
   b[, chrom := factor(chrom, levels = levels(lens$chrom))]
-  b[, track := fifelse(direction == "LOH", 0.28, 0)]
+  b[, `:=`(y0 = as.integer(chrom) + fifelse(direction == "LOH", 0.22, -0.18), y1 = as.integer(chrom) + fifelse(direction == "LOH", 0.36, 0.18))]
   ggplot() +
     geom_rect(data = lens, aes(xmin = 0, xmax = len / 1e6, ymin = as.integer(chrom) - 0.18, ymax = as.integer(chrom) + 0.18),
               fill = "grey92", colour = "grey70", linewidth = 0.2) +
-    geom_rect(data = b, aes(xmin = start / 1e6, xmax = pmax(end, start + 2e5) / 1e6,
-                            ymin = as.integer(chrom) - 0.18 + track, ymax = as.integer(chrom) + 0.18 + track, fill = direction)) +
-    scale_fill_manual(values = c(gain = "#c0392b", loss = "#2471a3", LOH = "#7d6608"), drop = FALSE, name = NULL) +
+    geom_rect(data = b, aes(xmin = start / 1e6, xmax = pmax(end, start + 2e5) / 1e6, ymin = y0, ymax = y1, fill = direction)) +
+    scale_fill_manual(values = CN_COLS, drop = FALSE, name = NULL) +
     scale_y_continuous(breaks = seq_along(levels(lens$chrom)), labels = levels(lens$chrom), expand = c(0.01, 0.01)) +
-    labs(x = "Mb", y = NULL, title = paste("Expected mouse CN -", build)) +
+    labs(x = "Mb", y = NULL, title = title) +
     theme_minimal(base_size = 10) + theme(panel.grid.major.y = element_blank(), legend.position = "top")
+}
+
+# human PURPLE segments (non-neutral + LOH) from cn_segment_mapping.tsv
+human_segments <- function(segm) {
+  s <- unique(segm, by = "segment")
+  s[, c("chrom", "start", "end") := tstrsplit(segment, "[:-]", type.convert = TRUE)]
+  rbind(s[direction %chin% c("gain", "loss"), .(chrom, start, end, direction)],
+        s[truthy(loh), .(chrom, start, end, direction = "LOH")])
+}
+
+# circos: human chr1-22,X (clockwise) facing mouse chr1-19,X (mirrored); outer ring chromosomes, inner ring
+# CN (human PURPLE segments / expected mouse intervals; LOH inner half); grey ribbons = synteny blocks with
+# >= min_genes 1:1 orthologs, coloured ribbons = human CN region -> expected mouse interval
+circos_png <- function(f, hseg, bed, sb, hlens, mlens, build, min_genes) {
+  hl <- hlens[chrom %chin% c(paste0("chr", 1:22), "chrX")][order(chrom_order(chrom))]
+  ml <- mlens[chrom %chin% c(paste0("chr", 1:19), "chrX")][order(-chrom_order(chrom))]
+  hs <- function(ch) paste0("h", sub("^chr", "", ch)); ms <- function(ch) paste0("m", sub("^chr", "", ch))
+  sec <- data.frame(chr = factor(c(hs(hl$chrom), ms(ml$chrom)), levels = c(hs(hl$chrom), ms(ml$chrom))),
+                    start = 0, end = c(hl$len, ml$len))
+  args <- list(f, width = 2200, height = 2200, res = 250)
+  if (capabilities("cairo")) args$type <- "cairo"
+  do.call(png, args)
+  on.exit({ circlize::circos.clear(); dev.off() }, add = TRUE)
+  circlize::circos.clear()
+  circlize::circos.par(start.degree = 90, gap.after = c(rep(0.6, nrow(hl) - 1), 6, rep(0.6, nrow(ml) - 1), 6),
+                       cell.padding = c(0, 0, 0, 0), track.margin = c(0.004, 0.004))
+  circlize::circos.genomicInitialize(sec, plotType = NULL)
+  circlize::circos.track(ylim = c(0, 1), track.height = 0.06, bg.border = NA, panel.fun = function(x, y) {
+    s <- circlize::CELL_META$sector.index; xl <- circlize::CELL_META$xlim
+    circlize::circos.rect(xl[1], 0, xl[2], 1, col = if (startsWith(s, "h")) "grey75" else "#d8c3a0", border = NA)
+    circlize::circos.text(mean(xl), 0.5, sub("^[hm]", "", s), cex = 0.5, facing = "clockwise", niceFacing = TRUE)
+  })
+  cn <- rbind(hseg[, .(sector = hs(chrom), start, end, direction)], bed[, .(sector = ms(chrom), start, end, direction)])
+  cn <- cn[sector %chin% levels(sec$chr)]
+  circlize::circos.track(ylim = c(0, 2), track.height = 0.07, bg.border = "grey85", panel.fun = function(x, y) {
+    d <- cn[sector == circlize::CELL_META$sector.index]
+    if (nrow(d)) circlize::circos.rect(d$start, fifelse(d$direction == "LOH", 0, 1), pmax(d$end, d$start + 3e5),
+                                       fifelse(d$direction == "LOH", 1, 2), col = CN_COLS[d$direction], border = NA)
+  })
+  bg <- sb[n_genes >= min_genes & h_chrom %chin% hl$chrom & m_chrom %chin% ml$chrom]
+  if (nrow(bg)) circlize::circos.genomicLink(bg[, .(hs(h_chrom), h_start, h_end)], bg[, .(ms(m_chrom), m_start, m_end)],
+                                             col = adjustcolor("grey55", 0.18), border = NA)
+  lk <- bed[!is.na(human_locus)]
+  lk[, c("hc", "hs0", "he0") := tstrsplit(human_locus, "[:-]", type.convert = TRUE)]
+  lk <- lk[hc %chin% hl$chrom & chrom %chin% ml$chrom]
+  if (nrow(lk)) circlize::circos.genomicLink(lk[, .(hs(hc), hs0, he0)], lk[, .(ms(chrom), start, end)],
+                                             col = adjustcolor(CN_COLS[lk$direction], 0.7), border = NA)
+  title(sprintf("Human (grey, GRCh38) -> mouse (tan, %s)", build), cex.main = 0.9)
+  legend("bottomleft", fill = c(CN_COLS, adjustcolor("grey55", 0.4)), border = NA, bty = "n", cex = 0.75,
+         legend = c("gain", "loss", "LOH", sprintf("synteny block (>= %d genes)", min_genes)))
+  invisible(f)
 }
 
 main <- function() {
@@ -99,24 +159,44 @@ main <- function() {
   sec$val <- paste0("<h2>H2M validation (known hotspots, run before the patient's variants)</h2>",
                     html_table(if (is.null(val)) NULL else val[, intersect(c("gene", "protein", "expected_mouse", "hgvsp_m_h2m", "h2m_class", "ref_in_fasta", "pass"), names(val)), with = FALSE]))
 
-  plots <- character()
+  segm <- read_layer(P, "cn_segment_mapping.tsv")
+  hseg <- if (is.null(segm)) data.table(chrom = character(), start = numeric(), end = numeric(), direction = character()) else human_segments(segm[build == hb])
+  hlens <- human_lengths(cfg, P)
+  plots <- sprintf("<img alt='human CN' src='%s'/>", png_uri(ideogram(hseg, hlens, "Human tumour CN (PURPLE segments, GRCh38)"), 9, 6.5))
+  beds <- list()
   for (b in names(P$mouse)) {
     f <- file.path(P$hp, sprintf("expected_mouse_cn.%s.bed", b))
     if (!file.exists(f)) next
     bed <- fread(f)
-    lens <- chrom_lengths(P$mouse[[b]])
-    plots <- c(plots, sprintf("<img alt='expected mouse CN %s' src='%s'/>", b, png_uri(ideogram(bed, lens, b), 9, 6)),
-               html_table(bed[, .(interval = paste0(`#chrom`, ":", start + 1, "-", end), direction, states, n_genes, confidence,
+    setnames(bed, "#chrom", "chrom")
+    beds[[b]] <- bed
+    plots <- c(plots, sprintf("<img alt='expected mouse CN %s' src='%s'/>", b, png_uri(ideogram(bed, chrom_lengths(P$mouse[[b]]), paste("Expected mouse CN -", b)), 9, 6)),
+               html_table(bed[, .(interval = paste0(chrom, ":", start + 1, "-", end), direction, states, n_genes, confidence,
+                                 human_locus = if ("human_locus" %chin% names(bed)) human_locus else NA_character_,
                                  genes = substr(genes, 1, 120))], 60))
   }
-  sec$cn <- paste0("<h2>Expected mouse CN map</h2><p>Merged 1:1-ortholog intervals; LOH drawn as a second track.</p>",
+  circ <- "<p class='muted'>circos plot not drawn</p>"
+  sbf <- file.path(P$hp, sprintf("synteny_blocks.%s.tsv", hb))
+  if (!is.null(beds[[hb]]) && file.exists(sbf) && "human_locus" %chin% names(beds[[hb]])) {
+    circ <- tryCatch({
+      f <- tempfile(fileext = ".png")
+      circos_png(f, hseg, beds[[hb]], fread(sbf), hlens, chrom_lengths(P$mouse[[hb]]), hb, cfg$report$circos_min_block_genes)
+      sprintf("<img alt='circos human to mouse' src='%s'/>", base64enc::dataURI(file = f, mime = "image/png"))
+    }, error = function(e) { log("circos plot failed: %s", conditionMessage(e), level = "WARNING"); sprintf("<p class='muted'>circos plot failed: %s</p>", esc(conditionMessage(e))) })
+  } else log("circos plot skipped: rerun 03 (needs synteny_blocks.%s.tsv and human_locus in the BED)", hb, level = "WARNING")
+  sec$cn <- paste0("<h2>Copy number: human tumour and expected mouse</h2>",
+                   "<p>Human: PURPLE segments, gain / loss relative to ploidy, LOH as the upper thin track. ",
+                   "Mouse: the same events moved through 1:1 orthologs and merged into intervals per build.</p>",
                    paste(plots, collapse = ""),
+                   "<h3>Human -> mouse (", esc(hb), ")</h3>",
+                   "<p>Outer ring: human (grey) and mouse (tan) chromosomes. Inner ring: CN (outer half gain / loss, inner half LOH). ",
+                   "Grey ribbons: conserved synteny blocks. Coloured ribbons: where each human CN region is expected in mouse.</p>", circ,
                    "<h3>Direct liftOver cross-check</h3>", html_table(read_layer(P, "cn_liftover_crosscheck.tsv")),
                    "<h3>Mapping confidence of human segments (", esc(hb), ")</h3>",
-                   html_table({ s <- read_layer(P, "cn_segment_mapping.tsv"); if (is.null(s)) NULL else s[build == hb, .N, by = .(direction, confidence)][order(direction, confidence)] }),
+                   html_table(if (is.null(segm)) NULL else segm[build == hb, .N, by = .(direction, confidence)][order(direction, confidence)]),
                    "<h3>Human segments split across mouse chromosomes</h3>",
-                   html_table({ s <- read_layer(P, "cn_segment_mapping.tsv"); if (is.null(s)) NULL else s[build == hb & split_across_chromosomes == TRUE & direction != "neutral",
-                                                                                                   .(segment, state, n_genes, mouse_chroms, n_blocks, confidence)] }))
+                   html_table(if (is.null(segm)) NULL else segm[build == hb & split_across_chromosomes == TRUE & direction != "neutral",
+                                                                 .(segment, state, n_genes, mouse_chroms, n_blocks, confidence)]))
 
   et <- read_layer(P, "event_table.tsv")
   sec$none <- paste0("<h2>Human events with no possible mouse counterpart</h2>",

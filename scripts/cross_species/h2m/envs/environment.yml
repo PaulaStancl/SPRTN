@@ -18,6 +18,7 @@ dependencies:
   - r-digest
   - r-ggplot2
   - r-base64enc
+  - r-circlize                    # circos plot in 07
   - r-testthat
   - bioconductor-rsamtools        # FASTA access (pulls GenomicRanges, IRanges, GenomeInfoDb)
   - bioconductor-biostrings       # trinucleotide counts
