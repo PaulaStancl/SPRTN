@@ -33,13 +33,15 @@ load_cgc <- function(path, log) {
   }
   if (!file.exists(path)) stop("cosmic_cgc not found: ", path, call. = FALSE)
   d <- fread(path, colClasses = "character")
-  need_cols(d, c("Gene Symbol", "Role in Cancer"), "COSMIC CGC")
-  syn <- if ("Synonyms" %chin% names(d)) fcoalesce(d$Synonyms, "") else rep("", nrow(d))
+  # website export ('Gene Symbol', 'Role in Cancer', ...) or COSMIC download file (GENE_SYMBOL, ROLE_IN_CANCER, ...)
+  setnames(d, gsub("[^a-z]", "", tolower(names(d))))
+  need_cols(d, c("genesymbol", "roleincancer"), "COSMIC CGC (Gene Symbol / Role in Cancer)")
+  syn <- if ("synonyms" %chin% names(d)) fcoalesce(d$synonyms, "") else rep("", nrow(d))
   m <- regexpr("ENSG[0-9]+", syn)
   ensg <- rep(NA_character_, length(syn))
   ensg[m > 0] <- regmatches(syn, m)
-  data.table(symbol = d$`Gene Symbol`, ensg = ensg,
-             cgc_role = d$`Role in Cancer`, cgc_tier = if ("Tier" %chin% names(d)) d$Tier else NA_character_)
+  data.table(symbol = d$genesymbol, ensg = ensg,
+             cgc_role = d$roleincancer, cgc_tier = if ("tier" %chin% names(d)) d$tier else NA_character_)
 }
 
 # pathway -> all top-level ancestors (pathways without a parent)
