@@ -25,7 +25,8 @@
 #     h2m_class h2m_statement n_alternatives
 #     same_dna_<build>_{chrom,start,end,ref,alt} same_dna_hgvsc_m same_dna_hgvsp_m   (H2M "_ori")
 #     same_protein_<build>_{chrom,start,end,ref,alt} same_protein_hgvsc_m same_protein_hgvsp_m
-#     alternatives_hgvsp_m uncertain_effect uncertain_reason prediction_status counterpart
+#     alternatives_hgvsc_m alternatives_hgvsp_m (all H2M routes, ';'; class 1 = same protein via other codons;
+#     at most snv.h2m_max_alternative) uncertain_effect uncertain_reason prediction_status counterpart
 #   h2m_raw.tsv, h2m_failed.tsv   H2M output as returned (all alternatives) / inputs it rejected
 #   h2m_validation.tsv            the validation variants with H2M's answer and PASS/FAIL
 #   summary/snv_coding.tsv
@@ -122,7 +123,10 @@ main <- function() {
   log("H2M: %d result rows, %d inputs failed", nrow(raw), length(failed))
 
   first <- raw[order(index)][, .SD[1], by = index]
-  alts <- raw[, .(n_alternatives = .N, alternatives_hgvsp_m = paste(unique(na.omit(HGVSp_m)), collapse = ";")), by = index]
+  # each H2M row of a variant is one modelling route: for class 1 the alternatives give the same protein
+  # change through different codons, so their nucleotide changes (HGVSc_m) are what differs
+  alts <- raw[, .(n_alternatives = .N, alternatives_hgvsc_m = paste(unique(na.omit(HGVSc_m)), collapse = ";"),
+                  alternatives_hgvsp_m = paste(unique(na.omit(HGVSp_m)), collapse = ";")), by = index]
 
   # ---- validation verdict ---------------------------------------------------------------------
   val[first, on = "index", `:=`(h2m_class = i.class, hgvsp_h_h2m = i.HGVSp_h, hgvsp_m_h2m = i.HGVSp_m)]
@@ -148,7 +152,8 @@ main <- function() {
                               same_protein_chrom = i.chr_m, same_protein_start = i.start_m, same_protein_end = i.end_m,
                               same_protein_ref = i.ref_seq_m, same_protein_alt = i.alt_seq_m,
                               same_protein_hgvsc_m = i.HGVSc_m, same_protein_hgvsp_m = i.HGVSp_m)]
-  x[alts, on = "index", `:=`(n_alternatives = i.n_alternatives, alternatives_hgvsp_m = i.alternatives_hgvsp_m)]
+  x[alts, on = "index", `:=`(n_alternatives = i.n_alternatives, alternatives_hgvsc_m = i.alternatives_hgvsc_m,
+                                 alternatives_hgvsp_m = i.alternatives_hgvsp_m)]
   for (tag in c("same_dna", "same_protein")) {
     old <- paste0(tag, "_", c("chrom", "start", "end", "ref", "alt"))
     if (all(old %chin% names(x))) setnames(x, old, paste0(tag, "_", hb, "_", c("chrom", "start", "end", "ref", "alt")))
@@ -189,7 +194,7 @@ main <- function() {
             "biallelic", "homology_type", "n_mouse", "gene_id_m", "symbol_m", "perc_id_h_to_m", "perc_id_m_to_h",
             "tx_h", "tx_m", "h2m_class", "h2m_statement", "n_alternatives")
   mid <- sort(grep("^same_(dna|protein)_", names(x), value = TRUE))
-  tail <- c("alternatives_hgvsp_m", "uncertain_effect", "uncertain_reason", "prediction_status", "counterpart")
+  tail <- c("alternatives_hgvsc_m", "alternatives_hgvsp_m", "uncertain_effect", "uncertain_reason", "prediction_status", "counterpart")
   out <- x[order(chrom_order(chrom), pos, variant_id, gene_id_m), intersect(c(lead, mid, tail), names(x)), with = FALSE]
   f <- write_tsv(out, file.path(P$hp, "expected_mouse_snv.tsv"), log)
 

@@ -2,7 +2,7 @@
 # check_class4.R - are H2M class 4 calls ("mutated sequences are not identical") real, or an
 # artefact of H2M's alignment / transcript choice? Run after 01.
 #
-#   Rscript scripts/check_class4.R [--config ...] [--release ...] [--all-classes]
+#   Rscript scripts/check_class4.R [--config ...] [--release ...] [--all-classes] [--h2m-plots]
 #
 # H2M aligns the human and mouse canonical proteins with pairwise2.globalxx (match +1, no mismatch or
 # gap penalty) and calls class 4 when the mutated residue(s) are not identical in that alignment. Here,
@@ -18,10 +18,13 @@
 #      confirmed_differs (a different residue in every isoform), not_protein_level (no HGVSp: splice /
 #      non-coding), hgvsp_mismatch.
 # --all-classes checks every modelled variant, not only class 4 (a sanity run of the method).
+# --h2m-plots adds H2M's own result plot (h2m_visualize.py: model(show_sequence=True) + visualization(), as in
+# the H2M tutorial) for the checked variants and for every modelled PURPLE-reported / driver-gene / hotspot
+# variant. H2M can only draw variants it modelled (class 0-2); for class 4 the page says why not.
 #
 # Input   human_predictions/expected_mouse_snv.tsv, release GTFs (00), human_fasta, GRCm39 FASTA
 # Output  human_predictions/class4_check.tsv   variant_id gene_symbol_h hgvsp_h pave_coding_effect
-#           h2m_class human_aa protein_pos human_aa_check symbol_m tx_m mouse_pos_canonical
+#           h2m_class human_aa protein_pos human_aa_check gene_id_m symbol_m tx_m mouse_pos_canonical
 #           mouse_aa_canonical local_identity_canonical context_h context_m_canonical
 #           n_mouse_isoforms best_isoform mouse_aa_best verdict
 #         human_predictions/class4_alignments.html  per variant: +/-20 aa of the H2M-style alignment and the
@@ -89,7 +92,7 @@ ctx <- function(p, pos, k = 5L) if (is.na(pos)) NA_character_ else
   paste0(substr(p, max(1L, pos - k), pos - 1L), "[", substr(p, pos, pos), "]", substr(p, pos + 1L, pos + k))
 
 main <- function() {
-  a <- parse_cli("all-classes")
+  a <- parse_cli(c("all-classes", "h2m-plots"))
   cfg <- load_config(a$config, a$release)
   P <- paths(cfg)
   make_dirs(P)
@@ -115,7 +118,7 @@ main <- function() {
     r <- x[i]
     out <- data.table(variant_id = r$variant_id, gene_symbol_h = r$gene_symbol_h, hgvsp_h = r$hgvsp_h,
                       pave_coding_effect = r$pave_coding_effect, h2m_class = r$h2m_class, human_aa = r$human_aa,
-                      protein_pos = r$protein_pos, human_aa_check = NA, symbol_m = r$symbol_m, tx_m = r$tx_m,
+                      protein_pos = r$protein_pos, human_aa_check = NA, gene_id_m = r$gene_id_m, symbol_m = r$symbol_m, tx_m = r$tx_m,
                       mouse_pos_canonical = NA_integer_, mouse_aa_canonical = NA_character_, local_identity_canonical = NA_real_,
                       context_h = NA_character_, context_m_canonical = NA_character_, n_mouse_isoforms = 0L,
                       best_isoform = NA_character_, mouse_aa_best = NA_character_, verdict = NA_character_)
@@ -154,6 +157,40 @@ main <- function() {
   }))
   if (!"html" %chin% names(res)) res[, html := NA_character_]
   f <- write_tsv(res[, !"html"], file.path(P$hp, "class4_check.tsv"), log)
+  # ---- H2M's own plot (tutorial: model(show_sequence=True) + visualization) ------------------------------
+  # for the checked variants (class 4: H2M cannot draw, the message says so) and the modelled driver variants
+  res[, h2m_plot := NA_character_]
+  drv_html <- character()
+  if (isTRUE(a$h2m_plots)) {
+    lab <- function(d) gsub("[^A-Za-z0-9]+", "_", paste(d$variant_id, d$gene_id_m))
+    drv <- snv[h2m_class %in% 0:2 & !is.na(gene_id_m) & (truthy(reported) | truthy(purple_driver_gene) | truthy(hotspot))]
+    sel <- unique(rbind(x[, .(variant_id, gene_id_m, gene_symbol_h, hgvsp_h, pos, ref, alt, tx_h, tx_m, set = "checked")],
+                        drv[, .(variant_id, gene_id_m, gene_symbol_h, hgvsp_h, pos, ref, alt, tx_h, tx_m, set = "driver")]),
+                  by = c("variant_id", "gene_id_m"))[!is.na(tx_h) & !is.na(tx_m)]
+    sel[, label := lab(sel)]
+    vin <- cbind(sel[, .(label, tx_id_h = tx_h, tx_id_m = tx_m)], vcf_to_maf(as.integer(sel$pos), sel$ref, sel$alt))
+    pdir <- file.path(P$hp, "h2m_plots"); fin <- file.path(P$tmp, "h2m_viz_input.tsv"); fst <- file.path(pdir, "status.tsv")
+    write_tsv(vin, fin, log)
+    py <- if (is.null(cfg$python)) "python" else cfg$python
+    args <- c(file.path(H2M_SCRIPTS, "h2m_visualize.py"), "--input", fin, "--outdir", pdir, "--status", fst,
+              "--human-fasta", cfg$human_fasta, "--mouse-fasta", M$fasta, "--human-gtf", P$human_gtf, "--mouse-gtf", M$gtf,
+              "--workdir", file.path(P$tmp, "h2m_viz"))
+    log("H2M plots for %d variants", nrow(vin))
+    if (system2(py, shQuote(args)) != 0) log("h2m_visualize.py failed - no H2M plots", level = "WARNING")
+    st <- if (file.exists(fst)) fread(fst) else data.table(label = character(), plotted = logical(), message = character())
+    plot_html <- function(l) {
+      k <- match(l, st$label)
+      if (is.na(k)) return("<p class='v'>no H2M plot</p>")
+      png <- file.path(pdir, paste0(l, ".png"))
+      if (isTRUE(st$plotted[k]) && file.exists(png))
+        sprintf("<div class='al'><b>H2M visualization</b><br><img style='max-width:100%%' src='%s'/></div>", base64enc::dataURI(file = png, mime = "image/png"))
+      else sprintf("<p class='v'>H2M visualization: %s</p>", st$message[k])
+    }
+    res[, h2m_plot := vapply(lab(res), plot_html, "")]
+    d <- sel[set == "driver"]
+    drv_html <- vapply(seq_len(nrow(d)), function(i) sprintf("<h2>%s %s</h2>%s", d$gene_symbol_h[i], fcoalesce(d$hgvsp_h[i], ""), plot_html(d$label[i])), "")
+  }
+
   fh <- file.path(P$hp, "class4_alignments.html")
   css <- "body{font:14px system-ui,sans-serif;max-width:1100px;margin:auto;padding:16px}pre{font:13px/1.35 ui-monospace,Menlo,monospace;overflow-x:auto}
 .id{background:#d4efdf}.mm{background:#fad7a0}.gap{color:#999;background:#eee}.var{outline:2px solid #c0392b;font-weight:bold}
@@ -163,14 +200,18 @@ main <- function() {
     "<h2>%s %s <span class='v'>%s</span></h2><p>%s | %s | H2M class %s | human %s%s -> mouse (H2M transcript) %s%s, local identity %s</p>%s",
     gene_symbol_h, fcoalesce(hgvsp_h, ""), verdict, variant_id, fcoalesce(pave_coding_effect, ""), h2m_class,
     fcoalesce(human_aa, "?"), fcoalesce(as.character(protein_pos), "?"), fcoalesce(mouse_aa_canonical, "?"),
-    fcoalesce(as.character(mouse_pos_canonical), ""), fcoalesce(as.character(local_identity_canonical), "NA"), fcoalesce(html, ""))), "")
+    fcoalesce(as.character(mouse_pos_canonical), ""), fcoalesce(as.character(local_identity_canonical), "NA"),
+    paste0(fcoalesce(html, ""), fcoalesce(h2m_plot, "")))), "")
   writeLines(c("<!doctype html><html><head><meta charset='utf-8'><title>H2M class 4 alignments</title><style>", css, "</style></head><body>",
                "<h1>H2M class 4 - alignment check</h1>",
                "<p>Green = identical, orange = different amino acid, grey = gap, red box = the mutated position. ",
                "First block: H2M's own scoring (globalxx). Second: a proper protein alignment (BLOSUM62, gap open 10, extend 0.5). ",
                "If the residue is identical in the second block but not the first, class 4 comes from H2M's alignment; if identical only ",
                "in another isoform, from the transcript choice; if different in all, the residue really differs in mouse.</p>",
-               body, "</body></html>"), fh)
+               body,
+               if (length(drv_html)) c("<h1>H2M visualization of the modelled driver / reported variants</h1>",
+                                       "<p>H2M's own plot (tutorial: show_sequence=True, flank 4, print size 2): human WT / mutant, mouse WT, original and alternative model.</p>", drv_html),
+               "</body></html>"), fh)
   log("wrote %s", fh)
   for (v in res[, .N, by = verdict][order(-N), paste0(verdict, ": ", N)]) log("  %s", v)
   write_provenance(P, cfg, "check_class4", resources = list(human_gtf = P$human_gtf, mouse_gtf = M$gtf), outputs = f,
