@@ -19,7 +19,7 @@
 #   4  per-sample metrics: GT, DP, REF/ALT reads, VAF, GQ, strand ALT reads
 #   5  per-record metrics: FILTER, QUAL, MQ, BQ, strand, Mutect2 TLOD/NLOD, Strelka2 SomaticEVS, FreeBayes MQM ...
 #   6  FreeBayes: Patrik's expression, each criterion separately
-#   7  read counts in all nine samples, from VCF FORMAT (no BAMs - see note)
+#   7  read counts in all nine samples, per caller, from VCF FORMAT (no BAMs - see note)
 #   8  plots 1-8
 #   9  outputs, RUN_LOG.md
 #
@@ -28,11 +28,10 @@
 #   SNVSB (a strand-bias score), not per-strand counts.
 # - FreeBayes INFO (AO, SAF, SAR, MQM, QUAL) is pooled over tumour + normal, so QUAL/AO and SAF/SAR in
 #   Patrik's expression are not tumour-only values.
-# - Nine-sample read counts: there are no BAMs (project brief), so by default they are VCF FORMAT
-#   counts, one caller per sample: tumour and KI normal from the setting-A Mutect2 file (else
-#   FreeBayes, else Strelka2), WT normals from the setting-B Mutect2 joint file. These are the
-#   callers' own (filtered, realigned) read counts, not a uniform pileup. A sample whose VCFs do not
-#   contain the site is "no data", not 0 reads.
+# - Nine-sample read counts: there are no BAMs, so they are VCF FORMAT counts, shown PER CALLER:
+#   tumour and KI normal from each setting-A caller file, WT normals (and tumours) from the setting-B
+#   Mutect2 joint file. These are the callers' own (filtered, realigned) read counts, not a uniform
+#   pileup. A caller without a record at the site is "absent", not 0 reads.
 #
 # Env on ssi: r-mutation (data.table, ggplot2, bcftools).
 # Output: results/mouse_wgs/mouse_wgs_example_sites/
@@ -224,23 +223,28 @@ fb_expr <- fb_crit[, .(expression_pass = if (any(state == "unassessed")) NA else
 fb_expr[status[caller == "freebayes"], on = .(variant, tumour), FB_FILTER := i.FILTER]
 fb_expr        # expression_pass should match FB_FILTER == "PASS"
 
-# ---- 7. Read counts in all nine samples --------------------------------------
-# VCF FORMAT counts, one caller per sample (see header)
-src_rank <- c(A_mutect2 = 1, A_freebayes = 2, A_strelka = 3, B_mutect2 = 4)
-cand <- per_sample[!is.na(ALT_N)][, src := paste(setting, caller, sep = "_")][, rank := src_rank[src]]
-# tumour / GM normal: from their own tumour's setting-A file; WT: from setting B (deepest record)
-cand <- cand[(class != "WT normal" & setting == "A") | (class == "WT normal" & setting == "B")]
-nine <- cand[order(variant, sample, rank, -DP)][, .SD[1], by = .(variant, sample)][
-  , .(variant, sample, class, REF_N, ALT_N, source = paste("VCF FORMAT,", sub("_", " ", src)))]
+# ---- 7. Read counts in all nine samples, PER CALLER --------------------------
+# Every caller's own counts, nothing picked: tumour and KI normal from the setting-A files of
+# Strelka2, Mutect2, FreeBayes; WT normals (and tumours again) from the setting-B joint Mutect2 file.
+# A tumour's KI normal is taken from that tumour's own files only. "absent" = that caller's file has
+# no record at the site for this sample.
+SOURCES <- c("strelka", "mutect2", "freebayes", "mutect2 joint (B)")
+SOURCE_COLS <- c(CALLER_COLS, `mutect2 joint (B)` = "#8C564B")
+pc <- per_sample[(setting == "A" & class != "WT normal") | setting == "B",
+                 .(variant, sample, class, source = fifelse(setting == "B", "mutect2 joint (B)", caller),
+                   FILTER, REF_N, ALT_N, DP, VAF)]
+pc <- pc[order(variant, sample, source, -DP)][, .SD[1], by = .(variant, sample, source)]   # one record per source
 all_samples <- unique(c(names(TUMOURS), KI_NORMALS, rec[class == "WT normal", unique(sample)]))
-nine <- nine[CJ(variant = SITES$variant, sample = all_samples), on = .(variant, sample)]
-nine[is.na(class), class := sample_class(fifelse(sample %chin% names(TUMOURS), paste0("KI_", sample), sample))]
-nine[is.na(source), source := "no data (site not in any VCF for this sample)"]
-nine[, VAF := round(ALT_N / (REF_N + ALT_N), 3)]
-nine[, class := factor(class, levels = CLASS_LEVELS)]
-nine[, sample := factor(sample, levels = all_samples)]
-nine[order(variant, class, sample)]
 if (length(all_samples) != 9) message("Found ", length(all_samples), " samples, not 9 - check the WT names in the setting-B files")
+grid <- CJ(variant = SITES$variant, sample = all_samples, source = SOURCES)
+grid[, class := sample_class(fifelse(sample %chin% names(TUMOURS), paste0("KI_", sample), sample))]
+grid <- grid[class != "WT normal" | source == "mutect2 joint (B)"]             # WT only exist in setting B
+grid <- grid[!(class == "GM normal" & source == "mutect2 joint (B)")]          # KI normals are not in B
+per_caller_counts <- pc[, !"class"][grid, on = .(variant, sample, source)]
+per_caller_counts[, status := fcase(is.na(FILTER), "absent", FILTER == "PASS", "PASS", default = "filtered")]
+per_caller_counts[, `:=`(class = factor(class, levels = CLASS_LEVELS), sample = factor(sample, levels = all_samples),
+                         source = factor(source, levels = SOURCES))]
+per_caller_counts[order(variant, class, sample, source), .(variant, sample, source, FILTER, REF_N, ALT_N, DP, VAF = round(VAF, 3))]
 
 # ---- 8. Plots ------------------------------------------------------------------
 # Tumour vs matched normal, per caller (setting A)
@@ -275,29 +279,34 @@ p3 <- ggplot(tn, aes(ALT_N_T, VAF_T, colour = caller, shape = status)) +
   labs(x = "tumour ALT reads", y = "tumour VAF", title = "3. Tumour VAF vs ALT read count") + theme_bw()
 save_plot(p3, "03_vaf_vs_altreads_tumour", 10, 5)
 
-# 4. REF and ALT reads, all nine samples
-nine_long <- melt(nine, id.vars = c("variant", "sample", "class", "source"), measure.vars = c("REF_N", "ALT_N"),
-                  variable.name = "allele", value.name = "reads")
-nine_long[, allele := factor(sub("_N", "", allele), levels = c("REF", "ALT"))]
-p4 <- ggplot(nine_long[!is.na(reads)], aes(sample, reads, fill = allele)) +
+# 4. REF and ALT reads, all nine samples, one bar per caller (absent = no record)
+facet_ns <- if (requireNamespace("ggh4x", quietly = TRUE)) ggh4x::facet_nested(variant ~ class + sample, scales = "free_x", space = "free_x") else
+  facet_grid(variant ~ class + sample, scales = "free_x", space = "free_x")
+pcl <- melt(per_caller_counts, id.vars = c("variant", "sample", "class", "source", "status", "VAF"),
+            measure.vars = c("REF_N", "ALT_N"), variable.name = "allele", value.name = "reads")
+pcl[, allele := factor(sub("_N", "", allele), levels = c("REF", "ALT"))]
+lab4 <- per_caller_counts[, .(variant, sample, class, source, top = fcoalesce(REF_N + ALT_N, 0),
+                              label = fifelse(status == "absent", "absent", sprintf("%.2f", VAF)))]
+p4 <- ggplot(pcl[!is.na(reads)], aes(source, reads, fill = allele)) +
   geom_col(width = 0.75) +
-  geom_text(data = nine[is.na(REF_N)], aes(sample, 0, label = "no data"), inherit.aes = FALSE, vjust = -0.5, size = 2.8, angle = 90, hjust = 0) +
-  facet_grid(variant ~ class, scales = "free_x", space = "free_x") +
-  scale_fill_manual(values = c(REF = "grey70", ALT = "#C62828")) +
-  labs(x = NULL, y = "reads", fill = NULL, title = "4. REF and ALT reads in all nine samples",
-       subtitle = paste("Source:", paste(unique(nine$source[!grepl("no data", nine$source)]), collapse = "; "))) +
-  theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-save_plot(p4, "04_ref_alt_nine_samples", 11, 7)
+  geom_text(data = lab4, aes(source, top, label = label), inherit.aes = FALSE, vjust = -0.4, size = 2.5) +
+  facet_ns + scale_fill_manual(values = c(REF = "grey70", ALT = "#C62828")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = NULL, y = "reads (each caller's own count)", fill = NULL,
+       title = "4. REF and ALT reads per caller in all nine samples", subtitle = "number above bar = VAF; absent = no record in that caller's file") +
+  theme_bw() + theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 7), strip.text = element_text(size = 7))
+save_plot(p4, "04_ref_alt_nine_samples_per_caller", 16, 7)
 
-# 5. VAF across the nine samples by group
-p5 <- ggplot(nine[!is.na(VAF)], aes(class, VAF)) +
-  geom_point(aes(colour = class), size = 3, position = position_jitter(width = 0.1, height = 0, seed = 1)) +
-  geom_text(aes(label = sample), size = 2.8, nudge_x = 0.25) +
-  facet_wrap(~ variant) + scale_y_continuous(limits = c(0, 1)) +
-  scale_colour_manual(values = c(tumour = "#C62828", `GM normal` = "#6A1B9A", `WT normal` = "#1565C0"), guide = "none") +
-  labs(x = NULL, y = "VAF", title = "5. VAF in tumours, GM (KI) normals and WT normals",
-       subtitle = "Samples without the site in any VCF are not shown (no data, not VAF 0)") + theme_bw()
-save_plot(p5, "05_vaf_nine_samples", 10, 5)
+# 5. VAF per caller across the nine samples
+p5 <- ggplot(per_caller_counts[!is.na(VAF)], aes(sample, VAF, colour = source, shape = status)) +
+  geom_point(size = 3, stroke = 1.1, position = position_dodge(width = 0.6)) +
+  facet_grid(variant ~ class, scales = "free_x", space = "free_x") +
+  scale_colour_manual(values = SOURCE_COLS) + scale_shape_manual(values = c(PASS = 16, filtered = 1)) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "VAF (each caller's own counts)", colour = "caller", shape = "FILTER",
+       title = "5. VAF per caller in tumours, GM (KI) normals and WT normals",
+       subtitle = "Missing point = that caller has no record at the site for the sample (no data, not VAF 0)") + theme_bw()
+save_plot(p5, "05_vaf_nine_samples_per_caller", 11, 6)
 
 # 6. Caller FILTER / QC status per tumour (+ FreeBayes expression)
 st6 <- rbind(status[, .(variant, tumour, row = caller, status, label = FILTER)],
@@ -339,9 +348,9 @@ fwrite(per_record, file.path(OUT, "per_record_metrics.tsv"), sep = "\t")
 fwrite(status, file.path(OUT, "filter_status.tsv"), sep = "\t")
 fwrite(fb_crit, file.path(OUT, "freebayes_criteria.tsv"), sep = "\t")
 fwrite(fb_expr, file.path(OUT, "freebayes_expression.tsv"), sep = "\t")
-fwrite(nine, file.path(OUT, "nine_sample_counts.tsv"), sep = "\t")
+fwrite(per_caller_counts, file.path(OUT, "nine_sample_counts_per_caller.tsv"), sep = "\t")
 saveRDS(list(sites = SITES, files = files, rec = rec, per_sample = per_sample, per_record = per_record,
-             status = status, fb_crit = fb_crit, fb_expr = fb_expr, nine = nine),
+             status = status, fb_crit = fb_crit, fb_expr = fb_expr, per_caller_counts = per_caller_counts),
         file.path(OUT, "example_sites.rds"))
 writeLines(capture.output(sessionInfo()), file.path(OUT, "sessionInfo.txt"))
 git_hash <- tryCatch(system2("git", c("-C", shQuote(REPO), "rev-parse", "--short", "HEAD"), stdout = TRUE), error = function(e) "unknown")
