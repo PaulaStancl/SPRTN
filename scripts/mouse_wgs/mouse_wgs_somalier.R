@@ -28,7 +28,7 @@
 #   5  read the pairs table; per-tumour summary; plots
 #   6  outputs, RUN_LOG.md
 #
-# Install somalier once (separate env, avoids conflicts with r-mutation):
+# Install somalier once (static binary, no env needed):
 #   static binary v0.3.5, as in the osteosarcoma 00_somalier.sh (already there if that ran):
 #     mkdir -p /common/WORK/pstancl/tools/somalier && curl -sSL -o /common/WORK/pstancl/tools/somalier/somalier https://github.com/brentp/somalier/releases/download/v0.3.5/somalier && chmod +x /common/WORK/pstancl/tools/somalier/somalier
 #
