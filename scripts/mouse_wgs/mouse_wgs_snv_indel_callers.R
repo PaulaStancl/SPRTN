@@ -249,39 +249,15 @@ if (nrow(rawc) && nrow(merged)) {
   print(head(diff_routes[order(tumour)], 20))
   fwrite(diff_routes, file.path(OUT, "raw_vs_merged_disagreements.tsv"), sep = "\t")
 
-  # R7. Figure: my intersect (PASS in each caller's own file, then overlapped) vs Patrik's merged file
-  #     (FILTER PASS, callers from INFO/CALLER). Bars = the two, fill = SNV / INDEL, one panel per tumour.
-  #     Rows: intersect = found by >=2 callers, and by all 3 callers.
-  ROUTES <- c(raw = "my intersect\n(raw PASS, then overlap)", union = "merged file\n(PASS + INFO/CALLER)")
-  raw_int <- rp_w[, .(tumour, ID, N_CALLERS, route = ROUTES[["raw"]])]
-  uni_int <- merged[PASS == TRUE, .(tumour, ID, N_CALLERS, route = ROUTES[["union"]])]
-  routes <- rbind(raw_int, uni_int)
-  routes[, c("CHROM", "POS", "REF", "ALT") := tstrsplit(ID, ":", fixed = TRUE)]
-  routes[, CLASS := fifelse(nchar(REF) == nchar(ALT), "SNV", "INDEL")]          # MNVs count as SNV
-  routes <- rbind(routes[N_CALLERS >= 2][, intersect := ">=2 callers"],
-                  routes[N_CALLERS == length(CALLERS)][, intersect := "all 3 callers"])
-  routes[, `:=`(route = factor(route, levels = ROUTES), CLASS = factor(CLASS, levels = c("INDEL", "SNV")),
-                intersect = factor(intersect, levels = c(">=2 callers", "all 3 callers")))]
-
-  intersect_counts <- dcast(routes[, .N, by = .(tumour, intersect, route, CLASS)],
-                            tumour + intersect + CLASS ~ route, value.var = "N", fill = 0)
-  print(intersect_counts)
-  fwrite(intersect_counts, file.path(OUT, "intersect_raw_vs_merged_counts.tsv"), sep = "\t")
-
-  bar_n <- routes[, .N, by = .(tumour, intersect, route, CLASS)]
-  tot_n <- routes[, .N, by = .(tumour, intersect, route)]
-  p_int <- ggplot(bar_n, aes(route, N, fill = CLASS)) +
-    geom_col(width = 0.7) +
-    geom_text(aes(label = N), position = position_stack(vjust = 0.5), size = 3, colour = "white") +
-    geom_text(data = tot_n, aes(route, N, label = N), inherit.aes = FALSE, vjust = -0.4, size = 3.2) +
-    facet_grid(intersect ~ tumour, scales = "free_y") +
-    scale_fill_manual(values = c(SNV = "#4C72B0", INDEL = "#DD8452")) +
-    scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
-    labs(x = NULL, y = "PASS variants", fill = NULL,
-         title = "Caller intersect: my intersect from the raw caller files vs the merged file",
-         subtitle = paste("Tumour vs matched KI normal", if (TEST_CHROM) paste0("(", TEST_CONTIG, ")") else "")) +
-    theme_bw() + theme(legend.position = "bottom")
-  save_plot(p_int, "intersect_raw_vs_merged", 9, 7)
+  # R7. My intersect (PASS in each caller's own file, then overlapped; >=2 callers) vs the merged file
+  #     (FILTER PASS, >=2 callers in INFO/CALLER). Fill = SNV / INDEL.
+  int <- rbind(rp_w[N_CALLERS >= 2, .(tumour, ID, source = "my intersect")],
+               merged[N_CALLERS >= 2 & PASS == TRUE, .(tumour, ID, source = "merged file")])
+  int[, type := fifelse(nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]]), "SNV", "INDEL")]
+  int[, .N, by = .(tumour, source, type)][order(tumour, source, type)]
+  p_int <- ggplot(int, aes(source, fill = type)) + geom_bar() + facet_wrap(~ tumour) +
+    labs(x = NULL, y = "PASS variants, >=2 callers", fill = NULL) + theme_bw()
+  save_plot(p_int, "intersect_raw_vs_merged", 8, 5)
 } else message("RAW -> PASS -> INTERSECT skipped: no single-caller files (kind == 'caller') or no merged file")
 
 
