@@ -62,7 +62,6 @@ TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
              HCC_3 = "sfb_dikic_2025_05_12_KI_HCC_3")
 CALLERS <- c("strelka", "mutect2", "freebayes")
 
-TEST_CHROM <- FALSE     # TRUE: chr19 only (quick test); FALSE: genome-wide
 
 # ---- 1. Setup ----------------------------------------------------------------
 suppressPackageStartupMessages({
@@ -113,16 +112,12 @@ files[, .(tumour, kind, caller_in_name, file = rel)]
 stopifnot(!anyNA(files$tumour))
 files[, .N, by = .(tumour, kind)]
 
-# chr19 is "19" (Ensembl / iGenomes GRCm38) or "chr19" (UCSC mm10)
-TEST_CONTIG <- if (any(grepl("^##contig=<ID=chr19,", unlist(hdr)))) "chr19" else "19"
-TEST_CONTIG
-
 # ---- 3. Read records ---------------------------------------------------------
 read_sites <- function(i) {
   f <- files[i]
   fmt <- paste0("%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER", if (f$has_CALLER) "\\t%INFO/CALLER", "\\n")
   cn <- c("CHROM", "POS", "REF", "ALT", "FILTER", if (f$has_CALLER) "CALLER")
-  cmd <- paste(shQuote(BCFTOOLS), "query", if (TEST_CHROM) paste("-t", TEST_CONTIG), "-f", shQuote(fmt), shQuote(f$path))
+  cmd <- paste(shQuote(BCFTOOLS), "query", "-f", shQuote(fmt), shQuote(f$path))
   x <- tryCatch(fread(cmd = cmd, sep = "\t", header = FALSE, col.names = cn, quote = "",
                       colClasses = list(character = setdiff(cn, "POS"), integer = "POS")),
                 error = function(e) { message(f$rel, ": no records read (", conditionMessage(e), ")"); data.table() })
@@ -333,7 +328,7 @@ p_counts <- ggplot(atom[, .N, by = .(tumour, SET, CLASS)], aes(SET, N, fill = CL
   facet_wrap(~ tumour, scales = "free_y") +
   labs(x = NULL, y = "PASS variants (MNVs split)", fill = NULL,
        title = paste("Tumour vs matched KI normal: SNVs and indels per caller",
-                     if (TEST_CHROM) paste0("(", TEST_CONTIG, ")") else "")) +
+                     "")) +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1))
 save_plot(p_counts, "counts_per_caller", 10, 5)
 
@@ -558,8 +553,7 @@ if (HAVE_FASTA) {
 }
 
 # ---- 9. Outputs --------------------------------------------------------------
-tag <- if (TEST_CHROM) paste0("_", TEST_CONTIG) else ""
-w <- function(x, name) if (nrow(x)) fwrite(x, file.path(OUT, paste0(name, tag, ".tsv")), sep = "\t")
+w <- function(x, name) if (nrow(x)) fwrite(x, file.path(OUT, paste0(name, ".tsv")), sep = "\t")
 w(files[, !"path"], "files")
 if (nrow(merged)) w(merged_filter, "merged_filter_by_caller_combination")
 w(counts, "counts_per_caller")
@@ -572,12 +566,12 @@ saveRDS(list(files = files, raw = raw, per_caller = per_caller, per_caller_sourc
              union_pass = union_pass, sets = sets, atom = atom, counts = counts, pairwise = pairwise,
              memb = memb, exclusive = exclusive, union_vs = union_vs, union_check = union_check, union_n = union_n,
              snv96 = snv96, m96 = m96, cosine = cosine,
-             params = list(TEST_CHROM = TEST_CHROM, TEST_CONTIG = TEST_CONTIG, FASTA = FASTA)),
-        file.path(OUT, paste0("callers", tag, ".rds")))
+             params = list(FASTA = FASTA)),
+        file.path(OUT, paste0("callers", ".rds")))
 
-fwrite(data.table(parameter = c("DIR_A", "OUT", "FASTA", "BCFTOOLS", "SAMTOOLS", "TEST_CHROM", "TEST_CONTIG",
+fwrite(data.table(parameter = c("DIR_A", "OUT", "FASTA", "BCFTOOLS", "SAMTOOLS",
                                 "PER_CALLER_SOURCE", paste0("TUMOUR_", names(TUMOURS))),
-                  value = c(DIR_A, OUT, FASTA, BCFTOOLS, SAMTOOLS, TEST_CHROM, TEST_CONTIG, PER_CALLER_SOURCE, TUMOURS)),
+                  value = c(DIR_A, OUT, FASTA, BCFTOOLS, SAMTOOLS, PER_CALLER_SOURCE, TUMOURS)),
        file.path(OUT, "parameters.tsv"), sep = "\t")
 fwrite(data.table(file = files$rel, md5 = unname(tools::md5sum(files$path))), file.path(OUT, "input_md5.tsv"), sep = "\t")
 git_hash <- tryCatch(system2("git", c("-C", shQuote(REPO), "rev-parse", "--short", "HEAD"), stdout = TRUE), error = function(e) "unknown")
@@ -595,7 +589,7 @@ md_table <- function(x) {
 }
 writeLines(c(
   "# mouse_wgs_snv_indel_callers summary", "",
-  paste0("Run ", format(started, "%Y-%m-%d %H:%M"), "; ", if (TEST_CHROM) paste0("**", TEST_CONTIG, " only (test run)**") else "genome-wide",
+  paste0("Run ", format(started, "%Y-%m-%d %H:%M"), "; ", "genome-wide",
          ". Per-caller sets from: ", PER_CALLER_SOURCE, ". PASS records only; MNVs split into SNVs."), "",
   "## Counts per caller and the union", "", md_table(counts), "",
   "## Pairwise shared (row caller = 100%)", "", md_table(pairwise[caller_1 != caller_2]), "",
@@ -617,7 +611,7 @@ writeLines(c(
   paste0("## ", format(Sys.time(), "%Y-%m-%d %H:%M"), " - mouse_wgs_snv_indel_callers"),
   paste0("- Run by:     ", Sys.info()[["user"]], "@", Sys.info()[["nodename"]], " (", R.version.string, ")"),
   paste0("- Script:     ", SCRIPT, "  git: ", git_hash),
-  paste0("- Parameters: TEST_CHROM=", TEST_CHROM, " (", TEST_CONTIG, "), per-caller sets from ", PER_CALLER_SOURCE),
+  paste0("- Parameters: per-caller sets from ", PER_CALLER_SOURCE),
   paste0("- Inputs:     ", DIR_A, " (", nrow(files), " files; provider-split, not left-aligned); FASTA ", FASTA),
   paste0("- Outputs:    ", OUT),
   paste0("- Counts/QC:  records read ", nrow(raw), ", PASS per-caller rows ", nrow(per_caller), ", union PASS ", nrow(union_pass)),

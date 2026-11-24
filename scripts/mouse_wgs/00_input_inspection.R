@@ -15,7 +15,7 @@
 #   SV tumor_vs_normal/sv/calls/ (Delly, SvABA, Manta) and sv/merged/ (OctopuSV)
 #
 # What it does, block by block:
-#   0  EDIT THIS BLOCK: paths, samples, test mode
+#   0  EDIT THIS BLOCK: paths, samples
 #   1  setup and the bcftools helper
 #   2  provenance files (processing notes, md5 lists) and md5 check
 #   3  file inventory: setting, tumour, caller per file
@@ -50,7 +50,6 @@ KI_NORMALS <- c(HCC_1 = "sfb_dikic_2025_05_05_KI1",
                 HCC_2 = "sfb_dikic_2025_05_06_KI2",
                 HCC_3 = "sfb_dikic_2025_05_07_KI3")
 
-TEST_CHROM <- FALSE    # TRUE: read records of chr19 only (quick test); FALSE: genome-wide
 CHECK_MD5  <- TRUE     # recompute md5 of every file (a few minutes for the BCFs)
 
 # ---- 1. Setup ----------------------------------------------------------------
@@ -205,17 +204,11 @@ contigs <- rbindlist(lapply(names(headers), function(r) {
 }))
 contig_summary <- contigs[, .(n_contigs = sum(!is.na(contig)),
                               chr_prefix = any(startsWith(contig, "chr"), na.rm = TRUE),
-                              has_19 = any(contig %chin% c("19", "chr19")),
-                              chr19_length = length[contig %chin% c("19", "chr19")][1],
                               contig_set = paste(contig, length, sep = ":", collapse = ",")),
                           by = rel]
 contig_summary[, contig_set_id := as.integer(factor(contig_set))]   # same number = identical contig list
 contig_summary[, contig_set := NULL]
 contig_summary
-
-# Name of chr19 in these files: "19" (Ensembl / iGenomes GRCm38) or "chr19" (UCSC mm10)
-TEST_CONTIG <- if (any(contig_summary$chr_prefix)) "chr19" else "19"
-TEST_CONTIG
 
 # 4d. Other meta lines (##key=value): reference, source, annotation, command lines
 meta <- rbindlist(lapply(names(headers), function(r) {
@@ -297,11 +290,10 @@ wt_names
 
 # ---- 6. Small-variant records ------------------------------------------------
 # One row per record: CHROM POS REF ALT FILTER (+ CALLER when the file has it).
-# Test mode reads chr19 only (-t streams the file, so no index is needed).
 read_small <- function(path, r) {
   has_caller <- has_field[rel == r, INFO_CALLER]
   fmt <- paste0("%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER", if (has_caller) "\\t%INFO/CALLER", "\\n")
-  cmd <- paste(shQuote(BCFTOOLS), "query", if (TEST_CHROM) paste("-t", TEST_CONTIG),
+  cmd <- paste(shQuote(BCFTOOLS), "query",
                "-f", shQuote(fmt), shQuote(path))
   cn <- c("CHROM", "POS", "REF", "ALT", "FILTER", if (has_caller) "CALLER")
   x <- tryCatch(fread(cmd = cmd, sep = "\t", header = FALSE, col.names = cn,
@@ -314,7 +306,7 @@ read_small <- function(path, r) {
 }
 small_files <- vcfs[setting %chin% c("A", "B", "C")]
 small <- setNames(Map(read_small, small_files$path, small_files$rel), small_files$rel)
-sapply(small, nrow)          # row counts per file (chr19 only while TEST_CHROM = TRUE)
+sapply(small, nrow)          # row counts per file
 
 small_dt <- rbindlist(small, idcol = "rel")
 small_dt <- small_files[, .(rel, setting, tumour)][small_dt, on = "rel"]
@@ -370,7 +362,6 @@ read_sv <- function(path) {
                       select = 1:8), error = function(e) NULL)
   if (is.null(x)) return(data.table())
   setnames(x, 1:8, c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO"))
-  if (TEST_CHROM) x <- x[CHROM == TEST_CONTIG]
   info_val <- function(key) fifelse(grepl(paste0("(^|;)", key, "="), x$INFO),
                                     sub(paste0("^(.*;)?", key, "=([^;]*).*$"), "\\2", x$INFO), NA_character_)
   x[, `:=`(SVTYPE = info_val("SVTYPE"), SVLEN = info_val("SVLEN"), END = info_val("END"),
@@ -473,7 +464,7 @@ p_records <- ggplot(plot_dt, aes(x = tumour, y = N, fill = TYPE)) +
   geom_col() +
   facet_grid(FILTER_class ~ setting, scales = "free_y") +
   labs(x = NULL, y = "records", fill = "type",
-       title = paste("Small-variant records per file", if (TEST_CHROM) paste0("(", TEST_CONTIG, " only)") else "(genome-wide)"),
+       title = paste("Small-variant records per file", "(genome-wide)"),
        subtitle = "A: vs matched KI normal (3 callers merged)  B: vs joint WT (Mutect2)  C: tumour-only + WT PoN (Mutect2)") +
   theme_bw(base_size = 11)
 p_records
@@ -481,7 +472,6 @@ ggsave(file.path(OUT, "records_per_file.pdf"), p_records, width = 10, height = 6
 ggsave(file.path(OUT, "records_per_file.png"), p_records, width = 10, height = 6, dpi = 150)
 
 # Tables
-tag <- if (TEST_CHROM) paste0("_", TEST_CONTIG) else ""
 fwrite(files[, !"path"],      file.path(OUT, "file_inventory.tsv"), sep = "\t")
 fwrite(manifest,              file.path(OUT, "manifest.tsv"), sep = "\t")
 fwrite(fields,                file.path(OUT, "header_fields.tsv"), sep = "\t")
@@ -491,14 +481,14 @@ fwrite(meta,                  file.path(OUT, "header_meta_lines.tsv"), sep = "\t
 fwrite(gatk_cmd,              file.path(OUT, "gatk_command_lines.tsv"), sep = "\t")
 fwrite(annotation,            file.path(OUT, "annotation.tsv"), sep = "\t")
 fwrite(normals_used,          file.path(OUT, "normals_used.tsv"), sep = "\t")
-fwrite(records,               file.path(OUT, paste0("records", tag, ".tsv")), sep = "\t")
-fwrite(filter_reasons,        file.path(OUT, paste0("filter_reasons", tag, ".tsv")), sep = "\t")
-fwrite(filter_state,          file.path(OUT, paste0("filter_state", tag, ".tsv")), sep = "\t")
-fwrite(caller_combos,         file.path(OUT, paste0("settingA_caller_combinations", tag, ".tsv")), sep = "\t")
-fwrite(dups,                  file.path(OUT, paste0("duplicate_ids", tag, ".tsv")), sep = "\t")
-fwrite(sv_counts,             file.path(OUT, paste0("sv_counts", tag, ".tsv")), sep = "\t")
-fwrite(sv_inventory,          file.path(OUT, paste0("sv_inventory", tag, ".tsv")), sep = "\t")
-fwrite(issues,                file.path(OUT, paste0("issues", tag, ".tsv")), sep = "\t")
+fwrite(records,               file.path(OUT, paste0("records", ".tsv")), sep = "\t")
+fwrite(filter_reasons,        file.path(OUT, paste0("filter_reasons", ".tsv")), sep = "\t")
+fwrite(filter_state,          file.path(OUT, paste0("filter_state", ".tsv")), sep = "\t")
+fwrite(caller_combos,         file.path(OUT, paste0("settingA_caller_combinations", ".tsv")), sep = "\t")
+fwrite(dups,                  file.path(OUT, paste0("duplicate_ids", ".tsv")), sep = "\t")
+fwrite(sv_counts,             file.path(OUT, paste0("sv_counts", ".tsv")), sep = "\t")
+fwrite(sv_inventory,          file.path(OUT, paste0("sv_inventory", ".tsv")), sep = "\t")
+fwrite(issues,                file.path(OUT, paste0("issues", ".tsv")), sep = "\t")
 fwrite(files[, .(rel, md5, md5_expected, md5_status)], file.path(OUT, "input_md5.tsv"), sep = "\t")
 
 # One RDS with everything (small_dt is the per-record key table Task 1 can start from)
@@ -507,14 +497,13 @@ saveRDS(list(files = files, manifest = manifest, headers = headers, sample_cols 
              annotation = annotation, normals_used = normals_used, wt_names = wt_names,
              small_dt = small_dt, records = records, filter_reasons = filter_reasons,
              caller_combos = caller_combos, dups = dups, sv_dt = sv_dt, sv_counts = sv_counts,
-             sv_inventory = sv_inventory, issues = issues, processed_txt = processed_txt,
-             test_chrom = TEST_CHROM, test_contig = TEST_CONTIG),
-        file.path(OUT, paste0("inspection", tag, ".rds")))
+             sv_inventory = sv_inventory, issues = issues, processed_txt = processed_txt),
+        file.path(OUT, paste0("inspection", ".rds")))
 
 # Parameters, versions, session
-params <- data.table(parameter = c("ROOT", "OUT", "BCFTOOLS", "TEST_CHROM", "TEST_CONTIG", "CHECK_MD5",
+params <- data.table(parameter = c("ROOT", "OUT", "BCFTOOLS", "CHECK_MD5",
                                    paste0("TUMOUR_", names(TUMOURS)), paste0("KI_NORMAL_", names(KI_NORMALS))),
-                     value = c(ROOT, OUT, BCFTOOLS, TEST_CHROM, TEST_CONTIG, CHECK_MD5, TUMOURS, KI_NORMALS))
+                     value = c(ROOT, OUT, BCFTOOLS, CHECK_MD5, TUMOURS, KI_NORMALS))
 fwrite(params, file.path(OUT, "parameters.tsv"), sep = "\t")
 git_hash <- tryCatch(system2("git", c("-C", shQuote(REPO), "rev-parse", "--short", "HEAD"), stdout = TRUE), error = function(e) "unknown")
 git_dirty <- tryCatch(length(system2("git", c("-C", shQuote(REPO), "status", "--porcelain", shQuote(SCRIPT)), stdout = TRUE)) > 0,
@@ -534,7 +523,7 @@ md_table <- function(x) {
 summary_md <- c(
   "# 00_input_inspection summary", "",
   paste0("Run ", format(started, "%Y-%m-%d %H:%M"), "; records from ",
-         if (TEST_CHROM) paste0("**", TEST_CONTIG, " only (test run)**") else "the whole genome", "."), "",
+         "the whole genome", "."), "",
   "## Normals actually used (setting B first)", "",
   md_table(normals_used[, .(setting, tumour, sample_columns, normal_sample_lines, normals_mutect2_cmd, pon_mutect2_cmd, ki_normal_used)]), "",
   paste("WT normal names found:", paste(wt_names, collapse = ", ")), "",
@@ -557,7 +546,7 @@ log_entry <- c(
   paste0("## ", format(Sys.time(), "%Y-%m-%d %H:%M"), " - 00_input_inspection"),
   paste0("- Run by:     ", Sys.info()[["user"]], "@", Sys.info()[["nodename"]], " (", R.version.string, ", ", bcftools_version[1], ")"),
   paste0("- Script:     ", SCRIPT, "  git: ", git_hash, if (isTRUE(git_dirty)) " +dirty" else ""),
-  paste0("- Parameters: TEST_CHROM=", TEST_CHROM, " (", TEST_CONTIG, "), CHECK_MD5=", CHECK_MD5),
+  paste0("- Parameters: CHECK_MD5=", CHECK_MD5),
   paste0("- Inputs:     ", ROOT, " (", nrow(vcfs), " variant files; already split with bcftools norm -m -any, not re-normalized)"),
   paste0("- Outputs:    ", OUT),
   paste0("- Counts/QC:  small-variant records ", nrow(small_dt), ", SV records ", nrow(sv_dt), ", issues ", nrow(issues)),

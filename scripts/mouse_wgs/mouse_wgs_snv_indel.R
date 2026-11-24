@@ -58,7 +58,6 @@ TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
              HCC_2 = "sfb_dikic_2025_05_11_KI_HCC_2",
              HCC_3 = "sfb_dikic_2025_05_12_KI_HCC_3")
 
-TEST_CHROM       <- TRUE        # TRUE: chr19 only (quick test); FALSE: genome-wide
 COMPARE_A_CALLER <- "mutect2"   # setting A records used in the comparison (block 7): "mutect2" or "any"
 ENGINEERED_GENE  <- "Sprtn"     # mm10 chr8
 CANCER_GENES     <- NA          # optional: path to a one-column file of mouse gene symbols (orthologs of
@@ -139,10 +138,6 @@ files[, tumour_col := mapply(function(s, t) {
 files[, .(setting, tumour, samples, tumour_col, has_CALLER, has_ANN, has_AD, has_DP, has_AF)]
 stopifnot(!anyNA(files$tumour_col))
 
-# chr19 is "19" (Ensembl/iGenomes) or "chr19" (UCSC)
-TEST_CONTIG <- if (any(grepl("^##contig=<ID=chr19,", unlist(hdr)))) "chr19" else "19"
-TEST_CONTIG
-
 # ---- 3. Read records ---------------------------------------------------------
 # One row per record: position, FILTER, CALLER, tumour AD/DP/AF, and the raw ANN string.
 read_calls <- function(i) {
@@ -153,7 +148,7 @@ read_calls <- function(i) {
                 "[", if (f$has_AD) "\\t%AD", if (f$has_DP) "\\t%DP", if (f$has_AF) "\\t%AF", "]\\n")
   cn <- c("CHROM", "POS", "REF", "ALT", "FILTER", if (f$has_CALLER) "CALLER", if (f$has_ANN) "ANN",
           if (f$has_AD) "AD", if (f$has_DP) "DP", if (f$has_AF) "AF")
-  cmd <- paste(shQuote(BCFTOOLS), "query", if (TEST_CHROM) paste("-t", TEST_CONTIG),
+  cmd <- paste(shQuote(BCFTOOLS), "query",
                "-s", shQuote(f$tumour_col), "-f", shQuote(fmt), shQuote(f$path))
   x <- tryCatch(fread(cmd = cmd, sep = "\t", header = FALSE, col.names = cn, quote = "",
                       colClasses = list(character = setdiff(cn, "POS"), integer = "POS")),
@@ -223,7 +218,7 @@ p_counts <- ggplot(melt(counts, id.vars = c("setting", "tumour"), measure.vars =
                    aes(setting, n, fill = type)) +
   geom_col() + facet_wrap(~ tumour) +
   labs(x = NULL, y = "PASS records", fill = NULL,
-       title = paste("PASS SNV / MNV / indel counts", if (TEST_CHROM) paste0("(", TEST_CONTIG, ")") else ""),
+       title = paste("PASS SNV / MNV / indel counts", ""),
        caption = paste(paste(names(SETTING_LAB), SETTING_LAB, sep = " = "), collapse = "; ")) +
   theme_bw()
 save_plot(p_counts, "counts_per_setting", 9, 5)
@@ -440,8 +435,7 @@ if (nrow(ann)) {
 }
 
 # ---- 10. Outputs -------------------------------------------------------------
-tag <- if (TEST_CHROM) paste0("_", TEST_CONTIG) else ""
-w <- function(x, name) fwrite(x, file.path(OUT, paste0(name, tag, ".tsv")), sep = "\t")
+w <- function(x, name) fwrite(x, file.path(OUT, paste0(name, ".tsv")), sep = "\t")
 w(files[, !"path"], "files")
 w(counts, "counts"); w(counts_A_caller, "counts_settingA_per_caller")
 w(filter_reasons, "filter_reasons"); w(vaf_summary, "vaf_summary"); w(depth_summary, "depth_summary")
@@ -457,12 +451,12 @@ saveRDS(list(files = files, calls = calls, calls_long = calls_long, counts = cou
              chrom_counts = chrom_counts, memb = memb, overlap = overlap, jaccard = jaccard, recovery = recovery,
              fw = fw, pass_vs_filtered = pass_vs_filtered, why_filtered = why_filtered,
              ann_top = ann_top, protein_altering = protein_altering, sprtn = sprtn,
-             params = list(TEST_CHROM = TEST_CHROM, TEST_CONTIG = TEST_CONTIG, COMPARE_A_CALLER = COMPARE_A_CALLER)),
-        file.path(OUT, paste0("snv_indel", tag, ".rds")))
+             params = list(COMPARE_A_CALLER = COMPARE_A_CALLER)),
+        file.path(OUT, paste0("snv_indel", ".rds")))
 
-params <- data.table(parameter = c("ROOT", "OUT", "BCFTOOLS", "TEST_CHROM", "TEST_CONTIG", "COMPARE_A_CALLER",
+params <- data.table(parameter = c("ROOT", "OUT", "BCFTOOLS", "COMPARE_A_CALLER",
                                    "ENGINEERED_GENE", "CANCER_GENES", paste0("TUMOUR_", names(TUMOURS))),
-                     value = c(ROOT, OUT, BCFTOOLS, TEST_CHROM, TEST_CONTIG, COMPARE_A_CALLER,
+                     value = c(ROOT, OUT, BCFTOOLS, COMPARE_A_CALLER,
                                ENGINEERED_GENE, CANCER_GENES, TUMOURS))
 fwrite(params, file.path(OUT, "parameters.tsv"), sep = "\t")
 fwrite(data.table(file = files$rel, md5 = unname(tools::md5sum(files$path))), file.path(OUT, "input_md5.tsv"), sep = "\t")
@@ -480,7 +474,7 @@ md_table <- function(x) {
 }
 writeLines(c(
   "# mouse_wgs_snv_indel summary", "",
-  paste0("Run ", format(started, "%Y-%m-%d %H:%M"), "; ", if (TEST_CHROM) paste0("**", TEST_CONTIG, " only (test run)**") else "genome-wide",
+  paste0("Run ", format(started, "%Y-%m-%d %H:%M"), "; ", "genome-wide",
          "; setting A in the comparison = ", COMPARE_A_CALLER, " records."), "",
   "## Counts per tumour and setting (PASS unless stated)", "", md_table(counts), "",
   "## Setting A per caller", "", md_table(counts_A_caller), "",
@@ -500,7 +494,7 @@ writeLines(c(
   paste0("## ", format(Sys.time(), "%Y-%m-%d %H:%M"), " - mouse_wgs_snv_indel"),
   paste0("- Run by:     ", Sys.info()[["user"]], "@", Sys.info()[["nodename"]], " (", R.version.string, ")"),
   paste0("- Script:     ", SCRIPT, "  git: ", git_hash),
-  paste0("- Parameters: TEST_CHROM=", TEST_CHROM, " (", TEST_CONTIG, "), COMPARE_A_CALLER=", COMPARE_A_CALLER,
+  paste0("- Parameters: COMPARE_A_CALLER=", COMPARE_A_CALLER,
          ", CANCER_GENES=", CANCER_GENES),
   paste0("- Inputs:     ", ROOT, " (", nrow(files), " BCFs; split with bcftools norm -m -any by the provider, not left-aligned)"),
   paste0("- Outputs:    ", OUT),
