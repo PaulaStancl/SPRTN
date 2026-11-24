@@ -126,10 +126,17 @@ run(paste(B, "index -t -f", shQuote(paste0(sites_vcf, ".gz"))))
 unlink(sites_vcf)
 
 # ---- 3. somalier extract ---------------------------------------------------------
+# somalier needs an indexed input; the provider's BCFs have no index and the input folder stays
+# read-only, so each FreeBayes file is cut to the site list into OUT/input/ and indexed there.
 ext_dir <- file.path(OUT, "extracted"); dir.create(ext_dir, showWarnings = FALSE)
-for (f in fb_files)
+in_dir  <- file.path(OUT, "input");     dir.create(in_dir, showWarnings = FALSE)
+for (f in fb_files) {
+  sub_bcf <- file.path(in_dir, sub("\\.(bcf|vcf\\.gz|vcf)$", ".sites.bcf", basename(f)))
+  run(paste(B, "view -T", shQuote(paste0(sites_vcf, ".gz")), "-Ob -o", shQuote(sub_bcf), shQuote(f)))
+  run(paste(B, "index -f", shQuote(sub_bcf)))
   run(paste(shQuote(SOMALIER), "extract -d", shQuote(ext_dir), "--sites", shQuote(paste0(sites_vcf, ".gz")),
-            "-f", shQuote(FASTA), shQuote(f)))
+            "-f", shQuote(FASTA), shQuote(sub_bcf)))
+}
 list.files(ext_dir)
 
 # ---- 4. somalier relate --------------------------------------------------------
