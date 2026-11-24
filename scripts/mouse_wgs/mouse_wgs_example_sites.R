@@ -252,14 +252,18 @@ tn <- dcast(rec[setting == "A" & class %chin% c("tumour", "GM normal"),
                 .(variant, tumour, caller, class = fifelse(class == "tumour", "T", "N"), VAF, DP, ALT_N)],
             variant + tumour + caller ~ class, value.var = c("VAF", "DP", "ALT_N"))
 tn <- status[, .(variant, tumour, caller, status)][tn, on = .(variant, tumour, caller)]
-tn[, lab := sub("HCC_", "T", tumour)]
+tn[, lab := paste0(tumour, " vs ", KI_NORMALS[tumour])]
+# Point labels: real sample names; ggrepel keeps them apart if installed
+lab_layer <- function(...) if (requireNamespace("ggrepel", quietly = TRUE))
+  ggrepel::geom_text_repel(aes(label = lab), size = 3, show.legend = FALSE, min.segment.length = 0, ...) else
+  geom_text(aes(label = lab), size = 3, hjust = -0.15, show.legend = FALSE, ...)
 caller_scale <- scale_colour_manual(values = CALLER_COLS)
 status_shape <- scale_shape_manual(values = c(PASS = 16, filtered = 1), drop = FALSE)
 
 # 1. Tumour VAF vs matched normal VAF
 p1 <- ggplot(tn, aes(VAF_N, VAF_T, colour = caller, shape = status)) +
   geom_abline(slope = 1, intercept = 0, linetype = "dashed", colour = "grey50") +
-  geom_point(size = 3, stroke = 1.2) + geom_text(aes(label = lab), nudge_x = 0.03, size = 3, show.legend = FALSE) +
+  geom_point(size = 3, stroke = 1.2) + lab_layer() +
   facet_wrap(~ variant) + coord_equal(xlim = c(0, 1), ylim = c(0, 1)) + caller_scale + status_shape +
   labs(x = "matched KI normal VAF", y = "tumour VAF", title = "1. Tumour vs matched normal VAF (each caller's own counts)") + theme_bw()
 save_plot(p1, "01_vaf_tumour_vs_normal", 10, 5.5)
@@ -267,14 +271,14 @@ save_plot(p1, "01_vaf_tumour_vs_normal", 10, 5.5)
 # 2. Tumour DP vs normal DP
 p2 <- ggplot(tn, aes(DP_N, DP_T, colour = caller, shape = status)) +
   geom_hline(yintercept = 30, linetype = "dashed", colour = "grey50") + geom_vline(xintercept = 30, linetype = "dashed", colour = "grey50") +
-  geom_point(size = 3, stroke = 1.2) + geom_text(aes(label = lab), nudge_x = 2, size = 3, show.legend = FALSE) +
+  geom_point(size = 3, stroke = 1.2) + lab_layer() +
   facet_wrap(~ variant) + caller_scale + status_shape + expand_limits(x = 0, y = 0) +
   labs(x = "matched KI normal DP", y = "tumour DP", title = "2. Tumour vs normal depth (dashed: DP = 30, FreeBayes rule)") + theme_bw()
 save_plot(p2, "02_dp_tumour_vs_normal", 10, 5)
 
 # 3. Tumour VAF vs ALT read count
 p3 <- ggplot(tn, aes(ALT_N_T, VAF_T, colour = caller, shape = status)) +
-  geom_point(size = 3, stroke = 1.2) + geom_text(aes(label = lab), nudge_x = 1.5, size = 3, show.legend = FALSE) +
+  geom_point(size = 3, stroke = 1.2) + lab_layer() +
   facet_wrap(~ variant, scales = "free_x") + caller_scale + status_shape + scale_y_continuous(limits = c(0, 1)) +
   labs(x = "tumour ALT reads", y = "tumour VAF", title = "3. Tumour VAF vs ALT read count") + theme_bw()
 save_plot(p3, "03_vaf_vs_altreads_tumour", 10, 5)
