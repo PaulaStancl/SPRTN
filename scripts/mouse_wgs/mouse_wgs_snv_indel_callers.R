@@ -66,6 +66,8 @@ suppressPackageStartupMessages({
   library(data.table)
   library(ggplot2)
 })
+# Console as wide as the terminal (falls back to 80 when there is no terminal, e.g. batch Rscript)
+options(width = max(80, suppressWarnings(as.numeric(system("tput cols", intern = TRUE, ignore.stderr = TRUE)))[1], na.rm = TRUE))
 HAVE_QCVCF <- requireNamespace("qcVCF", quietly = TRUE)
 if (!file.exists(BCFTOOLS)) stop("bcftools not found at ", BCFTOOLS, " - install it in r-mutation or set BCFTOOLS")
 HAVE_FASTA <- file.exists(SAMTOOLS) && file.exists(FASTA) && file.exists(paste0(FASTA, ".fai"))

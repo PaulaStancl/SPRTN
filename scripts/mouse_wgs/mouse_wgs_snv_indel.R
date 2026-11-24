@@ -69,6 +69,8 @@ suppressPackageStartupMessages({
   library(data.table)
   library(ggplot2)
 })
+# Console as wide as the terminal (falls back to 80 when there is no terminal, e.g. batch Rscript)
+options(width = max(80, suppressWarnings(as.numeric(system("tput cols", intern = TRUE, ignore.stderr = TRUE)))[1], na.rm = TRUE))
 HAVE_QCVCF <- requireNamespace("qcVCF", quietly = TRUE)
 if (!file.exists(BCFTOOLS)) stop("bcftools not found at ", BCFTOOLS, ": install it (micromamba install -c bioconda bcftools) or set BCFTOOLS in block 0")
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
