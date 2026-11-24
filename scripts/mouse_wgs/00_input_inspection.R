@@ -92,9 +92,9 @@ files[, rel := substring(path, nchar(ROOT) + 2)]
 files[, file := basename(path)]
 files[, size_mb := round(file.size(path) / 1e6, 2)]
 files[, setting := fcase(
-  startsWith(rel, "tumor_vs_normal/snv_indel/"), "tumor_normal",
-  startsWith(rel, "tumor_vs_joint_wt/"),         "tumor_joint_wt",
-  startsWith(rel, "tumor_only_pon/"),            "tumor_only_pon",
+  startsWith(rel, "tumor_vs_normal/snv_indel/"), "A",
+  startsWith(rel, "tumor_vs_joint_wt/"),         "B",
+  startsWith(rel, "tumor_only_pon/"),            "C",
   startsWith(rel, "tumor_vs_normal/sv/calls/"),  "SV_raw",
   startsWith(rel, "tumor_vs_normal/sv/merged/"), "SV_merged",
   default = "other")]
