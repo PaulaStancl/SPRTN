@@ -12,6 +12,9 @@
 #   mutect2   FilterMutectCalls with sarek's orientation-bias priors
 #   freebayes crude prefilter: MQM>=40, normal 0/0, tumour 0/1, DP>=30 in both, QUAL/AO>=5, SAF>0, SAR>0
 #
+# The merged file is the single source: INFO/CALLER says which callers found each variant, so each
+# caller's set and all intersects come from it (as with bcftools view -i 'INFO/CALLER~"mutect2" && ...').
+#
 # Questions answered, per tumour:
 #   1. how many SNVs and indels each caller finds
 #   2. how many are shared between each pair of callers (and by 1, 2 or 3 callers)
@@ -91,8 +94,9 @@ save_plot <- function(p, name, w = 9, h = 6) {
   ggsave(file.path(OUT, paste0(name, ".png")), p, width = w, height = h, dpi = 150, limitsize = FALSE)
   invisible(p)
 }
-# Callers in INFO/CALLER: split on , | ; & +
-split_callers <- function(x) lapply(strsplit(tolower(x), "[,|;&+]"), function(v) unique(trimws(v[nzchar(v)])))
+# Callers in INFO/CALLER, matched like bcftools' INFO/CALLER~"mutect2" (name anywhere in the value,
+# whatever the separator). Returns a TRUE/FALSE column per caller.
+caller_flags <- function(x) setNames(lapply(CALLERS, function(cl) grepl(cl, x, ignore.case = TRUE)), CALLERS)
 
 # ---- 2. Files ----------------------------------------------------------------
 files <- data.table(path = list.files(DIR_A, recursive = TRUE, full.names = TRUE, pattern = "\\.(bcf|vcf|vcf\\.gz)$"))
@@ -131,22 +135,30 @@ raw <- rbindlist(lapply(seq_len(nrow(files)), read_sites), use.names = TRUE, fil
 raw[, PASS := FILTER == "PASS"]
 raw[, .(records = .N, PASS = sum(PASS)), by = .(tumour, kind, rel)]        # row counts per file
 
-# 3a. Merged file: FILTER per caller combination (what does PASS mean for a merged record?)
+# 3a. The merged file is the source: one record per variant, INFO/CALLER = the callers that found it.
+# Each caller's set and every intersect come from INFO/CALLER, exactly like
+#   bcftools view -i 'INFO/CALLER~"mutect2" && INFO/CALLER~"strelka" && INFO/CALLER~"freebayes"'
 merged <- raw[kind == "merged"]
 if (nrow(merged)) {
-  merged[, CALLERS_SET := vapply(split_callers(CALLER), function(v) paste(sort(v), collapse = "+"), "")]
-  merged[, N_CALLERS := lengths(split_callers(CALLER))]
+  merged[, (CALLERS) := caller_flags(CALLER)]
+  merged[, N_CALLERS := rowSums(.SD), .SDcols = CALLERS]
+  merged[, CALLERS_SET := apply(.SD, 1, function(v) paste(CALLERS[v], collapse = "+")), .SDcols = CALLERS]
+  print(merged[, .N, by = .(CALLER)][order(-N)])           # raw INFO/CALLER values, to check the matching
+  print(merged[N_CALLERS == 0, .N, by = CALLER])           # records with none of CALLERS (should be none)
+  # FILTER per caller combination: what PASS means for a merged record
   merged_filter <- merged[, .(records = .N, PASS = sum(PASS)), by = .(tumour, CALLERS_SET)][order(tumour, -records)]
   print(merged_filter)
 }
 
-# 3b. Per-caller PASS sets: from the per-caller files if they exist, else from INFO/CALLER of the merged file
-if (any(files$kind == "caller")) {
-  per_caller <- raw[kind == "caller" & PASS == TRUE, .(tumour, SET = CALLER, CHROM, POS, REF, ALT, FILTER)]
-  PER_CALLER_SOURCE <- "per-caller files"
-} else {
-  per_caller <- merged[PASS == TRUE, .(SET = unlist(split_callers(CALLER))), by = .(tumour, CHROM, POS, REF, ALT, FILTER)]
+# 3b. Per-caller PASS sets from INFO/CALLER of the merged PASS records.
+# Only if there is no merged file, fall back to per-caller files.
+if (nrow(merged)) {
+  per_caller <- rbindlist(lapply(CALLERS, function(cl)
+    merged[PASS == TRUE & get(cl), .(tumour, SET = cl, CHROM, POS, REF, ALT, FILTER)]))
   PER_CALLER_SOURCE <- "merged file, INFO/CALLER (record FILTER = merged FILTER)"
+} else {
+  per_caller <- raw[kind == "caller" & PASS == TRUE, .(tumour, SET = CALLER, CHROM, POS, REF, ALT, FILTER)]
+  PER_CALLER_SOURCE <- "per-caller files (no merged file found)"
 }
 per_caller <- unique(per_caller[SET %chin% CALLERS])
 PER_CALLER_SOURCE
@@ -280,8 +292,10 @@ p_upset <- ggplot(exclusive, aes(factor(CALLERS_SET, levels = lvl), N, fill = fa
 save_plot(p_upset, "caller_overlap_exclusive", 12, 6)
 
 # ---- 7. Union vs single callers ---------------------------------------------
-# Union = PASS records of the merged file. Compared with each caller's PASS set and with the
-# union of the callers' PASS sets (they differ if the merged FILTER is not "PASS in any caller").
+# Union = PASS records of the merged file. Per caller: how much of its PASS set is in the union, and
+# how much of the union it contributes. Since the caller sets come from the same file (INFO/CALLER),
+# union_check should show only_merged = only_callers = 0; anything else flags a CALLER value none
+# of CALLERS matches (see block 3a).
 un <- atom[SET == "union", .(tumour, CLASS, ID)]
 cal_union <- unique(cal[, .(tumour, CLASS, ID)])          # union of the callers' PASS sets
 union_vs <- rbind(
