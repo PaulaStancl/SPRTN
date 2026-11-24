@@ -222,7 +222,7 @@ if (HAVE_SOMALIER) {
 make_test_data <- function(dir) {
   set.seed(20261124)
   dir.create(file.path(dir, "calls"), recursive = TRUE, showWarnings = FALSE)
-  chroms <- as.character(1:19); L <- 1e6
+  chroms <- as.character(1:19); L <- 1000000L       # integer: a double is written as 1e+06 in the .fai
   # FASTA + .fai written by hand (60 bases per line)
   fa <- file(FASTA, "w"); fai <- data.table(); off <- 0
   seqs <- list()
@@ -231,7 +231,7 @@ make_test_data <- function(dir) {
     hdr <- paste0(">", ch); writeLines(hdr, fa); off <- off + nchar(hdr) + 1
     lines <- vapply(split(s, ceiling(seq_along(s) / 60)), paste, "", collapse = "")
     writeLines(lines, fa)
-    fai <- rbind(fai, data.table(ch, L, off, 60, 61)); off <- off + sum(nchar(lines) + 1)
+    fai <- rbind(fai, data.table(ch, L, as.integer(off), 60L, 61L)); off <- off + sum(nchar(lines) + 1)
   }
   close(fa); fwrite(fai, paste0(FASTA, ".fai"), sep = "\t", col.names = FALSE)
   n_per <- 300
@@ -448,7 +448,8 @@ gt_str <- function(g) fcase(g == 0L, "0/0", g == 1L, "0/1", g == 2L, "1/1", defa
 geno[, ad_str := fifelse(masked, ".", paste(REF_N, ALT_N, sep = ","))]
 AD_W <- dcast(geno, key ~ sample, value.var = "ad_str")
 masked_vcf <- file.path(OUT, "masked", "masked_6samples.vcf")
-contig_lines <- fai[, sprintf("##contig=<ID=%s,length=%s>", ID, length)]
+# [CHANGE 9] lengths written as plain integers (a length like "1e+06" is read by bcftools as 1 and breaks the index)
+contig_lines <- fai[, sprintf("##contig=<ID=%s,length=%s>", ID, format(as.numeric(length), scientific = FALSE, trim = TRUE))]
 writeLines(c("##fileformat=VCFv4.2", contig_lines,
              '##INFO=<ID=AF,Number=A,Type=Float,Description="ALT allele frequency among the KI normal genotypes (in-sample)">',
              '##FILTER=<ID=PASS,Description="All filters passed">',
