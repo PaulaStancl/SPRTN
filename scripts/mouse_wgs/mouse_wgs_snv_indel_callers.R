@@ -217,6 +217,21 @@ if (nrow(rawc) && nrow(merged)) {
   print(mg[, .N, by = .(merged_PASS, any_PASS, all_found_PASS)][order(merged_PASS, any_PASS)])
   # Does INFO/CALLER list every caller that found the variant, or only those where it PASSed?
   for (cl in CALLERS) print(mg[, .N, by = .(caller = cl, in_INFO_CALLER = grepl(cl, CALLER, ignore.case = TRUE), state_in_own_file = mg[[cl]])])
+
+  # R6. The variants where the two routes disagree (>1 caller): raw combination vs merged combination,
+  #     and the state in each caller's own file. raw_set NA = not >1-caller PASS in the raw files;
+  #     merged_set NA = not a >1-caller PASS record in the merged file; all states "absent" = the
+  #     variant is written differently in the raw files (representation, e.g. not split/trimmed).
+  diff_routes <- merge(rp_w[N_CALLERS > 1, .(tumour, ID, raw_set = CALLERS_SET)],
+                       merged[N_CALLERS > 1 & PASS == TRUE, .(tumour, ID, merged_set = CALLERS_SET, merged_CALLER = CALLER)],
+                       by = c("tumour", "ID"), all = TRUE)[is.na(raw_set) | is.na(merged_set) | raw_set != merged_set]
+  diff_routes <- st_w[diff_routes, on = .(tumour, ID)]
+  for (cl in CALLERS) { if (!cl %in% names(diff_routes)) diff_routes[, (cl) := NA_character_]
+                        set(diff_routes, which(is.na(diff_routes[[cl]])), cl, "absent") }
+  diff_routes[, merged_FILTER := merged[diff_routes, on = .(tumour, ID), x.FILTER, mult = "first"]]
+  print(diff_routes[, .N, by = c("tumour", "raw_set", "merged_set", CALLERS, "merged_FILTER")][order(tumour, -N)])
+  print(head(diff_routes[order(tumour)], 20))
+  fwrite(diff_routes, file.path(OUT, "raw_vs_merged_disagreements.tsv"), sep = "\t")
 } else message("RAW -> PASS -> INTERSECT skipped: no single-caller files (kind == 'caller') or no merged file")
 
 
