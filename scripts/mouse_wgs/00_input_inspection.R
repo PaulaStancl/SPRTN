@@ -50,7 +50,7 @@ KI_NORMALS <- c(HCC_1 = "sfb_dikic_2025_05_05_KI1",
                 HCC_2 = "sfb_dikic_2025_05_06_KI2",
                 HCC_3 = "sfb_dikic_2025_05_07_KI3")
 
-TEST_CHROM <- TRUE     # TRUE: read records of chr19 only (quick test); FALSE: genome-wide
+TEST_CHROM <- FALSE    # TRUE: read records of chr19 only (quick test); FALSE: genome-wide
 CHECK_MD5  <- TRUE     # recompute md5 of every file (a few minutes for the BCFs)
 
 # ---- 1. Setup ----------------------------------------------------------------

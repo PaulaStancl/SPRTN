@@ -62,7 +62,7 @@ TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
              HCC_3 = "sfb_dikic_2025_05_12_KI_HCC_3")
 CALLERS <- c("strelka", "mutect2", "freebayes")
 
-TEST_CHROM <- TRUE      # TRUE: chr19 only (quick test); FALSE: genome-wide
+TEST_CHROM <- FALSE     # TRUE: chr19 only (quick test); FALSE: genome-wide
 
 # ---- 1. Setup ----------------------------------------------------------------
 suppressPackageStartupMessages({
