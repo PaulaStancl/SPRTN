@@ -92,9 +92,9 @@ files[, rel := substring(path, nchar(ROOT) + 2)]
 files[, file := basename(path)]
 files[, size_mb := round(file.size(path) / 1e6, 2)]
 files[, setting := fcase(
-  startsWith(rel, "tumor_vs_normal/snv_indel/"), "A",
-  startsWith(rel, "tumor_vs_joint_wt/"),         "B",
-  startsWith(rel, "tumor_only_pon/"),            "C",
+  startsWith(rel, "tumor_vs_normal/snv_indel/"), "tumor_normal",
+  startsWith(rel, "tumor_vs_joint_wt/"),         "tumor_joint_wt",
+  startsWith(rel, "tumor_only_pon/"),            "tumor_only_pon",
   startsWith(rel, "tumor_vs_normal/sv/calls/"),  "SV_raw",
   startsWith(rel, "tumor_vs_normal/sv/merged/"), "SV_merged",
   default = "other")]
@@ -150,10 +150,13 @@ lengths(headers)
 # 4a. Sample columns (from the #CHROM line: columns 10 onwards)
 sample_cols <- rbindlist(lapply(names(headers), function(r) {
   chrom_line <- tail(grep("^#CHROM", headers[[r]], value = TRUE), 1)
-  s <- strsplit(chrom_line, "\t", fixed = TRUE)[[1]]
-  if (length(s) < 10) return(data.table(rel = r, col = NA_integer_, sample = NA_character_))
-  data.table(rel = r, col = seq_along(s[-(1:9)]), sample = s[-(1:9)])
+  s <- if (length(chrom_line)) strsplit(chrom_line, "\t", fixed = TRUE)[[1]] else character(0)
+  if (length(s) < 10) return(data.table(rel = r, col = NA_integer_, sample = NA_character_,
+                                        has_chrom_line = length(chrom_line) > 0))
+  data.table(rel = r, col = seq_along(s[-(1:9)]), sample = s[-(1:9)], has_chrom_line = TRUE)
 }))
+# Files with no #CHROM line: header could not be read (e.g. a BCF without a working bcftools)
+sample_cols[has_chrom_line == FALSE, rel]
 sample_cols[, .(samples = paste(sample, collapse = ", ")), by = rel]
 
 # 4b. Attribute of a header line, e.g. ID / Number / Type / Description / Version
