@@ -12,8 +12,11 @@
 #   mutect2   FilterMutectCalls with sarek's orientation-bias priors
 #   freebayes crude prefilter: MQM>=40, normal 0/0, tumour 0/1, DP>=30 in both, QUAL/AO>=5, SAF>0, SAR>0
 #
-# The merged file is the single source: INFO/CALLER says which callers found each variant, so each
-# caller's set and all intersects come from it (as with bcftools view -i 'INFO/CALLER~"mutect2" && ...').
+# MERGED FILE FILTER (checked 2026-11-24, all 6.8 M merged records, no exception): it is the bcftools
+# merge default - PASS only if >=1 caller is PASS and no caller that found the variant has a named
+# filter; FreeBayes writes "." when its prefilter fails, so it never blocks PASS. INFO/CALLER lists every
+# caller that CALLED the variant, passed or not. So "merged PASS + >=2 callers" is NOT ">=2 callers PASS".
+# The correct per-caller PASS sets and intersects come from the single-caller files (R3, "my intersect").
 #
 # Questions answered, per tumour:
 #   1. how many SNVs and indels each caller finds
@@ -130,9 +133,9 @@ raw <- rbindlist(lapply(seq_len(nrow(files)), read_sites), use.names = TRUE, fil
 raw[, PASS := FILTER == "PASS"]
 raw[, .(records = .N, PASS = sum(PASS)), by = .(tumour, kind, rel)]        # row counts per file
 
-# 3a. The merged file is the source: one record per variant, INFO/CALLER = the callers that found it.
-# Each caller's set and every intersect come from INFO/CALLER, exactly like
-#   bcftools view -i 'INFO/CALLER~"mutect2" && INFO/CALLER~"strelka" && INFO/CALLER~"freebayes"'
+# 3a. The merged file: one record per variant, INFO/CALLER = the callers that CALLED it (any FILTER).
+# NOTE: its FILTER is the bcftools-merge union (see header and R5c), so INFO/CALLER on merged PASS
+# records does not mean those callers passed the variant.
 merged <- raw[kind == "merged"]
 if (nrow(merged)) {
   merged[, (CALLERS) := caller_flags(CALLER)]
@@ -228,6 +231,12 @@ if (nrow(rawc) && nrow(merged)) {
   print(rule_check)
   # Order of callers in INFO/CALLER (is it always mutect2 first, then strelka, then freebayes?)
   print(mg[, .N, by = CALLER][order(-N)])
+
+  # R5c. The rule that reproduces the merged FILTER exactly (bcftools merge default): PASS if >=1 caller
+  #      is PASS and no caller has a named filter (FreeBayes "." does not count). Expect no TRUE/FALSE mix.
+  merge_rule <- rawc[, .(fail = any(!FILTER %chin% c("PASS", ".")), pass = any(FILTER == "PASS")), by = .(tumour, ID)][
+    mg, on = .(tumour, ID)][, .N, by = .(merged_PASS, bcftools_merge_rule = pass & !fail)]
+  print(merge_rule)
 
   # R6. The variants where the two routes disagree (>1 caller): raw combination vs merged combination,
   #     and the state in each caller's own file. raw_set NA = not >1-caller PASS in the raw files;
