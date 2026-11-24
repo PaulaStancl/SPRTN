@@ -357,16 +357,27 @@ for (i in seq_len(nrow(fb_files))) {
 }
 merged_bcf <- file.path(gt_dir, "freebayes_merged.bcf")
 system(paste(B, "merge -Ob -o", shQuote(merged_bcf), paste(shQuote(tmp_bcf), collapse = " ")))
-gtcheck_raw <- system(paste(B, "gtcheck -u GT", shQuote(merged_bcf)), intern = TRUE)
+# bcftools >= 1.11: "-u GT", output DCv2 lines (query, genotyped, discordance, -logP(HWE), n_sites, n_matching)
+# older bcftools:   "-G 1" (GTs only), output CN lines (discordance, n_sites, avg min depth, sample i, sample j)
+bcf_ver <- as.numeric(strsplit(sub("^bcftools ([0-9]+\\.[0-9]+).*", "\\1", system2(BCFTOOLS, "--version", stdout = TRUE)[1]), ".", fixed = TRUE)[[1]])
+new_gtcheck <- bcf_ver[1] > 1 || bcf_ver[2] >= 11
+gtcheck_raw <- system(paste(B, "gtcheck", if (new_gtcheck) "-u GT" else "-G 1", shQuote(merged_bcf)), intern = TRUE)
 writeLines(gtcheck_raw, file.path(OUT, "bcftools_gtcheck_raw.txt"))
 gtcheck <- data.table()
-dc <- grep("^DCv2\t", gtcheck_raw, value = TRUE)       # bcftools >= 1.11: DCv2 query genotyped discordance -logP(HWE) n_sites n_matching
+dc <- grep("^DCv2\t", gtcheck_raw, value = TRUE)
+cn <- grep("^CN\t", gtcheck_raw, value = TRUE)
 if (length(dc)) {
   gtcheck <- fread(text = paste(dc, collapse = "\n"), header = FALSE, sep = "\t")
   setnames(gtcheck, 1:7, c("tag", "s1", "s2", "discordance", "avg_neg_log_p_hwe", "n_sites", "n_matching"))
-  gtcheck[, `:=`(s1 = short_name(s1), s2 = short_name(s2), discordance_per_1000 = round(1000 * discordance / n_sites, 2))]
+} else if (length(cn)) {
+  print(grep("^# \\[1\\]CN", gtcheck_raw, value = TRUE))          # column header of this bcftools version
+  gtcheck <- fread(text = paste(cn, collapse = "\n"), header = FALSE, sep = "\t")
+  setnames(gtcheck, 1:6, c("tag", "discordance", "n_sites", "avg_min_depth", "s1", "s2"))
+}
+if (nrow(gtcheck)) {
+  gtcheck[, `:=`(s1 = short_name(s1), s2 = short_name(s2), discordance_per_1000 = round(1000 * as.numeric(discordance) / as.numeric(n_sites), 2))]
   print(gtcheck[order(discordance_per_1000), .(s1, s2, n_sites, discordance, discordance_per_1000)])
-} else message("No DCv2 lines in the gtcheck output (older bcftools?) - see bcftools_gtcheck_raw.txt")
+} else message("No DCv2 or CN lines in the gtcheck output - see bcftools_gtcheck_raw.txt")
 unlink(gt_dir, recursive = TRUE)
 
 # ---- 10. Outputs -------------------------------------------------------------
