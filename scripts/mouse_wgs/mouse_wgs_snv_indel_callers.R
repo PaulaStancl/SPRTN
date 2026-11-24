@@ -186,6 +186,30 @@ if (nrow(rawc) && nrow(merged)) {
   rp_w[, N_CALLERS := rowSums(.SD > 0), .SDcols = CALLERS]
   rp_w[, CALLERS_SET := apply(.SD > 0, 1, function(v) paste(CALLERS[v], collapse = "+")), .SDcols = CALLERS]
 
+  # R3b. Venn diagram per tumour, SNVs: PASS in each caller's own file; numbers = unique and shared.
+  #      SNV = REF and ALT of equal length (MNVs as written; Strelka writes them as single SNVs).
+  snv_w <- rp_w[nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]])]
+  venn_regions <- data.table(CALLERS_SET = c(CALLERS, combn(CALLERS, 2, paste, collapse = "+"), paste(CALLERS, collapse = "+")),
+                             x = c(-1.25, 1.25, 0, 0, -0.8, 0.8, 0), y = c(0.65, 0.65, -1.35, 0.95, -0.4, -0.4, 0.1))
+  venn_n <- snv_w[, .N, by = .(tumour, CALLERS_SET)][CJ(tumour = unique(snv_w$tumour), CALLERS_SET = venn_regions$CALLERS_SET),
+                                                       on = .(tumour, CALLERS_SET)]
+  venn_n[is.na(N), N := 0L]
+  venn_n <- venn_regions[venn_n, on = "CALLERS_SET"]
+  print(dcast(venn_n, tumour ~ CALLERS_SET, value.var = "N"))
+  circ <- data.table(caller = CALLERS, cx = c(-0.6, 0.6, 0), cy = c(0.35, 0.35, -0.65))[
+    , .(x = cx + cos(seq(0, 2 * pi, length.out = 200)), y = cy + sin(seq(0, 2 * pi, length.out = 200))), by = caller]
+  venn_names <- rbindlist(lapply(CALLERS, function(cl) snv_w[get(cl) > 0, .(n = .N), by = tumour][, caller := cl]))
+  venn_names <- data.table(caller = CALLERS, x = c(-1.3, 1.3, 0), y = c(1.55, 1.55, -1.85))[venn_names, on = "caller"]
+  p_venn <- ggplot() +
+    geom_polygon(data = circ, aes(x, y, group = caller, fill = caller), alpha = 0.25, colour = "grey30") +
+    geom_text(data = venn_n, aes(x, y, label = format(N, big.mark = ",")), size = 3.5) +
+    geom_text(data = venn_names, aes(x, y, label = paste0(caller, "\n(n=", format(n, big.mark = ","), ")")), size = 3.3, fontface = "bold") +
+    facet_wrap(~ tumour) + coord_equal(clip = "off") +
+    scale_fill_manual(values = c(strelka = "#4C72B0", mutect2 = "#DD8452", freebayes = "#55A868"), guide = "none") +
+    labs(title = "SNVs, PASS in each caller's own file (tumour vs matched KI normal)") +
+    theme_void() + theme(strip.text = element_text(face = "bold", size = 12), plot.margin = margin(10, 20, 10, 20))
+  save_plot(p_venn, "venn_snv_callers", 12, 5)
+
   # R4. Same question, both routes side by side, per caller combination
   #     from_raw_PASS:    PASS in each single-caller file, then intersected
   #     from_merged_PASS: merged records with FILTER PASS, combination from INFO/CALLER
