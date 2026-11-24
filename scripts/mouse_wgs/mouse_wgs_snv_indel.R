@@ -22,6 +22,8 @@
 #   9  annotation: consequence classes, Sprtn, LoF, missense, cancer genes (if a list is given)
 #   10 outputs, summary.md, RUN_LOG.md
 #
+# Run mouse_wgs_snv_indel_callers.R FIRST (callers within setting A, union, SBS96).
+#
 # Rules kept here (see the project brief):
 #   - Counts only, not mutations per Mb: there are no BAMs, so no callable territory.
 #   - Agreement between settings shows robustness to the normal, not somatic origin.
@@ -115,6 +117,11 @@ files[, `:=`(
   has_AD     = sapply(rel, function(r) has_tag(hdr[[r]], "FORMAT", "AD")),
   has_DP     = sapply(rel, function(r) has_tag(hdr[[r]], "FORMAT", "DP")),
   has_AF     = sapply(rel, function(r) has_tag(hdr[[r]], "FORMAT", "AF")))]
+# Setting A: if the folder also has per-caller files, use only the merged file (INFO/CALLER) here;
+# the callers are compared with each other in mouse_wgs_snv_indel_callers.R
+files <- files[setting != "A" | has_CALLER | !tumour %chin% files[setting == "A" & has_CALLER, tumour]]
+files[, .N, by = setting]
+
 # Sample names from the #CHROM header line (columns 10 onwards)
 files[, samples := sapply(rel, function(r) {
   s <- strsplit(tail(grep("^#CHROM", hdr[[r]], value = TRUE), 1), "\t", fixed = TRUE)[[1]]

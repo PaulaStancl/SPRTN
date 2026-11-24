@@ -1,0 +1,493 @@
+#!/usr/bin/env Rscript
+# Author: Paula Breyer
+# Project: SPRTN (Maria Boskovic), mouse WGS | Created: 2026-11-24
+#
+# mouse_wgs_snv_indel_callers.R - FIRST STEP: callers in tumour vs matched KI normal (setting A).
+#
+# Folder: data/mouse/wgs/tumor_vs_normal/snv_indel/
+# Callers: Strelka2, Mutect2, FreeBayes. The provider split multiallelics (bcftools norm -m -any)
+# and merged the callers into one file per tumour with INFO/CALLER (the "union").
+# PASS as set by the provider:
+#   strelka   nf-core/sarek defaults
+#   mutect2   FilterMutectCalls with sarek's orientation-bias priors
+#   freebayes crude prefilter: MQM>=40, normal 0/0, tumour 0/1, DP>=30 in both, QUAL/AO>=5, SAF>0, SAR>0
+#
+# Questions answered, per tumour:
+#   1. how many SNVs and indels each caller finds
+#   2. how many are shared between each pair of callers (and by 1, 2 or 3 callers)
+#   3. how the merged union compares with the single callers
+#   4. the SBS96 (trinucleotide context) profile of each caller, the union, >=2 callers and all 3
+#
+# Blocks:
+#   0  EDIT THIS BLOCK
+#   1  setup and helpers
+#   2  files: per-caller files and/or the merged file
+#   3  read PASS records; per-caller sets (from per-caller files if present, else from INFO/CALLER)
+#   4  variant types; MNVs split into SNVs for the comparison
+#   5  counts per caller and the union (+ qcVCF plot_mutation_counts)
+#   6  pairwise sharing between callers (+ qcVCF plot_pairwise_shared_mutations), exclusive categories
+#   7  union vs single callers
+#   8  SBS96 context: profiles, plots (ggplot + qcVCF plot96_matrix), cosine similarity
+#   9  outputs, summary.md, RUN_LOG.md
+#
+# Comparison unit: chrom:pos:ref:alt. MNVs are split into SNVs (Strelka writes a CC>TT as two C>T,
+# Mutect2/FreeBayes as one MNV), as in scripts/analysis/01_sarek.R. Doublet halves (adjacent SNVs
+# within one set) are left out of SBS96, as in scripts/analysis/00_setup.R.
+# Open question (memory, 2026-10-07): split MNVs vs join doublets as the comparison unit - not changed here.
+# Indels are not left-aligned (no -f in the provider's bcftools norm), so FreeBayes indels written
+# differently from Mutect2/Strelka will not match even when they are the same event.
+#
+# Env on ssi: r-mutation (data.table, ggplot2, qcVCF, bcftools, samtools).
+# Output: results/mouse_wgs/mouse_wgs_snv_indel_callers/
+
+# ---- 0. EDIT THIS BLOCK ------------------------------------------------------
+REPO     <- "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN"
+DIR_A    <- file.path(REPO, "data/mouse/wgs/tumor_vs_normal/snv_indel")
+OUT      <- file.path(REPO, "results/mouse_wgs/mouse_wgs_snv_indel_callers")
+SCRIPT   <- file.path(REPO, "scripts/mouse_wgs/mouse_wgs_snv_indel_callers.R")
+
+# GRCm38 FASTA (Ensembl 102 primary assembly, from scripts/cross_species/h2m 00_resources.R), + .fai
+FASTA    <- "/common/WORK/pstancl/references/cross_species/fasta/Mus_musculus.GRCm38.dna.primary_assembly.fa"
+
+# Tools: RStudio often does not see the env's PATH, so fall back to the env's bin/
+ENV_BIN  <- "/common/WORK/pstancl/envs/r-mutation/bin"
+BCFTOOLS <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path(ENV_BIN, "bcftools")
+SAMTOOLS <- Sys.which("samtools"); if (!nzchar(SAMTOOLS)) SAMTOOLS <- file.path(ENV_BIN, "samtools")
+
+TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
+             HCC_2 = "sfb_dikic_2025_05_11_KI_HCC_2",
+             HCC_3 = "sfb_dikic_2025_05_12_KI_HCC_3")
+CALLERS <- c("strelka", "mutect2", "freebayes")
+
+TEST_CHROM <- TRUE      # TRUE: chr19 only (quick test); FALSE: genome-wide
+
+# ---- 1. Setup ----------------------------------------------------------------
+suppressPackageStartupMessages({
+  library(data.table)
+  library(ggplot2)
+})
+HAVE_QCVCF <- requireNamespace("qcVCF", quietly = TRUE)
+if (!file.exists(BCFTOOLS)) stop("bcftools not found at ", BCFTOOLS, " - install it in r-mutation or set BCFTOOLS")
+HAVE_FASTA <- file.exists(SAMTOOLS) && file.exists(FASTA) && file.exists(paste0(FASTA, ".fai"))
+if (!HAVE_FASTA) message("No samtools or FASTA(.fai): the SBS96 part (block 8) will be skipped")
+dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
+started <- Sys.time()
+
+# bcftools: stdout lines; on failure shows bcftools' own message
+bcf <- function(args) {
+  err <- tempfile()
+  out <- tryCatch(suppressWarnings(system2(BCFTOOLS, args, stdout = TRUE, stderr = err)),
+                  error = function(e) structure(character(), status = -1L, msg = conditionMessage(e)))
+  st <- attr(out, "status")
+  if (!is.null(st) && st != 0)
+    stop("bcftools failed: bcftools ", paste(args, collapse = " "), "\n",
+         paste(c(attr(out, "msg"), readLines(err, warn = FALSE)), collapse = "\n"))
+  out
+}
+save_plot <- function(p, name, w = 9, h = 6) {
+  ggsave(file.path(OUT, paste0(name, ".pdf")), p, width = w, height = h, limitsize = FALSE)
+  ggsave(file.path(OUT, paste0(name, ".png")), p, width = w, height = h, dpi = 150, limitsize = FALSE)
+  invisible(p)
+}
+# Callers in INFO/CALLER: split on , | ; & +
+split_callers <- function(x) lapply(strsplit(tolower(x), "[,|;&+]"), function(v) unique(trimws(v[nzchar(v)])))
+
+# ---- 2. Files ----------------------------------------------------------------
+files <- data.table(path = list.files(DIR_A, recursive = TRUE, full.names = TRUE, pattern = "\\.(bcf|vcf|vcf\\.gz)$"))
+files[, rel := substring(path, nchar(DIR_A) + 2)]
+files[, tumour := NA_character_]
+for (k in names(TUMOURS)) files[grepl(TUMOURS[[k]], rel, fixed = TRUE), tumour := k]
+files[, caller_in_name := NA_character_]
+for (cl in CALLERS) files[is.na(caller_in_name) & grepl(cl, basename(rel), ignore.case = TRUE), caller_in_name := cl]
+hdr <- setNames(lapply(files$path, function(f) bcf(c("view", "-h", shQuote(f)))), files$rel)
+files[, has_CALLER := sapply(rel, function(r) any(startsWith(hdr[[r]], "##INFO=<ID=CALLER,")))]
+# merged = has INFO/CALLER; caller = file named after one caller; else unknown
+files[, kind := fcase(has_CALLER, "merged", !is.na(caller_in_name), "caller", default = "unknown")]
+files[, .(tumour, kind, caller_in_name, file = rel)]
+stopifnot(!anyNA(files$tumour))
+files[, .N, by = .(tumour, kind)]
+
+# chr19 is "19" (Ensembl / iGenomes GRCm38) or "chr19" (UCSC mm10)
+TEST_CONTIG <- if (any(grepl("^##contig=<ID=chr19,", unlist(hdr)))) "chr19" else "19"
+TEST_CONTIG
+
+# ---- 3. Read records ---------------------------------------------------------
+read_sites <- function(i) {
+  f <- files[i]
+  fmt <- paste0("%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER", if (f$has_CALLER) "\\t%INFO/CALLER", "\\n")
+  cn <- c("CHROM", "POS", "REF", "ALT", "FILTER", if (f$has_CALLER) "CALLER")
+  cmd <- paste(shQuote(BCFTOOLS), "query", if (TEST_CHROM) paste("-t", TEST_CONTIG), "-f", shQuote(fmt), shQuote(f$path))
+  x <- tryCatch(fread(cmd = cmd, sep = "\t", header = FALSE, col.names = cn, quote = "",
+                      colClasses = list(character = setdiff(cn, "POS"), integer = "POS")),
+                error = function(e) { message(f$rel, ": no records read (", conditionMessage(e), ")"); data.table() })
+  if (!nrow(x)) return(NULL)
+  if (!f$has_CALLER) x[, CALLER := f$caller_in_name]
+  x[, `:=`(tumour = f$tumour, kind = f$kind, rel = f$rel)]
+  x
+}
+raw <- rbindlist(lapply(seq_len(nrow(files)), read_sites), use.names = TRUE, fill = TRUE)
+raw[, PASS := FILTER == "PASS"]
+raw[, .(records = .N, PASS = sum(PASS)), by = .(tumour, kind, rel)]        # row counts per file
+
+# 3a. Merged file: FILTER per caller combination (what does PASS mean for a merged record?)
+merged <- raw[kind == "merged"]
+if (nrow(merged)) {
+  merged[, CALLERS_SET := vapply(split_callers(CALLER), function(v) paste(sort(v), collapse = "+"), "")]
+  merged[, N_CALLERS := lengths(split_callers(CALLER))]
+  merged_filter <- merged[, .(records = .N, PASS = sum(PASS)), by = .(tumour, CALLERS_SET)][order(tumour, -records)]
+  print(merged_filter)
+}
+
+# 3b. Per-caller PASS sets: from the per-caller files if they exist, else from INFO/CALLER of the merged file
+if (any(files$kind == "caller")) {
+  per_caller <- raw[kind == "caller" & PASS == TRUE, .(tumour, SET = CALLER, CHROM, POS, REF, ALT, FILTER)]
+  PER_CALLER_SOURCE <- "per-caller files"
+} else {
+  per_caller <- merged[PASS == TRUE, .(SET = unlist(split_callers(CALLER))), by = .(tumour, CHROM, POS, REF, ALT, FILTER)]
+  PER_CALLER_SOURCE <- "merged file, INFO/CALLER (record FILTER = merged FILTER)"
+}
+per_caller <- unique(per_caller[SET %chin% CALLERS])
+PER_CALLER_SOURCE
+per_caller[, .N, by = .(tumour, SET)][order(tumour, SET)]
+
+# 3c. The union = PASS records of the merged file
+union_pass <- if (nrow(merged)) merged[PASS == TRUE, .(tumour, SET = "union", CHROM, POS, REF, ALT, FILTER)] else data.table()
+union_pass[, .N, by = tumour]
+
+# ---- 4. Variant types; MNVs split into SNVs ------------------------------------
+add_type <- function(x) {
+  x[, TYPE := fcase(nchar(REF) == 1 & nchar(ALT) == 1, "SNV",
+                    nchar(REF) == nchar(ALT),          "MNV",
+                    nchar(REF) <  nchar(ALT) & substr(REF, 1, 1) == substr(ALT, 1, 1), "INS",
+                    nchar(REF) >  nchar(ALT) & substr(REF, 1, 1) == substr(ALT, 1, 1), "DEL",
+                    default = "complex")]
+  x[, CLASS := fifelse(TYPE %chin% c("SNV", "MNV"), "SNV", "INDEL")]
+  x
+}
+sets <- add_type(rbind(per_caller, union_pass))
+sets[, .N, by = .(tumour, SET, TYPE)][order(tumour, SET, TYPE)]   # records as called (MNVs whole)
+
+# Split MNVs into their SNVs (positions where REF and ALT differ)
+split_mnv <- function(x) {
+  m <- x[TYPE == "MNV"]
+  if (!nrow(m)) return(x[, FROM_MNV := FALSE][])
+  n <- nchar(m$REF)
+  e <- m[rep(seq_len(.N), n)]
+  e[, k := sequence(n)]
+  e[, `:=`(POS = POS + k - 1L, REF = substring(REF, k, k), ALT = substring(ALT, k, k))]
+  e <- e[REF != ALT][, `:=`(TYPE = "SNV", FROM_MNV = TRUE, k = NULL)]
+  rbind(x[TYPE != "MNV"][, FROM_MNV := FALSE], e)
+}
+atom <- split_mnv(copy(sets))
+atom[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
+atom <- unique(atom, by = c("tumour", "SET", "ID"))
+atom[, .N, by = .(tumour, SET, CLASS)][order(tumour, SET, CLASS)]
+
+SET_LEVELS <- c(CALLERS, "union")
+atom[, SET := factor(SET, levels = SET_LEVELS)]
+
+# ---- 5. Counts per caller and the union ---------------------------------------
+counts <- sets[, .(records = .N, SNV = sum(TYPE == "SNV"), MNV = sum(TYPE == "MNV"),
+                   INS = sum(TYPE == "INS"), DEL = sum(TYPE == "DEL"), complex = sum(TYPE == "complex")),
+               by = .(tumour, SET)]
+counts[atom[, .(SNV_after_MNV_split = sum(CLASS == "SNV"), INDEL = sum(CLASS == "INDEL")), by = .(tumour, SET)],
+       on = .(tumour, SET), `:=`(SNV_after_MNV_split = i.SNV_after_MNV_split, INDEL = i.INDEL)]
+counts[, SET := factor(SET, levels = SET_LEVELS)]
+setorder(counts, tumour, SET)
+counts
+
+p_counts <- ggplot(atom[, .N, by = .(tumour, SET, CLASS)], aes(SET, N, fill = CLASS)) +
+  geom_col(position = "dodge") +
+  geom_text(aes(label = N), position = position_dodge(width = 0.9), vjust = -0.3, size = 3) +
+  facet_wrap(~ tumour, scales = "free_y") +
+  labs(x = NULL, y = "PASS variants (MNVs split)", fill = NULL,
+       title = paste("Tumour vs matched KI normal: SNVs and indels per caller",
+                     if (TEST_CHROM) paste0("(", TEST_CONTIG, ")") else "")) +
+  theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1))
+save_plot(p_counts, "counts_per_caller", 10, 5)
+
+# qcVCF: counts per caller (MUTTYPE classes SNV, MNV, INS, DEL; records as called)
+if (HAVE_QCVCF) {
+  library(qcVCF)
+  for (t in names(TUMOURS)) {
+    q <- sets[tumour == t & SET %chin% CALLERS & TYPE != "complex",
+              .(CHROM, POS, REF, ALT, subjectID = tumour, tool = SET, mutType = TYPE)]
+    if (nrow(q)) save_plot(plot_mutation_counts(q, grp_col = "tool", cohort = t), paste0("qcVCF_mutation_counts_", t), 8, 6)
+  }
+}
+
+# ---- 6. Pairwise sharing between callers -------------------------------------
+cal <- atom[SET %chin% CALLERS]
+cal[, SET := droplevels(SET)]
+
+# 6a. Pairwise table: shared, % of the row caller, Jaccard
+pairwise <- cal[, {
+  s <- split(ID, SET)
+  pr <- CJ(caller_1 = names(s), caller_2 = names(s))
+  pr[, `:=`(n_1 = lengths(s[caller_1]), n_2 = lengths(s[caller_2]),
+            shared = mapply(function(a, b) length(intersect(s[[a]], s[[b]])), caller_1, caller_2))]
+  pr[, `:=`(pct_of_1 = round(100 * shared / n_1, 1), jaccard = round(shared / (n_1 + n_2 - shared), 3))]
+  pr
+}, by = .(tumour, CLASS)]
+pairwise[caller_1 != caller_2]
+
+p_pair <- ggplot(pairwise, aes(caller_2, caller_1, fill = pct_of_1)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = sprintf("%d\n%.0f%%", shared, pct_of_1)), size = 3) +
+  facet_grid(CLASS ~ tumour) +
+  scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 100)) +
+  labs(x = "found also by", y = "caller (row = 100%)", fill = "% of row",
+       title = "Pairwise shared PASS variants between callers") +
+  theme_bw()
+save_plot(p_pair, "pairwise_shared", 10, 6)
+
+# qcVCF pairwise plots (SNV and INDEL apart), as in scripts/analysis/01_sarek.R
+qc_pairwise <- data.table()
+if (HAVE_QCVCF) {
+  qc_pairwise <- rbindlist(lapply(names(TUMOURS), function(t) rbindlist(lapply(c("SNV", "INDEL"), function(cl) {
+    q <- cal[tumour == t & CLASS == cl, .(CHROM, POS, REF, ALT, subjectID = tumour, tool = as.character(SET))]
+    # qcVCF's by = get() fails on very small classes; skip those instead of stopping
+    pw <- tryCatch(plot_pairwise_shared_mutations(q, sample_col = "tool", cohort = paste(t, cl)),
+                   error = function(e) { message("qcVCF pairwise ", t, " ", cl, " skipped: ", conditionMessage(e)); NULL })
+    if (is.null(pw)) return(NULL)
+    save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", t, "_", cl), 7, 6)
+    as.data.table(pw$data)[, `:=`(tumour = t, CLASS = cl)]
+  }), fill = TRUE)), fill = TRUE)
+  print(qc_pairwise)
+}
+
+# 6b. Exclusive categories: which callers found each variant; number of callers
+memb <- dcast(cal, tumour + CLASS + ID ~ SET, fun.aggregate = length, value.var = "ID")
+for (cl in CALLERS) if (!cl %in% names(memb)) memb[, (cl) := 0L]
+memb[, N_CALLERS := rowSums(.SD > 0), .SDcols = CALLERS]
+memb[, CALLERS_SET := apply(.SD > 0, 1, function(v) paste(CALLERS[v], collapse = "+")), .SDcols = CALLERS]
+exclusive <- memb[, .N, by = .(tumour, CLASS, CALLERS_SET, N_CALLERS)]
+exclusive[, pct := round(100 * N / sum(N), 1), by = .(tumour, CLASS)]
+setorder(exclusive, tumour, CLASS, -N)
+exclusive
+by_n_callers <- memb[, .N, by = .(tumour, CLASS, N_CALLERS)][order(tumour, CLASS, N_CALLERS)]
+by_n_callers
+
+lvl <- c(CALLERS, combn(CALLERS, 2, paste, collapse = "+"), paste(CALLERS, collapse = "+"))
+p_upset <- ggplot(exclusive, aes(factor(CALLERS_SET, levels = lvl), N, fill = factor(N_CALLERS))) +
+  geom_col() + geom_text(aes(label = N), vjust = -0.3, size = 3) +
+  facet_grid(CLASS ~ tumour, scales = "free_y") +
+  labs(x = "found by (exclusive)", y = "PASS variants", fill = "callers",
+       title = "Caller overlap, exclusive categories (UpSet-style)") +
+  theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+save_plot(p_upset, "caller_overlap_exclusive", 12, 6)
+
+# ---- 7. Union vs single callers ---------------------------------------------
+# Union = PASS records of the merged file. Compared with each caller's PASS set and with the
+# union of the callers' PASS sets (they differ if the merged FILTER is not "PASS in any caller").
+un <- atom[SET == "union", .(tumour, CLASS, ID)]
+cal_union <- unique(cal[, .(tumour, CLASS, ID)])          # union of the callers' PASS sets
+union_vs <- rbind(
+  cal[, .(n_caller = .N, in_union = sum(ID %chin% un[tumour == .BY$tumour & CLASS == .BY$CLASS, ID])),
+      by = .(tumour, CLASS, SET)][, pct_of_caller_in_union := round(100 * in_union / n_caller, 1)],
+  fill = TRUE)
+union_vs[un[, .(n_union = .N), by = .(tumour, CLASS)], on = .(tumour, CLASS), n_union := i.n_union]
+union_vs[, pct_of_union_from_caller := round(100 * in_union / n_union, 1)]
+setorder(union_vs, tumour, CLASS, SET)
+union_vs
+
+# Merged-union PASS vs union of the callers' PASS sets
+union_check <- merge(un[, .(merged_union = .N), by = .(tumour, CLASS)],
+                     cal_union[, .(callers_union = .N), by = .(tumour, CLASS)], by = c("tumour", "CLASS"), all = TRUE)
+union_check[, both := mapply(function(t, cl) length(intersect(un[tumour == t & CLASS == cl, ID],
+                                                              cal_union[tumour == t & CLASS == cl, ID])), tumour, CLASS)]
+union_check[, `:=`(only_merged = merged_union - both, only_callers = callers_union - both)]
+union_check
+
+# Union by number of callers (from INFO/CALLER of the merged PASS records)
+if (nrow(merged)) {
+  union_n <- add_type(merged[PASS == TRUE])[, .N, by = .(tumour, CLASS, N_CALLERS)][order(tumour, CLASS, N_CALLERS)]
+  union_n[, pct := round(100 * N / sum(N), 1), by = .(tumour, CLASS)]
+  print(union_n)
+  p_union <- ggplot(union_n, aes(factor(N_CALLERS), N)) + geom_col(fill = "grey30") +
+    geom_text(aes(label = paste0(N, "\n(", pct, "%)")), vjust = -0.2, size = 3) +
+    facet_grid(CLASS ~ tumour, scales = "free_y") +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+    labs(x = "number of callers (INFO/CALLER)", y = "PASS records in the merged union",
+         title = "Merged union: how many callers support each record") + theme_bw()
+  save_plot(p_union, "union_by_n_callers", 9, 6)
+} else union_n <- data.table()
+
+# ---- 8. SBS96 context ----------------------------------------------------------
+# Sets: each caller, the union, >=2 callers, all 3 callers. SNVs after MNV split; doublet halves out.
+SBS96_TYPES <- sort(CJ(b5 = c("A", "C", "G", "T"), sub = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"),
+                       b3 = c("A", "C", "G", "T"))[, paste0(b5, "[", sub, "]", b3)], method = "radix")
+# + strand trinucleotide from the FASTA (samtools faidx); contig names matched to the .fai
+trinuc_context <- function(d) {
+  fai <- fread(paste0(FASTA, ".fai"), header = FALSE, select = 1)[[1]]
+  chrom <- fifelse(d$CHROM %chin% fai, d$CHROM, sub("^chr", "", d$CHROM))
+  reg <- paste0(chrom, ":", d$POS - 1L, "-", d$POS + 1L)
+  rf <- tempfile(fileext = ".txt"); on.exit(unlink(rf))
+  writeLines(unique(reg), rf)
+  fa <- system2(SAMTOOLS, c("faidx", "-r", shQuote(rf), shQuote(FASTA)), stdout = TRUE)
+  h <- startsWith(fa, ">")
+  seqs <- data.table(region = sub("^>", "", fa[h]), NC_3 = toupper(fa[which(h) + 1L]))
+  seqs[data.table(region = reg), on = "region"]$NC_3
+}
+# SBS96 class on the pyrimidine strand, e.g. A[C>T]G (G/A references reverse-complemented)
+sbs96 <- function(ref, alt, nc3) {
+  rc <- function(x) chartr("ACGT", "TGCA", x)
+  pur <- ref %chin% c("A", "G")
+  b5 <- fifelse(pur, rc(substr(nc3, 3, 3)), substr(nc3, 1, 1))
+  b3 <- fifelse(pur, rc(substr(nc3, 1, 1)), substr(nc3, 3, 3))
+  out <- paste0(b5, "[", fifelse(pur, rc(ref), ref), ">", fifelse(pur, rc(alt), alt), "]", b3)
+  out[is.na(nc3)] <- NA_character_
+  out
+}
+# Doublet half: another SNV of the same set at the neighbouring position
+in_doublet <- function(d) {
+  here <- paste(d$tumour, d$SET, d$CHROM, d$POS)
+  paste(d$tumour, d$SET, d$CHROM, d$POS - 1L) %chin% here | paste(d$tumour, d$SET, d$CHROM, d$POS + 1L) %chin% here
+}
+
+snv96 <- data.table(); m96 <- data.table(); cosine <- data.table()
+if (HAVE_FASTA) {
+  snv <- atom[CLASS == "SNV", .(tumour, SET = as.character(SET), CHROM, POS, REF, ALT, ID)]
+  snv_cal <- memb[CLASS == "SNV", .(tumour, ID, N_CALLERS)]
+  snv <- rbind(snv,
+               snv[SET %chin% CALLERS][snv_cal[N_CALLERS >= 2], on = .(tumour, ID), nomatch = NULL][, SET := ">=2 callers"][, N_CALLERS := NULL],
+               snv[SET %chin% CALLERS][snv_cal[N_CALLERS == 3], on = .(tumour, ID), nomatch = NULL][, SET := "all 3 callers"][, N_CALLERS := NULL])
+  snv <- unique(snv, by = c("tumour", "SET", "ID"))
+  snv[, NC_3 := trinuc_context(snv)]
+  ref_mismatch <- snv[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]
+  if (ref_mismatch) warning(ref_mismatch, " SNVs whose REF is not the FASTA base - is this the genome the callers used?")
+  snv[, IN_DBS := in_doublet(snv)]
+  snv[!IN_DBS & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT, NC_3)]
+  print(snv[, .(SNVs = .N, doublet_halves = sum(IN_DBS), with_SBS96 = sum(!is.na(SBS96))), by = .(tumour, SET)])
+
+  SET96 <- c(CALLERS, "union", ">=2 callers", "all 3 callers")
+  snv96 <- snv[!is.na(SBS96)]
+  snv96[, SET := factor(SET, levels = SET96)]
+  snv96[, SUB := substr(SBS96, 3, 5)]
+
+  # Count matrix: rows = 96 types, columns = tumour x set (SigProfiler format)
+  m96 <- dcast(snv96[, .N, by = .(SBS96, col = paste(tumour, SET, sep = "|"))], SBS96 ~ col, value.var = "N", fill = 0)
+  m96 <- m96[data.table(SBS96 = SBS96_TYPES), on = "SBS96"]
+  for (cl in setdiff(names(m96), "SBS96")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
+  setnames(m96, "SBS96", "MutationType")
+
+  # 96-context bar plot: rows = sets, columns = tumours, % of each set's SNVs
+  prof <- snv96[, .N, by = .(tumour, SET, SBS96, SUB)]
+  prof <- prof[CJ(tumour = unique(prof$tumour), SET = factor(SET96, levels = SET96), SBS96 = SBS96_TYPES, unique = TRUE),
+               on = .(tumour, SET, SBS96)]
+  prof[is.na(N), N := 0L][, SUB := substr(SBS96, 3, 5)]
+  prof[, `:=`(n_set = sum(N), pct = if (sum(N)) 100 * N / sum(N) else 0), by = .(tumour, SET)]
+  prof <- prof[n_set > 0]
+  prof[, panel := paste0(SET, " (n=", n_set, ")")]
+  prof[, SBS96 := factor(SBS96, levels = SBS96_TYPES[order(substr(SBS96_TYPES, 3, 5), SBS96_TYPES)])]
+  sub_cols <- c("C>A" = "#1EBFF0", "C>G" = "#050708", "C>T" = "#E62725", "T>A" = "#CBCACB", "T>C" = "#A1CF64", "T>G" = "#EDC8C5")
+  for (t in unique(prof$tumour)) {
+    p96 <- ggplot(prof[tumour == t], aes(SBS96, pct, fill = SUB)) +
+      geom_col(width = 0.8) +
+      facet_grid(SET ~ SUB, scales = "free_x", space = "free_x",
+                 labeller = labeller(SET = setNames(prof[tumour == t, unique(panel)], prof[tumour == t, unique(as.character(SET))]))) +
+      scale_fill_manual(values = sub_cols, guide = "none") +
+      labs(x = NULL, y = "% of SNVs", title = paste(t, "- SBS96 per caller and set (GRCm38 context)")) +
+      theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 5, family = "mono"),
+                         strip.text.y = element_text(angle = 0), panel.spacing.x = unit(0.5, "mm"))
+    save_plot(p96, paste0("sbs96_", t), 16, 2 + 1.6 * uniqueN(prof[tumour == t, SET]))
+  }
+
+  # qcVCF 96-context plot (as in scripts/analysis/00_setup.R plot_96context): NC_3 given on the
+  # pyrimidine strand from SBS96; single-value options. One plot per tumour, one column per set.
+  if (HAVE_QCVCF && all(sapply(c("cowplot", "stringr", "stringi", "ggtext"), requireNamespace, quietly = TRUE))) {
+    for (t in names(TUMOURS)) {
+      q96 <- snv96[tumour == t, .(CHROM, POS, REF, ALT, tool = as.character(SET),
+                                  NC_3 = paste0(substr(SBS96, 1, 1), substr(SBS96, 3, 3), substr(SBS96, 7, 7)))]
+      if (!nrow(q96)) next
+      fig <- tryCatch(qcVCF::plot96_matrix(q96, rowsplit = NULL, plotsplitcol = "tool", orderplots = "no", showperc = "yes",
+                                           dropempty = "no", dontshowall = "yes", roworder = "all SNVs"),
+                      error = function(e) { message("qcVCF plot96_matrix ", t, " skipped: ", conditionMessage(e)); NULL })
+      for (k in seq_along(fig)) save_plot(fig[[k]], paste0("qcVCF_sbs96_", t, if (k > 1) paste0("_", k)), 9 * uniqueN(q96$tool), 4)
+    }
+  }
+
+  # Cosine similarity of the SBS96 profiles, per tumour, between sets
+  cosine <- rbindlist(lapply(names(TUMOURS), function(t) {
+    cols <- grep(paste0("^", t, "\\|"), names(m96), value = TRUE)
+    if (length(cols) < 2) return(NULL)
+    M <- as.matrix(m96[, ..cols]); colnames(M) <- sub("^[^|]*\\|", "", cols)
+    nrm <- sqrt(colSums(M^2)); C <- crossprod(M) / outer(nrm, nrm)
+    data.table(tumour = t, set_1 = rownames(C)[row(C)], set_2 = colnames(C)[col(C)], cosine = round(as.vector(C), 3))
+  }))
+  print(dcast(cosine, tumour + set_1 ~ set_2, value.var = "cosine"))
+  p_cos <- ggplot(cosine, aes(set_2, set_1, fill = cosine)) + geom_tile(colour = "white") +
+    geom_text(aes(label = sprintf("%.2f", cosine)), size = 3) + facet_wrap(~ tumour) +
+    scale_fill_gradient(low = "white", high = "darkred", limits = c(0, 1)) +
+    labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles") +
+    theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  save_plot(p_cos, "sbs96_cosine", 13, 5)
+}
+
+# ---- 9. Outputs --------------------------------------------------------------
+tag <- if (TEST_CHROM) paste0("_", TEST_CONTIG) else ""
+w <- function(x, name) if (nrow(x)) fwrite(x, file.path(OUT, paste0(name, tag, ".tsv")), sep = "\t")
+w(files[, !"path"], "files")
+if (nrow(merged)) w(merged_filter, "merged_filter_by_caller_combination")
+w(counts, "counts_per_caller")
+w(pairwise, "pairwise_shared"); w(qc_pairwise, "qcVCF_pairwise_shared")
+w(exclusive, "caller_overlap_exclusive"); w(by_n_callers, "caller_overlap_by_n_callers")
+w(union_vs, "union_vs_callers"); w(union_check, "union_merged_vs_callers_union"); w(union_n, "union_by_n_callers")
+w(m96, "sbs96_matrix"); w(cosine, "sbs96_cosine")
+
+saveRDS(list(files = files, raw = raw, per_caller = per_caller, per_caller_source = PER_CALLER_SOURCE,
+             union_pass = union_pass, sets = sets, atom = atom, counts = counts, pairwise = pairwise,
+             memb = memb, exclusive = exclusive, union_vs = union_vs, union_check = union_check, union_n = union_n,
+             snv96 = snv96, m96 = m96, cosine = cosine,
+             params = list(TEST_CHROM = TEST_CHROM, TEST_CONTIG = TEST_CONTIG, FASTA = FASTA)),
+        file.path(OUT, paste0("callers", tag, ".rds")))
+
+fwrite(data.table(parameter = c("DIR_A", "OUT", "FASTA", "BCFTOOLS", "SAMTOOLS", "TEST_CHROM", "TEST_CONTIG",
+                                "PER_CALLER_SOURCE", paste0("TUMOUR_", names(TUMOURS))),
+                  value = c(DIR_A, OUT, FASTA, BCFTOOLS, SAMTOOLS, TEST_CHROM, TEST_CONTIG, PER_CALLER_SOURCE, TUMOURS)),
+       file.path(OUT, "parameters.tsv"), sep = "\t")
+fwrite(data.table(file = files$rel, md5 = unname(tools::md5sum(files$path))), file.path(OUT, "input_md5.tsv"), sep = "\t")
+git_hash <- tryCatch(system2("git", c("-C", shQuote(REPO), "rev-parse", "--short", "HEAD"), stdout = TRUE), error = function(e) "unknown")
+writeLines(c(R.version.string, bcf("--version")[1],
+             if (file.exists(SAMTOOLS)) system2(SAMTOOLS, "--version", stdout = TRUE)[1] else "samtools not found",
+             paste("data.table", packageVersion("data.table")), paste("ggplot2", packageVersion("ggplot2")),
+             if (HAVE_QCVCF) paste("qcVCF", packageVersion("qcVCF")) else "qcVCF not installed",
+             paste("FASTA", FASTA), paste("git", git_hash)), file.path(OUT, "versions.txt"))
+writeLines(capture.output(sessionInfo()), file.path(OUT, "sessionInfo.txt"))
+
+md_table <- function(x) {
+  x <- as.data.table(x)
+  c(paste("|", paste(names(x), collapse = " | "), "|"), paste("|", paste(rep("---", ncol(x)), collapse = " | "), "|"),
+    apply(x, 1, function(r) paste("|", paste(r, collapse = " | "), "|")))
+}
+writeLines(c(
+  "# mouse_wgs_snv_indel_callers summary", "",
+  paste0("Run ", format(started, "%Y-%m-%d %H:%M"), "; ", if (TEST_CHROM) paste0("**", TEST_CONTIG, " only (test run)**") else "genome-wide",
+         ". Per-caller sets from: ", PER_CALLER_SOURCE, ". PASS records only; MNVs split into SNVs."), "",
+  "## Counts per caller and the union", "", md_table(counts), "",
+  "## Pairwise shared (row caller = 100%)", "", md_table(pairwise[caller_1 != caller_2]), "",
+  "## Variants by number of callers", "", md_table(by_n_callers), "",
+  "## Union vs single callers", "", md_table(union_vs), "", md_table(union_check), "",
+  if (nrow(cosine)) c("## SBS96 cosine similarity", "", md_table(dcast(cosine, tumour + set_1 ~ set_2, value.var = "cosine")), "") else
+    "SBS96 skipped (no FASTA/samtools).",
+  "## Notes", "",
+  "- Agreement between callers shows robustness to the caller, not somatic origin.",
+  "- FreeBayes PASS is a crude prefilter, not a somatic model; expect more germline/artefact calls.",
+  "- Indels not left-aligned: FreeBayes indels may miss matches with Mutect2/Strelka for representation alone.",
+  "- Doublet halves are left out of SBS96 (counted as one DBS event).",
+  "- Counts, not mutations per Mb (no BAMs, no callable territory)."),
+  file.path(OUT, "summary.md"))
+
+log_file <- file.path(OUT, "RUN_LOG.md")
+old_log <- if (file.exists(log_file)) readLines(log_file) else character()
+writeLines(c(
+  paste0("## ", format(Sys.time(), "%Y-%m-%d %H:%M"), " - mouse_wgs_snv_indel_callers"),
+  paste0("- Run by:     ", Sys.info()[["user"]], "@", Sys.info()[["nodename"]], " (", R.version.string, ")"),
+  paste0("- Script:     ", SCRIPT, "  git: ", git_hash),
+  paste0("- Parameters: TEST_CHROM=", TEST_CHROM, " (", TEST_CONTIG, "), per-caller sets from ", PER_CALLER_SOURCE),
+  paste0("- Inputs:     ", DIR_A, " (", nrow(files), " files; provider-split, not left-aligned); FASTA ", FASTA),
+  paste0("- Outputs:    ", OUT),
+  paste0("- Counts/QC:  records read ", nrow(raw), ", PASS per-caller rows ", nrow(per_caller), ", union PASS ", nrow(union_pass)),
+  "", old_log), log_file)
+
+message("Done in ", round(difftime(Sys.time(), started, units = "mins"), 1), " min. Outputs: ", OUT)
