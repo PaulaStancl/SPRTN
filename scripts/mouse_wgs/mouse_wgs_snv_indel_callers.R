@@ -216,7 +216,23 @@ if (nrow(rawc) && nrow(merged)) {
   mg[, all_found_PASS := any_PASS & Reduce(`&`, lapply(.SD, `%chin%`, c("PASS", "absent"))), .SDcols = CALLERS]
   print(mg[, .N, by = .(merged_PASS, any_PASS, all_found_PASS)][order(merged_PASS, any_PASS)])
   # Does INFO/CALLER list every caller that found the variant, or only those where it PASSed?
-  for (cl in CALLERS) print(mg[, .N, by = .(caller = cl, in_INFO_CALLER = grepl(cl, CALLER, ignore.case = TRUE), state_in_own_file = mg[[cl]])])
+  for (cl in CALLERS) print(mg[, .N, by = .(in_INFO_CALLER = grepl(cl, CALLER, ignore.case = TRUE), state_in_own_file = get(cl))][
+    , caller := cl][order(-N)])
+
+  # R5b. Which rule reproduces the merged FILTER? Agreement of merged PASS with each candidate rule.
+  #      Neither "any" nor "all found" fits exactly, so test: FILTER taken from the first caller listed
+  #      in INFO/CALLER, or from one fixed caller.
+  mg[, first_caller := tolower(trimws(sub("[,|;&+].*$", "", CALLER)))]
+  mg[, rule_first_listed := fcase(first_caller == "strelka", strelka == "PASS", first_caller == "mutect2", mutect2 == "PASS",
+                                  first_caller == "freebayes", freebayes == "PASS", default = NA)]
+  for (cl in CALLERS) mg[get(cl) != "absent", paste0("rule_", cl, "_if_found") := get(cl) == "PASS"]
+  rule_cols <- c("any_PASS", "all_found_PASS", "rule_first_listed", paste0("rule_", CALLERS, "_if_found"))
+  rule_check <- rbindlist(lapply(rule_cols, function(r) mg[!is.na(get(r)), .(rule = r, records = .N,
+    agree = sum(merged_PASS == get(r)), merged_PASS_rule_FALSE = sum(merged_PASS & !get(r)),
+    merged_notPASS_rule_TRUE = sum(!merged_PASS & get(r)))]))
+  print(rule_check)
+  # Order of callers in INFO/CALLER (is it always mutect2 first, then strelka, then freebayes?)
+  print(mg[, .N, by = CALLER][order(-N)])
 
   # R6. The variants where the two routes disagree (>1 caller): raw combination vs merged combination,
   #     and the state in each caller's own file. raw_set NA = not >1-caller PASS in the raw files;
