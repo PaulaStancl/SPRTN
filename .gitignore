@@ -24,3 +24,6 @@ scripts/*/*.o[0-9]*
 # Plots exported into the project root (patient-derived)
 /shatterseek_*.png
 /signature_*.png
+
+# R default graphics device output
+Rplots.pdf
