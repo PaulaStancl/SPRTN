@@ -104,7 +104,7 @@ files[, rel := substring(path, nchar(DIR_A) + 2)]
 files[, tumour := NA_character_]
 for (k in names(TUMOURS)) files[grepl(TUMOURS[[k]], rel, fixed = TRUE), tumour := k]
 files[, caller_in_name := NA_character_]
-for (cl in CALLERS) files[is.na(caller_in_name) & grepl(cl, basename(rel), ignore.case = TRUE), caller_in_name := cl]
+for (cl in CALLERS) files[is.na(caller_in_name) & grepl(cl, rel, ignore.case = TRUE), caller_in_name := cl]   # file or folder name
 hdr <- setNames(lapply(files$path, function(f) bcf(c("view", "-h", shQuote(f)))), files$rel)
 files[, has_CALLER := sapply(rel, function(r) any(startsWith(hdr[[r]], "##INFO=<ID=CALLER,")))]
 # merged = has INFO/CALLER; caller = file named after one caller; else unknown
@@ -167,6 +167,58 @@ per_caller[, .N, by = .(tumour, SET)][order(tumour, SET)]
 # 3c. The union = PASS records of the merged file
 union_pass <- if (nrow(merged)) merged[PASS == TRUE, .(tumour, SET = "union", CHROM, POS, REF, ALT, FILTER)] else data.table()
 union_pass[, .N, by = tumour]
+
+
+### FROM RAW -> PASS -> INTERSECT
+# Check: rebuild the intersects from the single-caller files and compare with the merged file.
+# Needs the single-caller files (kind == "caller" in `files`); skipped if there are none.
+rawc <- raw[kind == "caller"]
+if (nrow(rawc) && nrow(merged)) {
+
+  # R1. What the single-caller files hold: records per FILTER value (is PASS set there at all?
+  #     FreeBayes may have FILTER "." if its crude filter was applied only when merging)
+  print(rawc[, .N, by = .(tumour, CALLER, rel, FILTER)][order(tumour, CALLER, -N)])
+
+  # R2. Split multiallelic ALTs (as the provider's bcftools norm -m -any did) and key the variants
+  rawc <- rawc[, .(ALT = unlist(strsplit(ALT, ",", fixed = TRUE))), by = .(tumour, CALLER, CHROM, POS, REF, FILTER, PASS)]
+  rawc[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
+  merged[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
+
+  # R3. RAW -> PASS -> INTERSECT: PASS set per caller, then which callers share each variant
+  rp <- unique(rawc[PASS == TRUE, .(tumour, CALLER, ID)])
+  rp_w <- dcast(rp, tumour + ID ~ CALLER, fun.aggregate = length, value.var = "ID")
+  for (cl in CALLERS) if (!cl %in% names(rp_w)) rp_w[, (cl) := 0L]
+  rp_w[, N_CALLERS := rowSums(.SD > 0), .SDcols = CALLERS]
+  rp_w[, CALLERS_SET := apply(.SD > 0, 1, function(v) paste(CALLERS[v], collapse = "+")), .SDcols = CALLERS]
+
+  # R4. Same question, both routes side by side, per caller combination
+  #     from_raw_PASS:    PASS in each single-caller file, then intersected
+  #     from_merged_PASS: merged records with FILTER PASS, combination from INFO/CALLER
+  #     from_merged_all:  all merged records, any FILTER
+  check_raw_vs_merged <- Reduce(function(a, b) merge(a, b, by = c("tumour", "CALLERS_SET"), all = TRUE), list(
+    rp_w[, .(from_raw_PASS = .N), by = .(tumour, CALLERS_SET)],
+    merged[PASS == TRUE, .(from_merged_PASS = .N), by = .(tumour, CALLERS_SET)],
+    merged[, .(from_merged_all = .N), by = .(tumour, CALLERS_SET)]))
+  print(check_raw_vs_merged[order(tumour, CALLERS_SET)])
+  # Your number: >1 caller and PASS, both routes
+  print(merge(rp_w[N_CALLERS > 1, .(raw_PASS_then_intersect = .N), by = tumour],
+              merged[N_CALLERS > 1 & PASS == TRUE, .(merged_PASS = .N), by = tumour], by = "tumour", all = TRUE))
+
+  # R5. Where does the merged PASS come from? For each merged record: its state in each caller's own
+  #     file (PASS / filtered / absent), next to the merged FILTER
+  st <- rawc[, .(state = if (any(PASS)) "PASS" else "filtered"), by = .(tumour, CALLER, ID)]
+  st_w <- dcast(st, tumour + ID ~ CALLER, value.var = "state")
+  mg <- st_w[merged[, .(tumour, ID, CALLER, merged_PASS = PASS)], on = .(tumour, ID)]
+  for (cl in CALLERS) { if (!cl %in% names(mg)) mg[, (cl) := NA_character_]; set(mg, which(is.na(mg[[cl]])), cl, "absent") }
+  print(mg[, .N, by = c("merged_PASS", CALLERS)][order(merged_PASS, -N)])
+  # Candidate rules for the merged PASS: PASS in any caller, or PASS in every caller that found it
+  mg[, any_PASS := Reduce(`|`, lapply(.SD, `==`, "PASS")), .SDcols = CALLERS]
+  mg[, all_found_PASS := any_PASS & Reduce(`&`, lapply(.SD, `%chin%`, c("PASS", "absent"))), .SDcols = CALLERS]
+  print(mg[, .N, by = .(merged_PASS, any_PASS, all_found_PASS)][order(merged_PASS, any_PASS)])
+  # Does INFO/CALLER list every caller that found the variant, or only those where it PASSed?
+  for (cl in CALLERS) print(mg[, .N, by = .(caller = cl, in_INFO_CALLER = grepl(cl, CALLER, ignore.case = TRUE), state_in_own_file = mg[[cl]])])
+} else message("RAW -> PASS -> INTERSECT skipped: no single-caller files (kind == 'caller') or no merged file")
+
 
 # ---- 4. Variant types; MNVs split into SNVs ------------------------------------
 add_type <- function(x) {
