@@ -253,6 +253,7 @@ if (nrow(rawc) && nrow(merged)) {
   #     (FILTER PASS, >=2 callers in INFO/CALLER). Fill = SNV / INDEL.
   int <- rbind(rp_w[N_CALLERS >= 2, .(tumour, ID, source = "my intersect")],
                merged[N_CALLERS >= 2 & PASS == TRUE, .(tumour, ID, source = "merged file")])
+  int <- unique(int)                     # each variant once per tumour and source (also if >1 merged file)
   int[, type := fifelse(nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]]), "SNV", "INDEL")]
   int[, .N, by = .(tumour, source, type)][order(tumour, source, type)]
   # Panels nested: tumour, then source (ggh4x::facet_nested; plain facet_grid if ggh4x is missing)
