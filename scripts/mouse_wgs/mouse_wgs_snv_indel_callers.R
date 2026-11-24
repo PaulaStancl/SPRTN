@@ -286,18 +286,6 @@ if (nrow(rawc) && nrow(merged)) {
     theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, hjust = 1))
   save_plot(p_routes, "raw_vs_union_by_combination", 13, 7)
 
-  # Barplot: difference union - raw (positive = more in the union file)
-  p_diff <- ggplot(route_counts, aes(CALLERS_SET, union_minus_raw, fill = union_minus_raw > 0)) +
-    geom_col(width = 0.7) + geom_hline(yintercept = 0) +
-    geom_text(aes(label = union_minus_raw, vjust = fifelse(union_minus_raw >= 0, -0.3, 1.2)), size = 2.8) +
-    facet_grid(CLASS ~ tumour, scales = "free_y") +
-    scale_fill_manual(values = c(`TRUE` = "#DD8452", `FALSE` = "#4C72B0"), guide = "none") +
-    scale_y_continuous(expand = expansion(mult = 0.2)) +
-    labs(x = "callers (exclusive combination)", y = "union file minus raw route",
-         title = "Difference in caller intersects (union file - raw files)") +
-    theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  save_plot(p_diff, "raw_vs_union_difference", 13, 6)
-
   # Same by number of callers (1 / 2 / 3)
   p_ncall <- ggplot(routes[, .N, by = .(tumour, CLASS, N_CALLERS, route)], aes(factor(N_CALLERS), N, fill = route)) +
     geom_col(position = "dodge", width = 0.8) +
