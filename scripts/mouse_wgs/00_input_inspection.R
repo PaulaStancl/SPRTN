@@ -55,19 +55,19 @@ suppressPackageStartupMessages({
   library(data.table)
   library(ggplot2)
 })
-if (!nzchar(BCFTOOLS)) stop("bcftools not found: activate the env or set BCFTOOLS in block 0")
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 started <- Sys.time()
 
-# bcftools helper: returns stdout lines, stops on a non-zero exit
+# bcftools helper: returns stdout lines, stops on a non-zero exit.
+# Only needed later, to read the BCF files (headers, records); not required to start.
 bcf <- function(args) {
+  if (!nzchar(BCFTOOLS)) stop("bcftools not found: activate the env or set BCFTOOLS in block 0")
   out <- suppressWarnings(system2(BCFTOOLS, args, stdout = TRUE, stderr = FALSE))
   st <- attr(out, "status")
   if (!is.null(st) && st != 0) stop("bcftools failed: bcftools ", paste(args, collapse = " "))
   out
 }
-bcftools_version <- bcf("--version")[1:2]
-bcftools_version
+bcftools_version <- tryCatch(bcf("--version")[1:2], error = function(e) c("bcftools not available", ""))
 
 # ---- 2. Provenance -----------------------------------------------------------
 # 2a. Processing notes from the data provider: read them before anything else
