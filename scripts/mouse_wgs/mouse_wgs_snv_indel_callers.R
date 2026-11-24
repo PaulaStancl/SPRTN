@@ -251,6 +251,7 @@ if (nrow(rawc) && nrow(merged)) {
 } else message("RAW -> PASS -> INTERSECT skipped: no single-caller files (kind == 'caller') or no merged file")
 
 
+
 # ---- 4. Variant types; MNVs split into SNVs ------------------------------------
 add_type <- function(x) {
   x[, TYPE := fcase(nchar(REF) == 1 & nchar(ALT) == 1, "SNV",
@@ -259,6 +260,22 @@ add_type <- function(x) {
                     nchar(REF) >  nchar(ALT) & substr(REF, 1, 1) == substr(ALT, 1, 1), "DEL",
                     default = "complex")]
   x[, CLASS := fifelse(TYPE %chin% c("SNV", "MNV"), "SNV", "INDEL")]
+  # SNV / INDEL from qcVCF::add_mutational_type() where it works (it knows only SNV / INDEL, so TYPE
+  # with MNV / INS / DEL stays ours). Called with the table only; the column it adds is found by name.
+  if (HAVE_QCVCF && nrow(x)) {
+    y <- copy(x[, .(CHROM, POS, REF, ALT)])
+    res <- tryCatch(qcVCF::add_mutational_type(y), error = function(e) { message("qcVCF add_mutational_type not used: ", conditionMessage(e)); NULL })
+    if (!is.null(res)) {
+      res <- if (is.data.frame(res)) as.data.table(res) else y
+      new <- setdiff(names(res), c("CHROM", "POS", "REF", "ALT"))
+      if (length(new) == 1 && nrow(res) == nrow(x)) {
+        q <- toupper(res[[new]])
+        print(table(qcVCF = q, ours = x$CLASS, useNA = "ifany"))   # MNVs: qcVCF may call them INDEL - check
+        x[, CLASS_qcVCF := q]
+        x[TYPE != "MNV" & CLASS_qcVCF %chin% c("SNV", "INDEL"), CLASS := CLASS_qcVCF]  # MNVs stay SNV (split later)
+      } else message("qcVCF add_mutational_type: could not find its output column - CLASS from add_type()")
+    }
+  }
   x
 }
 sets <- add_type(rbind(per_caller, union_pass))
