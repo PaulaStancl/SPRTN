@@ -69,10 +69,15 @@ if (!nzchar(BCFTOOLS)) stop("bcftools not found: activate the env or set BCFTOOL
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 started <- Sys.time()
 
+# bcftools helper: returns stdout lines; on failure shows bcftools' own error message
 bcf <- function(args) {
-  out <- suppressWarnings(system2(BCFTOOLS, args, stdout = TRUE, stderr = FALSE))
+  err <- tempfile()
+  out <- tryCatch(suppressWarnings(system2(BCFTOOLS, args, stdout = TRUE, stderr = err)),
+                  error = function(e) structure(character(), status = -1L, msg = conditionMessage(e)))
   st <- attr(out, "status")
-  if (!is.null(st) && st != 0) stop("bcftools failed: bcftools ", paste(args, collapse = " "))
+  if (!is.null(st) && st != 0)
+    stop("bcftools failed: bcftools ", paste(args, collapse = " "), "\n",
+         paste(c(attr(out, "msg"), readLines(err, warn = FALSE)), collapse = "\n"))
   out
 }
 # Save a ggplot as PDF + PNG
@@ -107,7 +112,11 @@ files[, `:=`(
   has_AD     = sapply(rel, function(r) has_tag(hdr[[r]], "FORMAT", "AD")),
   has_DP     = sapply(rel, function(r) has_tag(hdr[[r]], "FORMAT", "DP")),
   has_AF     = sapply(rel, function(r) has_tag(hdr[[r]], "FORMAT", "AF")))]
-files[, samples := sapply(path, function(f) paste(bcf(c("query", "-l", shQuote(f))), collapse = ","))]
+# Sample names from the #CHROM header line (columns 10 onwards)
+files[, samples := sapply(rel, function(r) {
+  s <- strsplit(tail(grep("^#CHROM", hdr[[r]], value = TRUE), 1), "\t", fixed = TRUE)[[1]]
+  paste(s[-(1:9)], collapse = ",")
+})]
 # Tumour column: the sample named like the tumour; else Strelka's placeholder "TUMOR"
 files[, tumour_col := mapply(function(s, t) {
   s <- strsplit(s, ",", fixed = TRUE)[[1]]
