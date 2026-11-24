@@ -17,4 +17,5 @@ dependencies:
   - r-stringi            # qcVCF dependency (plot96_matrix)
   - r-ggtext             # qcVCF dependency (plot96_matrix), not declared by qcVCF
   - samtools             # faidx: SNV trinucleotide context for the 96-context plots
+  - bcftools             # scripts/mouse_wgs: read the mouse BCFs (added 2026-11-24)
   - r-remotes            # to install qcVCF from GitHub
