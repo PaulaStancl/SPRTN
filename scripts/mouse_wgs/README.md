@@ -61,7 +61,7 @@ All are tutorial-style, numbered blocks, run line by line in RStudio or with `Rs
 | `mouse_wgs_example_sites.R` | Diagnostics for chr19:30419577 T>C and chr10:3184122 G>T from the single-caller files: per-caller metrics, FreeBayes criteria, per-caller read counts in all samples, plots 01–08 | run, reviewed |
 | `mouse_wgs_sample_identity.R` | Sample identity from FreeBayes genotypes: IBS0 rates per shared confident sites (WT from Mutect2 joint), LD-thinned rate, IBS0 blocks and chromosomes, depth and GQ/MQM at IBS0 sites, optional MGP strains, bcftools gtcheck | v1 run (counts in section 3); **current version not run yet** |
 | `gtcheck_freebayes.sh` | bcftools gtcheck: biallelic autosomal SNVs, QUAL/DP/GQ filter, merge `-m none`, all-sites and common-sites runs, per-1000 table | run; common-sites rows not reviewed yet |
-| `mouse_wgs_somalier.R` | somalier with a mouse germline site list built from the FreeBayes calls | written; **somalier not installed** |
+| `mouse_wgs_somalier.R` | Identity with three methods (somalier, bcftools gtcheck, custom IBS0) on one masked 6-sample genotype file; panels A/B/C x thinning; see 2.1 | rewritten 2026-11-24 (94c7d76); synthetic test passes on the Mac (R logic only); **not yet run on ssi** |
 | `mouse_wgs_snv_indel.R` | Task 1: settings A/B/C (counts, VAF, FILTER, overlaps, annotation) | written, not run; block 9 reads ANN and must switch to **CSQ** |
 
 Run commands (from the repo on ssi):
@@ -70,6 +70,85 @@ cd /common/WORK/pstancl/projects/MariaBoskovic/SPRTN
 git pull
 Rscript scripts/mouse_wgs/<script>.R          # or: bash scripts/mouse_wgs/gtcheck_freebayes.sh
 ```
+
+### 2.1 `mouse_wgs_somalier.R` (rewritten 2026-11-24)
+
+Why it was rewritten:
+- The first real run crashed at block 5: somalier v0.3.5 `pairs.tsv` has no `hom_concordance` column. The
+  site list had built fine (814,298 candidates, 62,946 germline-like, 12,339 after 20 kb bins).
+- Paula's review spec also asked for stricter site selection, masking, panels, three methods and full logging.
+  The spec is in the conversation of 2026-11-24. Each code change is tagged `[CHANGE n]`, and the script
+  header has a CHANGELOG (1–21).
+
+Design:
+- **Sites:**
+  - biallelic SNVs on autosomes 1–19, QUAL ≥ 30, from the 3 FreeBayes BCFs;
+  - REF+ALT ≥ 30 in **all six** samples. This is the ascertainment fix: each BCF only holds sites variant in
+    its own pair, so the old ≥ 4-of-6 rule compared labelled pairs at more sites than cross pairs;
+  - genotype bins on VAF: ≤ 0.05 hom-ref, 0.35–0.65 het, ≥ 0.95 hom-alt, anything else ambiguous;
+  - every KI normal confidently genotyped, at least one of them non-ref;
+  - tumours are never used to select sites. Their ambiguous genotypes are masked (`./.`), never set to hom-ref.
+- **One masked file:** `masked/masked_6samples.bcf` (GT:AD, INFO/AF from the KI normals, no GL/PL).
+  somalier, gtcheck and the custom IBS0 all read this file.
+- **Panels:**
+  - A: all sites;
+  - B: KI1–3 not all identical;
+  - C: opposite homozygotes in ≥ 2 KI normals.
+
+  Each panel is thinned by greedy minimum distance, keeping the site with the best minimum depth: 20 kb
+  (primary), 100 kb, 500 kb and 1 Mb. A panel × thinning with fewer than 50 sites is marked underpowered.
+- **Methods:**
+  - **custom IBS0** (primary): IBS0 / jointly callable sites, with exact 95% CIs;
+  - **somalier** `relate -s sites -d 30 --min-ab 0.35`, with `SOMALIER_AB_HOM_CUTOFF=0.05`;
+  - **bcftools gtcheck** `-G 1 -T targets`.
+- **Matching:**
+  - per tumour, the lowest IBS0 rate wins and IBS2 breaks ties;
+  - a call is ambiguous if the best and second-best CIs overlap, the joint sites are < 50, or the panel is
+    underpowered;
+  - all 3! one-to-one assignments are scored;
+  - the labelled pairing and the hypothesis HCC_1–KI2, HCC_2–KI1, HCC_3–KI3 are both tested.
+- **Outputs:**
+  - tables: `verdict.tsv`, `robustness.tsv`, `assignment_scores.tsv`, `pairwise_metrics.tsv`,
+    `filter_counts.tsv`, `panel_sizes.tsv`;
+  - plots: heatmaps for 6 metrics, `ibs0_per_tumour`, `ibs0_vs_ibs2`, `robustness`,
+    `chromosomal_distribution`;
+  - `RUN_LOG.md`, which holds the changelog, assumptions, limitations and DEVIATION lines.
+
+Tool facts, checked against the source code:
+- **somalier v0.3.5:**
+  - The binary is at `/common/WORK/pstancl/tools/somalier/somalier`, installed by the osteosarcoma
+    `00_somalier.sh`. It is not in a micromamba env.
+  - The version is written to stderr on every call (`--version` is not an option).
+  - `extract` needs an indexed VCF/BCF.
+  - Genotypes are called from AD: hom if AB < `SOMALIER_AB_HOM_CUTOFF` (default 0.01) or > 1 minus it; het
+    if `min-ab` ≤ AB ≤ 1 − `min-ab`; unknown otherwise or below `-d`.
+  - relatedness = 2·(shared_hets − 2·ibs0) / het_ab (KING-robust style, no allele frequencies).
+  - `concordance` is somalier's adjusted homozygous concordance.
+  - n = sites where both samples have a known genotype.
+- **bcftools 1.4.1 gtcheck** (no `-g`): cross-checks all samples and writes
+  `ERR  error_rate  n_sites  sample_i  sample_j`. With `-G 1` it compares GTs only.
+
+Run on ssi, the synthetic test first:
+```
+cd /common/WORK/pstancl/projects/MariaBoskovic/SPRTN
+git pull origin main
+Rscript scripts/mouse_wgs/mouse_wgs_somalier.R --test 2>&1 | tee somalier_test.log
+grep -E "TEST_MODE|DEVIATION|Error" somalier_test.log
+Rscript scripts/mouse_wgs/mouse_wgs_somalier.R 2>&1 | tee mouse_wgs_somalier.log
+grep -E "\[filter\]|DEVIATION|Error|Done" mouse_wgs_somalier.log
+column -t results/mouse_wgs/mouse_wgs_somalier/verdict.tsv
+```
+- **Test mode:** writes 3 synthetic pairs (HCC_1/HCC_2 swapped) to
+  `results/mouse_wgs/mouse_wgs_somalier_TEST/`. It must end with "TEST_MODE: all checks passed", including the
+  six-`.somalier`-files check, which is skipped on the Mac.
+- **Things to watch in the real run:**
+  - how many sites survive "all six samples" (expect far fewer than 62,946);
+  - whether panels B/C at 500 kb or 1 Mb are underpowered;
+  - whether somalier and gtcheck agree with the custom IBS0.
+- **Open choices, defaults in block 0:**
+  - `MIN_JOINT_SITES = 50`;
+  - an assignment is "clearly separated" when its gap to the next is > 2·√(summed binomial variances);
+  - `KNOCKIN_LOCUS = NA`. Set the Sprtn knock-in position to annotate IBS0 near it.
 
 ---
 
@@ -195,8 +274,9 @@ In a 2-of-3 rule it casts the deciding vote wherever Strelka2 and Mutect2 disagr
    per-sample genotype masking.
 3. Run the current **`mouse_wgs_sample_identity.R`**. Review `verdict.tsv`, `ibs0_rate_per_tumour.png`,
    `ibs0_genome_distribution.png` / `ibs0_blocks.tsv` and `quality_ibs0_vs_other.png`.
-4. **Install somalier** (`micromamba create -y -p /common/WORK/pstancl/envs/somalier -c conda-forge -c bioconda somalier`),
-   then run `mouse_wgs_somalier.R`.
+4. Run **`mouse_wgs_somalier.R`**: `--test` first, then the real data (commands in 2.1). somalier is already
+   installed at `/common/WORK/pstancl/tools/somalier/somalier` (v0.3.5). Review `verdict.tsv`, `robustness.png`
+   and the heatmaps, then add the result to section 3.3.
 5. **Ask Patrik and the lab** where the KI1/KI2 swap happened and what the `id_` numbers mean; ask about
    HCC_3/KI3.
 6. **Re-call setting A** with HCC_1 vs KI2 and HCC_2 vs KI1 (Strelka2, Mutect2, FreeBayes, merge). Compare
