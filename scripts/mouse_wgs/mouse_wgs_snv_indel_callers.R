@@ -186,30 +186,6 @@ if (nrow(rawc) && nrow(merged)) {
   rp_w[, N_CALLERS := rowSums(.SD > 0), .SDcols = CALLERS]
   rp_w[, CALLERS_SET := apply(.SD > 0, 1, function(v) paste(CALLERS[v], collapse = "+")), .SDcols = CALLERS]
 
-  # R3b. Venn diagram per tumour, SNVs: PASS in each caller's own file; numbers = unique and shared.
-  #      SNV = REF and ALT of equal length (MNVs as written; Strelka writes them as single SNVs).
-  snv_w <- rp_w[nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]])]
-  venn_regions <- data.table(CALLERS_SET = c(CALLERS, combn(CALLERS, 2, paste, collapse = "+"), paste(CALLERS, collapse = "+")),
-                             x = c(-1.25, 1.25, 0, 0, -0.8, 0.8, 0), y = c(0.65, 0.65, -1.35, 0.95, -0.4, -0.4, 0.1))
-  venn_n <- snv_w[, .N, by = .(tumour, CALLERS_SET)][CJ(tumour = unique(snv_w$tumour), CALLERS_SET = venn_regions$CALLERS_SET),
-                                                       on = .(tumour, CALLERS_SET)]
-  venn_n[is.na(N), N := 0L]
-  venn_n <- venn_regions[venn_n, on = "CALLERS_SET"]
-  print(dcast(venn_n, tumour ~ CALLERS_SET, value.var = "N"))
-  circ <- data.table(caller = CALLERS, cx = c(-0.6, 0.6, 0), cy = c(0.35, 0.35, -0.65))[
-    , .(x = cx + cos(seq(0, 2 * pi, length.out = 200)), y = cy + sin(seq(0, 2 * pi, length.out = 200))), by = caller]
-  venn_names <- rbindlist(lapply(CALLERS, function(cl) snv_w[get(cl) > 0, .(n = .N), by = tumour][, caller := cl]))
-  venn_names <- data.table(caller = CALLERS, x = c(-1.3, 1.3, 0), y = c(1.55, 1.55, -1.85))[venn_names, on = "caller"]
-  p_venn <- ggplot() +
-    geom_polygon(data = circ, aes(x, y, group = caller, fill = caller), alpha = 0.25, colour = "grey30") +
-    geom_text(data = venn_n, aes(x, y, label = format(N, big.mark = ",")), size = 3.5) +
-    geom_text(data = venn_names, aes(x, y, label = paste0(caller, "\n(n=", format(n, big.mark = ","), ")")), size = 3.3, fontface = "bold") +
-    facet_wrap(~ tumour) + coord_equal(clip = "off") +
-    scale_fill_manual(values = c(strelka = "#4C72B0", mutect2 = "#DD8452", freebayes = "#55A868"), guide = "none") +
-    labs(title = "SNVs, PASS in each caller's own file (tumour vs matched KI normal)") +
-    theme_void() + theme(strip.text = element_text(face = "bold", size = 12), plot.margin = margin(10, 20, 10, 20))
-  save_plot(p_venn, "venn_snv_callers", 12, 5)
-
   # R4. Same question, both routes side by side, per caller combination
   #     from_raw_PASS:    PASS in each single-caller file, then intersected
   #     from_merged_PASS: merged records with FILTER PASS, combination from INFO/CALLER
@@ -275,6 +251,30 @@ if (nrow(rawc) && nrow(merged)) {
   int <- unique(int)                     # each variant once per tumour and source (also if >1 merged file)
   int[, type := fifelse(nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]]), "SNV", "INDEL")]
   int[, .N, by = .(tumour, source, type)][order(tumour, source, type)]
+
+  # Venn per tumour, SNVs: my intersect vs the merged file (same PASS >=2-caller sets as the bar plot)
+  v2 <- dcast(int[type == "SNV"], tumour + ID ~ source, fun.aggregate = length, value.var = "ID")
+  setnames(v2, c("my intersect", "merged file"), c("mine", "mrg"), skip_absent = TRUE)
+  venn2 <- v2[, .(only_mine = sum(mine > 0 & mrg == 0), shared = sum(mine > 0 & mrg > 0),
+                  only_merged = sum(mine == 0 & mrg > 0), n_mine = sum(mine > 0), n_merged = sum(mrg > 0)), by = tumour]
+  print(venn2)
+  fwrite(venn2, file.path(OUT, "venn_snv_my_intersect_vs_merged.tsv"), sep = "\t")
+  venn2_lab <- melt(venn2, id.vars = "tumour", measure.vars = c("only_mine", "shared", "only_merged"), value.name = "N")
+  venn2_lab[, `:=`(x = c(only_mine = -1.0, shared = 0, only_merged = 1.0)[as.character(variable)], y = 0)]
+  venn2_names <- melt(venn2, id.vars = "tumour", measure.vars = c("n_mine", "n_merged"), value.name = "n")
+  venn2_names[, `:=`(x = fifelse(variable == "n_mine", -0.6, 0.6), y = 1.3,
+                     label = paste0(fifelse(variable == "n_mine", "my intersect", "merged file"), "\n(n=", n, ")"))]
+  circ2 <- data.table(set = c("my intersect", "merged file"), cx = c(-0.55, 0.55))[
+    , .(x = cx + cos(seq(0, 2 * pi, length.out = 200)), y = sin(seq(0, 2 * pi, length.out = 200))), by = set]
+  p_venn2 <- ggplot() +
+    geom_polygon(data = circ2, aes(x, y, group = set, fill = set), alpha = 0.3, colour = "grey30") +
+    geom_text(data = venn2_lab, aes(x, y, label = N), size = 4.5) +
+    geom_text(data = venn2_names, aes(x, y, label = label), size = 3.5, fontface = "bold") +
+    facet_wrap(~ tumour) + coord_equal(clip = "off") +
+    scale_fill_manual(values = c("my intersect" = "#4C72B0", "merged file" = "#DD8452"), guide = "none") +
+    labs(title = "SNVs PASS by >=2 callers: my intersect vs merged file") +
+    theme_void() + theme(strip.text = element_text(face = "bold", size = 12), plot.margin = margin(10, 20, 10, 20))
+  save_plot(p_venn2, "venn_snv_my_intersect_vs_merged", 12, 4.5)
   # Panels nested: tumour, then source (ggh4x::facet_nested; plain facet_grid if ggh4x is missing)
   int[, source := factor(source, levels = c("my intersect", "merged file"))]
   p_int <- ggplot(int[, .N, by = .(tumour, source, type)], aes(type, N, fill = type)) +
