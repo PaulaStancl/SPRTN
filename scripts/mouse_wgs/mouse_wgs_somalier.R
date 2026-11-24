@@ -29,8 +29,8 @@
 #   6  outputs, RUN_LOG.md
 #
 # Install somalier once (separate env, avoids conflicts with r-mutation):
-#   micromamba create -y -p /common/WORK/pstancl/envs/somalier -c conda-forge -c bioconda somalier
-# or the static binary: https://github.com/brentp/somalier/releases (chmod +x)
+#   static binary v0.3.5, as in the osteosarcoma 00_somalier.sh (already there if that ran):
+#     mkdir -p /common/WORK/pstancl/tools/somalier && curl -sSL -o /common/WORK/pstancl/tools/somalier/somalier https://github.com/brentp/somalier/releases/download/v0.3.5/somalier && chmod +x /common/WORK/pstancl/tools/somalier/somalier
 #
 # Env on ssi: r-mutation (data.table, ggplot2, bcftools) + the somalier binary (SOMALIER below).
 # Output: results/mouse_wgs/mouse_wgs_somalier/
@@ -42,7 +42,7 @@ OUT      <- file.path(REPO, "results/mouse_wgs/mouse_wgs_somalier")
 SCRIPT   <- file.path(REPO, "scripts/mouse_wgs/mouse_wgs_somalier.R")
 ENV_BIN  <- "/common/WORK/pstancl/envs/r-mutation/bin"
 BCFTOOLS <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path(ENV_BIN, "bcftools")
-SOMALIER <- Sys.which("somalier"); if (!nzchar(SOMALIER)) SOMALIER <- "/common/WORK/pstancl/envs/somalier/bin/somalier"
+SOMALIER <- Sys.which("somalier"); if (!nzchar(SOMALIER)) SOMALIER <- "/common/WORK/pstancl/tools/somalier/somalier"
 # GRCm38 FASTA (+ .fai) with the same contig names as the VCFs ("1", "2", ...)
 FASTA    <- "/common/WORK/pstancl/references/cross_species/fasta/Mus_musculus.GRCm38.dna.primary_assembly.fa"
 
