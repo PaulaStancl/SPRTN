@@ -255,9 +255,15 @@ if (nrow(rawc) && nrow(merged)) {
                merged[N_CALLERS >= 2 & PASS == TRUE, .(tumour, ID, source = "merged file")])
   int[, type := fifelse(nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]]), "SNV", "INDEL")]
   int[, .N, by = .(tumour, source, type)][order(tumour, source, type)]
-  p_int <- ggplot(int, aes(source, fill = type)) + geom_bar() + facet_wrap(~ tumour) +
-    labs(x = NULL, y = "PASS variants, >=2 callers", fill = NULL) + theme_bw()
-  save_plot(p_int, "intersect_raw_vs_merged", 8, 5)
+  # Panels nested: tumour, then source (ggh4x::facet_nested; plain facet_grid if ggh4x is missing)
+  int[, source := factor(source, levels = c("my intersect", "merged file"))]
+  p_int <- ggplot(int[, .N, by = .(tumour, source, type)], aes(type, N, fill = type)) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = N), vjust = -0.3, size = 3.2) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+    (if (requireNamespace("ggh4x", quietly = TRUE)) ggh4x::facet_nested(~ tumour + source) else facet_grid(~ tumour + source)) +
+    labs(x = NULL, y = "PASS variants, >=2 callers") + theme_bw() + theme(legend.position = "none")
+  save_plot(p_int, "intersect_raw_vs_merged", 11, 5)
 } else message("RAW -> PASS -> INTERSECT skipped: no single-caller files (kind == 'caller') or no merged file")
 
 
