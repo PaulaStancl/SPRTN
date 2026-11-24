@@ -47,7 +47,10 @@ REPO     <- "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN"
 ROOT     <- file.path(REPO, "data/mouse/wgs")
 OUT      <- file.path(REPO, "results/mouse_wgs/mouse_wgs_snv_indel")
 SCRIPT   <- file.path(REPO, "scripts/mouse_wgs/mouse_wgs_snv_indel.R")
+# bcftools: RStudio often does not see the micromamba env's PATH, so Sys.which() can be "".
+# Then the env's own bin/bcftools is used. Check with: system2(BCFTOOLS, "--version")
 BCFTOOLS <- Sys.which("bcftools")
+if (!nzchar(BCFTOOLS)) BCFTOOLS <- "/common/WORK/pstancl/envs/r-mutation/bin/bcftools"
 
 TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
              HCC_2 = "sfb_dikic_2025_05_11_KI_HCC_2",
@@ -65,7 +68,7 @@ suppressPackageStartupMessages({
   library(ggplot2)
 })
 HAVE_QCVCF <- requireNamespace("qcVCF", quietly = TRUE)
-if (!nzchar(BCFTOOLS)) stop("bcftools not found: activate the env or set BCFTOOLS in block 0")
+if (!file.exists(BCFTOOLS)) stop("bcftools not found at ", BCFTOOLS, ": install it (micromamba install -c bioconda bcftools) or set BCFTOOLS in block 0")
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 started <- Sys.time()
 

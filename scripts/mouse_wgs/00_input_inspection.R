@@ -37,7 +37,10 @@ REPO     <- "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN"
 ROOT     <- file.path(REPO, "data/mouse/wgs")
 OUT      <- file.path(REPO, "results/mouse_wgs/00_input_inspection")
 SCRIPT   <- file.path(REPO, "scripts/mouse_wgs/00_input_inspection.R")
-BCFTOOLS <- Sys.which("bcftools")      # or the full path to bcftools
+# bcftools: RStudio often does not see the micromamba env's PATH, so Sys.which() can be "".
+# Then the env's own bin/bcftools is used. Check with: system2(BCFTOOLS, "--version")
+BCFTOOLS <- Sys.which("bcftools")
+if (!nzchar(BCFTOOLS)) BCFTOOLS <- "/common/WORK/pstancl/envs/r-mutation/bin/bcftools"
 
 # Tumours and their matched KI normals (same mouse); names as in the file names
 TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
@@ -61,10 +64,14 @@ started <- Sys.time()
 # bcftools helper: returns stdout lines, stops on a non-zero exit.
 # Only needed later, to read the BCF files (headers, records); not required to start.
 bcf <- function(args) {
-  if (!nzchar(BCFTOOLS)) stop("bcftools not found: activate the env or set BCFTOOLS in block 0")
-  out <- suppressWarnings(system2(BCFTOOLS, args, stdout = TRUE, stderr = FALSE))
+  if (!file.exists(BCFTOOLS)) stop("bcftools not found at ", BCFTOOLS, ": install it (micromamba install -c bioconda bcftools) or set BCFTOOLS in block 0")
+  err <- tempfile()
+  out <- tryCatch(suppressWarnings(system2(BCFTOOLS, args, stdout = TRUE, stderr = err)),
+                  error = function(e) structure(character(), status = -1L, msg = conditionMessage(e)))
   st <- attr(out, "status")
-  if (!is.null(st) && st != 0) stop("bcftools failed: bcftools ", paste(args, collapse = " "))
+  if (!is.null(st) && st != 0)
+    stop("bcftools failed: bcftools ", paste(args, collapse = " "), "\n",
+         paste(c(attr(out, "msg"), readLines(err, warn = FALSE)), collapse = "\n"))
   out
 }
 bcftools_version <- tryCatch(bcf("--version")[1:2], error = function(e) c("bcftools not available", ""))
