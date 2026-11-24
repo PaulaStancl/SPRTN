@@ -42,7 +42,7 @@ OUT      <- file.path(REPO, "results/mouse_wgs/mouse_wgs_somalier")
 SCRIPT   <- file.path(REPO, "scripts/mouse_wgs/mouse_wgs_somalier.R")
 ENV_BIN  <- "/common/WORK/pstancl/envs/r-mutation/bin"
 BCFTOOLS <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path(ENV_BIN, "bcftools")
-SOMALIER <- "/common/WORK/pstancl/envs/somalier/bin/somalier"
+SOMALIER <- Sys.which("somalier"); if (!nzchar(SOMALIER)) SOMALIER <- "/common/WORK/pstancl/envs/somalier/bin/somalier"
 # GRCm38 FASTA (+ .fai) with the same contig names as the VCFs ("1", "2", ...)
 FASTA    <- "/common/WORK/pstancl/references/cross_species/fasta/Mus_musculus.GRCm38.dna.primary_assembly.fa"
 
