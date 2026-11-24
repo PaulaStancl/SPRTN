@@ -249,53 +249,39 @@ if (nrow(rawc) && nrow(merged)) {
   print(head(diff_routes[order(tumour)], 20))
   fwrite(diff_routes, file.path(OUT, "raw_vs_merged_disagreements.tsv"), sep = "\t")
 
-  # R7. Figure: raw route vs union file, per caller combination, SNVs and indels apart.
-  #     Both sets get the same annotation: variant type (add_type, block 4 rule) and caller combination.
-  ROUTES <- c(raw = "raw files: PASS per caller, then intersect", union = "union file: FILTER PASS + INFO/CALLER")
-  raw_int <- rp_w[, .(tumour, ID, CALLERS_SET, N_CALLERS)]
-  raw_int[, c("CHROM", "POS", "REF", "ALT") := tstrsplit(ID, ":", fixed = TRUE)]
-  raw_int[, route := ROUTES[["raw"]]]
-  uni_int <- merged[PASS == TRUE, .(tumour, ID, CALLERS_SET, N_CALLERS, CHROM = as.character(CHROM),
-                                    POS = as.character(POS), REF, ALT, route = ROUTES[["union"]])]
-  routes <- rbind(raw_int, uni_int, use.names = TRUE)
-  routes[, `:=`(TYPE = fcase(nchar(REF) == 1 & nchar(ALT) == 1, "SNV", nchar(REF) == nchar(ALT), "MNV",
-                             nchar(REF) < nchar(ALT), "INS", default = "DEL"))]
-  routes[, CLASS := fifelse(TYPE %chin% c("SNV", "MNV"), "SNV", "INDEL")]
-  routes[, route := factor(route, levels = ROUTES)]
-  lvl_sets <- c(CALLERS, combn(CALLERS, 2, paste, collapse = "+"), paste(CALLERS, collapse = "+"))
-  routes[, CALLERS_SET := factor(CALLERS_SET, levels = lvl_sets)]
+  # R7. Figure: my intersect (PASS in each caller's own file, then overlapped) vs Patrik's merged file
+  #     (FILTER PASS, callers from INFO/CALLER). Bars = the two, fill = SNV / INDEL, one panel per tumour.
+  #     Rows: intersect = found by >=2 callers, and by all 3 callers.
+  ROUTES <- c(raw = "my intersect\n(raw PASS, then overlap)", union = "merged file\n(PASS + INFO/CALLER)")
+  raw_int <- rp_w[, .(tumour, ID, N_CALLERS, route = ROUTES[["raw"]])]
+  uni_int <- merged[PASS == TRUE, .(tumour, ID, N_CALLERS, route = ROUTES[["union"]])]
+  routes <- rbind(raw_int, uni_int)
+  routes[, c("CHROM", "POS", "REF", "ALT") := tstrsplit(ID, ":", fixed = TRUE)]
+  routes[, CLASS := fifelse(nchar(REF) == nchar(ALT), "SNV", "INDEL")]          # MNVs count as SNV
+  routes <- rbind(routes[N_CALLERS >= 2][, intersect := ">=2 callers"],
+                  routes[N_CALLERS == length(CALLERS)][, intersect := "all 3 callers"])
+  routes[, `:=`(route = factor(route, levels = ROUTES), CLASS = factor(CLASS, levels = c("INDEL", "SNV")),
+                intersect = factor(intersect, levels = c(">=2 callers", "all 3 callers")))]
 
-  # Counts per tumour x class x combination x route, with the difference union - raw
-  route_counts <- dcast(routes[, .N, by = .(tumour, CLASS, CALLERS_SET, route)],
-                        tumour + CLASS + CALLERS_SET ~ route, value.var = "N", fill = 0)
-  setnames(route_counts, ROUTES, c("raw", "union"))
-  route_counts[, union_minus_raw := union - raw]
-  print(route_counts)
-  fwrite(route_counts, file.path(OUT, "raw_vs_union_counts.tsv"), sep = "\t")
+  intersect_counts <- dcast(routes[, .N, by = .(tumour, intersect, route, CLASS)],
+                            tumour + intersect + CLASS ~ route, value.var = "N", fill = 0)
+  print(intersect_counts)
+  fwrite(intersect_counts, file.path(OUT, "intersect_raw_vs_merged_counts.tsv"), sep = "\t")
 
-  # Barplot: both routes side by side
-  p_routes <- ggplot(routes[, .N, by = .(tumour, CLASS, CALLERS_SET, route)], aes(CALLERS_SET, N, fill = route)) +
-    geom_col(position = position_dodge(preserve = "single"), width = 0.8) +
-    geom_text(aes(label = N), position = position_dodge(width = 0.8), vjust = -0.3, size = 2.6) +
-    facet_grid(CLASS ~ tumour, scales = "free_y") +
-    scale_fill_manual(values = setNames(c("#4C72B0", "#DD8452"), ROUTES)) +
-    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
-    labs(x = "callers (exclusive combination)", y = "PASS variants", fill = NULL,
-         title = "Caller intersects: raw files vs the union file",
+  bar_n <- routes[, .N, by = .(tumour, intersect, route, CLASS)]
+  tot_n <- routes[, .N, by = .(tumour, intersect, route)]
+  p_int <- ggplot(bar_n, aes(route, N, fill = CLASS)) +
+    geom_col(width = 0.7) +
+    geom_text(aes(label = N), position = position_stack(vjust = 0.5), size = 3, colour = "white") +
+    geom_text(data = tot_n, aes(route, N, label = N), inherit.aes = FALSE, vjust = -0.4, size = 3.2) +
+    facet_grid(intersect ~ tumour, scales = "free_y") +
+    scale_fill_manual(values = c(SNV = "#4C72B0", INDEL = "#DD8452")) +
+    scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+    labs(x = NULL, y = "PASS variants", fill = NULL,
+         title = "Caller intersect: my intersect from the raw caller files vs the merged file",
          subtitle = paste("Tumour vs matched KI normal", if (TEST_CHROM) paste0("(", TEST_CONTIG, ")") else "")) +
-    theme_bw() + theme(legend.position = "bottom", axis.text.x = element_text(angle = 45, hjust = 1))
-  save_plot(p_routes, "raw_vs_union_by_combination", 13, 7)
-
-  # Same by number of callers (1 / 2 / 3)
-  p_ncall <- ggplot(routes[, .N, by = .(tumour, CLASS, N_CALLERS, route)], aes(factor(N_CALLERS), N, fill = route)) +
-    geom_col(position = "dodge", width = 0.8) +
-    geom_text(aes(label = N), position = position_dodge(width = 0.8), vjust = -0.3, size = 2.8) +
-    facet_grid(CLASS ~ tumour, scales = "free_y") +
-    scale_fill_manual(values = setNames(c("#4C72B0", "#DD8452"), ROUTES)) +
-    scale_y_continuous(expand = expansion(mult = c(0, 0.15))) +
-    labs(x = "number of callers", y = "PASS variants", fill = NULL, title = "Raw files vs union file, by number of callers") +
     theme_bw() + theme(legend.position = "bottom")
-  save_plot(p_ncall, "raw_vs_union_by_n_callers", 10, 6)
+  save_plot(p_int, "intersect_raw_vs_merged", 9, 7)
 } else message("RAW -> PASS -> INTERSECT skipped: no single-caller files (kind == 'caller') or no merged file")
 
 
