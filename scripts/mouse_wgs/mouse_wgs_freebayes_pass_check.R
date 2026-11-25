@@ -103,6 +103,16 @@ print(agree)
 fail_by_cond <- melt(fb[PASS & !rule, c("tumour", cond), with = FALSE], id.vars = "tumour",
                      variable.name = "condition", value.name = "ok")[ok == FALSE, .N, by = .(tumour, condition)]
 print(fail_by_cond[order(tumour, -N)])
+# Split / decomposed records: siblings = other records of the same file with the same QUAL within 50 bp
+# (an original multiallelic or complex FreeBayes record split later keeps one QUAL for all its pieces).
+# If FILTER was set on the original record, the disagreements should sit almost only on siblings.
+setorder(fb, tumour, CHROM, POS)
+fb[, grp := cumsum(c(TRUE, diff(POS) > 50 | QUAL[-1] != QUAL[-.N] | CHROM[-1] != CHROM[-.N])), by = tumour]
+fb[, split_piece := .N > 1, by = .(tumour, grp)]
+sibling_check <- fb[, .(records = .N, PASS = sum(PASS), rule = sum(rule), PASS_but_rule_FALSE = sum(PASS & !rule),
+                        notPASS_but_rule_TRUE = sum(!PASS & rule)), by = .(tumour, split_piece)][order(tumour, split_piece)]
+print(sibling_check)
+fwrite(sibling_check, file.path(OUT, "freebayes_disagreement_by_split_piece.tsv"), sep = "\t")
 # Phased or other genotypes among PASS records (e.g. 0|1 would fail the string comparison)
 print(fb[(PASS), .N, by = .(tumour, GT_normal, GT_tumour)][order(tumour, -N)])
 
