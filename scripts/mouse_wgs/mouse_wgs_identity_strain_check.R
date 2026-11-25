@@ -122,6 +122,10 @@ if (!is.na(MGP_VCF)) {
                  colClasses = c("character", "integer", rep("character", 3 + length(MGP_STRAINS))))
     mgp[, CHROM := sub("^chr", "", CHROM)]
     MGP_STATUS <- sprintf("%s (%d strains, %d records at panel A positions)", MGP_VCF, length(MGP_STRAINS), nrow(mgp))
+    if (!nrow(mgp)) {
+      MGP_STATUS <- paste(MGP_STATUS, "- NO RECORDS: the region query failed (remote index or ftp); download the file and set MGP_VCF to it")
+      warning("MGP returned 0 records at the panel A positions - the MGP columns are empty. Test: bcftools view -H -r 1:3000287 <MGP_VCF>")
+    }
   } else MGP_STATUS <- paste("NOT READ:", MGP_VCF)
   setwd(wd_old)
 }
@@ -167,7 +171,7 @@ if (length(fB)) {
   }))
   if (nrow(wt)) {
     wt <- wt[!grepl("KI_HCC_[0-9]|KI[0-9]$", sample)]                  # keep WT normals only
-    wt[, short := sub("^(id_[0-9]+_)?(sfb_dikic_)?([0-9]{4}_[0-9]{2}_[0-9]{2}_)?", "", sample)]
+    wt[, short := sub(".*_(WT[0-9]+)$", "\\1", sub("^(id_[A-Za-z0-9]+_)?(sfb_dikic_)?([0-9]{4}_[0-9]{2}_[0-9]{2}_)?", "", sample))]
     wt <- wt[order(-(ref + alt))][!duplicated(wt[, .(CHROM, POS, REF, ALT, short)])]   # deepest record per WT and site
     wt[, g := vaf_gt(ref, alt, WT_MIN_DP)]
     WT_IDS <- sort(unique(wt$short))
