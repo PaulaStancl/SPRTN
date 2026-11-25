@@ -249,8 +249,13 @@ jointly callable sites per tumour–normal pair.
   pairs have about 7% IBS0.
 - **Mouse 3 is now resolved: HCC_3 and KI3 are the same animal.** This replaces the open point above. They
   have 0 IBS0, and the next-best normal is clearly separated.
-- **somalier agrees on all three tumours.** gtcheck was skipped in this run because of a bug in how the
-  script checked the gtcheck options, fixed in be67ed8; it is to be re-run.
+- **somalier agrees on all three tumours.**
+- **gtcheck was not run.**
+  - r-mutation now has bcftools 1.24. Its gtcheck has no `-G` option (it uses `-u GT`) and prints `DCv2`
+    lines, whereas the script handles only the 1.4.1 syntax. The script logs this as a DEVIATION and skips
+    gtcheck.
+  - Decided 2026-11-25 not to add 1.24 support. gtcheck would run on the same masked genotypes, so it adds
+    no independent evidence. The custom IBS0 and somalier already agree, and the result is clear-cut.
 - **Still to review:**
   - `robustness.tsv` (panels B/C and the coarser thinning);
   - `assignment_scores.tsv`;
