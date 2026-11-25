@@ -520,7 +520,7 @@ in_doublet <- function(d) {
   paste(d$tumour, d$SET, d$CHROM, d$POS - 1L) %chin% here | paste(d$tumour, d$SET, d$CHROM, d$POS + 1L) %chin% here
 }
 
-snv96 <- data.table(); m96 <- data.table(); cosine <- data.table()
+snv96 <- data.table(); m96 <- data.table(); cosine <- data.table(); sbs96_filter_n <- data.table()
 if (HAVE_FASTA) {
   snv <- atom[CLASS == "SNV", .(tumour, SET = as.character(SET), CHROM, POS, REF, ALT, ID)]
   snv_cal <- memb[CLASS == "SNV", .(tumour, ID, N_CALLERS)]
@@ -546,41 +546,76 @@ if (HAVE_FASTA) {
   for (cl in setdiff(names(m96), "SBS96")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
   setnames(m96, "SBS96", "MutationType")
 
-  # 96-context bar plot: rows = sets, columns = tumours, % of each set's SNVs
-  prof <- snv96[, .N, by = .(tumour, SET, SBS96, SUB)]
-  prof <- prof[CJ(tumour = unique(prof$tumour), SET = factor(SET96, levels = SET96), SBS96 = SBS96_TYPES, unique = TRUE),
-               on = .(tumour, SET, SBS96)]
+  # 8b. SBS96 plots with ALL records, split by FILTER: within each set three rows - all SNVs, PASS, not PASS.
+  #     (m96 and the cosine similarity above stay PASS-only.) Sets:
+  #       callers         every record of the caller's own file; PASS = that file's FILTER
+  #       union           every record of the merged file; PASS = merged FILTER
+  #       >=2 / all 3     found by >=2 / all 3 callers (any FILTER); PASS = PASS in >=2 / all 3 callers' own files
+  #     Multiallelics and MNVs split, doublet halves out.
+  split_alt <- function(x) {                       # one row per ALT of multiallelic records
+    m <- x[ALT %like% ","]
+    if (!nrow(m)) return(x)
+    s <- strsplit(m$ALT, ",", fixed = TRUE)
+    rbind(x[!ALT %like% ","], m[rep(seq_len(.N), lengths(s))][, ALT := unlist(s)])
+  }
+  a <- rbind(raw[kind == "caller", .(tumour, SET = CALLER, CHROM, POS, REF, ALT, PASS)],
+             raw[kind == "merged", .(tumour, SET = "union", CHROM, POS, REF, ALT, PASS)])
+  a <- split_alt(a)[nchar(REF) == nchar(ALT) & REF %like% "^[ACGT]+$" & ALT %like% "^[ACGT]+$"]
+  a[, TYPE := fifelse(nchar(REF) == 1L, "SNV", "MNV")]
+  a <- split_mnv(a)[, .(PASS = any(PASS)), by = .(tumour, SET, CHROM, POS, REF, ALT)]
+  cc <- a[SET %chin% CALLERS, .(n_found = .N, n_pass = sum(PASS)), by = .(tumour, CHROM, POS, REF, ALT)]
+  a <- rbind(a,
+             cc[n_found >= 2, .(tumour, SET = ">=2 callers", CHROM, POS, REF, ALT, PASS = n_pass >= 2)],
+             cc[n_found == length(CALLERS), .(tumour, SET = "all 3 callers", CHROM, POS, REF, ALT, PASS = n_pass == length(CALLERS))])
+  rm(cc)
+  a[, NC_3 := trinuc_context(a)]
+  a <- a[!in_doublet(a) & substr(NC_3, 2, 2) == REF]
+  a[, SBS96 := sbs96(REF, ALT, NC_3)]
+  a[, `:=`(NC_3 = paste0(substr(SBS96, 1, 1), substr(SBS96, 3, 3), substr(SBS96, 7, 7)),   # pyrimidine strand
+           filter = fifelse(PASS, "PASS", "not PASS"), SET = factor(SET, levels = SET96))]
+  sbs96_filter_n <- a[, .(SNVs = .N, PASS = sum(PASS), not_PASS = sum(!PASS)), by = .(tumour, SET)][order(tumour, SET)]
+  print(sbs96_filter_n)
+
+  # ggplot: rows = set x (all SNVs, PASS, not PASS), columns = substitution; % of each row's SNVs
+  FILTER_LEVELS <- c("all SNVs", "PASS", "not PASS")
+  prof <- rbind(a[, .N, by = .(tumour, SET, filter = "all SNVs", SBS96)], a[, .N, by = .(tumour, SET, filter, SBS96)])
+  prof <- prof[CJ(tumour = unique(prof$tumour), SET = factor(SET96, levels = SET96), filter = FILTER_LEVELS,
+                  SBS96 = SBS96_TYPES, unique = TRUE), on = .(tumour, SET, filter, SBS96)]
   prof[is.na(N), N := 0L][, SUB := substr(SBS96, 3, 5)]
-  prof[, `:=`(n_set = sum(N), pct = if (sum(N)) 100 * N / sum(N) else 0), by = .(tumour, SET)]
-  prof <- prof[n_set > 0]
-  prof[, panel := paste0(SET, " (n=", n_set, ")")]
+  prof[, `:=`(n_row = sum(N), pct = if (sum(N)) 100 * N / sum(N) else 0), by = .(tumour, SET, filter)]
+  prof <- prof[n_row > 0]
+  prof[, filter := factor(filter, levels = FILTER_LEVELS)]
+  setorder(prof, tumour, SET, filter)
+  prof[, row := paste0(SET, "\n", filter, " (n=", n_row, ")")]
+  prof[, row := factor(row, levels = unique(row))]
   prof[, SBS96 := factor(SBS96, levels = SBS96_TYPES[order(substr(SBS96_TYPES, 3, 5), SBS96_TYPES)])]
   sub_cols <- c("C>A" = "#1EBFF0", "C>G" = "#050708", "C>T" = "#E62725", "T>A" = "#CBCACB", "T>C" = "#A1CF64", "T>G" = "#EDC8C5")
   for (t in unique(prof$tumour)) {
     p96 <- ggplot(prof[tumour == t], aes(SBS96, pct, fill = SUB)) +
       geom_col(width = 0.8) +
-      facet_grid(SET ~ SUB, scales = "free_x", space = "free_x",
-                 labeller = labeller(SET = setNames(prof[tumour == t, unique(panel)], prof[tumour == t, unique(as.character(SET))]))) +
+      facet_grid(row ~ SUB, scales = "free_x", space = "free_x") +
       scale_fill_manual(values = sub_cols, guide = "none") +
-      labs(x = NULL, y = "% of SNVs", title = paste(t, "- SBS96 per caller and set (GRCm38 context)")) +
+      labs(x = NULL, y = "% of SNVs", title = paste(t, "- SBS96 per set: all SNVs, PASS, not PASS (GRCm38 context)")) +
       theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 5, family = "mono"),
                          strip.text.y = element_text(angle = 0), panel.spacing.x = unit(0.5, "mm"))
-    save_plot(p96, paste0("sbs96_", t), 16, 2 + 1.6 * uniqueN(prof[tumour == t, SET]))
+    save_plot(p96, paste0("sbs96_", t), 16, 2 + 1.4 * uniqueN(prof[tumour == t, row]))
   }
 
-  # qcVCF 96-context plot (as in scripts/analysis/00_setup.R plot_96context): NC_3 given on the
-  # pyrimidine strand from SBS96; single-value options. One plot per tumour, one column per set.
+  # qcVCF 96-context plot per tumour: the sets stacked in one column, rows all SNVs / PASS / not PASS
   if (HAVE_QCVCF && all(sapply(c("cowplot", "stringr", "stringi", "ggtext"), requireNamespace, quietly = TRUE))) {
     for (t in names(TUMOURS)) {
-      q96 <- snv96[tumour == t, .(CHROM, POS, REF, ALT, tool = as.character(SET),
-                                  NC_3 = paste0(substr(SBS96, 1, 1), substr(SBS96, 3, 3), substr(SBS96, 7, 7)))]
+      q96 <- a[tumour == t][order(SET), .(CHROM, POS, REF, ALT, NC_3, tool = as.character(SET), filter)]
       if (!nrow(q96)) next
-      fig <- tryCatch(qcVCF::plot96_matrix(q96, rowsplit = NULL, plotsplitcol = "tool", orderplots = "no", showperc = "yes",
-                                           dropempty = "no", dontshowall = "yes", roworder = "all SNVs"),
+      fig <- tryCatch(qcVCF::plot96_matrix(q96, rowsplit = "filter", plotsplitrow = "tool", orderplots = "no", showperc = "yes",
+                                           dropempty = "yes", dontshowall = "no", roworder = "all SNVs,PASS,not PASS"),
                       error = function(e) { message("qcVCF plot96_matrix ", t, " skipped: ", conditionMessage(e)); NULL })
-      for (k in seq_along(fig)) save_plot(fig[[k]], paste0("qcVCF_sbs96_", t, if (k > 1) paste0("_", k)), 9 * uniqueN(q96$tool), 4)
+      # qcVCF's own layout: 4 cm per facet row + 3 cm per plot, 22 cm wide
+      rows <- q96[, uniqueN(filter) + 1L, by = tool]$V1
+      for (k in seq_along(fig)) save_plot(fig[[k]], paste0("qcVCF_sbs96_", t, if (k > 1) paste0("_", k)),
+                                          22 / 2.54, (sum(rows) * 4 + length(rows) * 3) / 2.54)
     }
   }
+  rm(a)
 
   # Cosine similarity of the SBS96 profiles, per tumour, between sets
   cosine <- rbindlist(lapply(names(TUMOURS), function(t) {
@@ -607,7 +642,7 @@ w(counts, "counts_per_caller")
 w(pairwise, "pairwise_shared"); w(qc_pairwise, "qcVCF_pairwise_shared")
 w(exclusive, "caller_overlap_exclusive"); w(by_n_callers, "caller_overlap_by_n_callers")
 w(union_vs, "union_vs_callers"); w(union_check, "union_merged_vs_callers_union"); w(union_n, "union_by_n_callers")
-w(m96, "sbs96_matrix"); w(cosine, "sbs96_cosine")
+w(m96, "sbs96_matrix"); w(cosine, "sbs96_cosine"); w(sbs96_filter_n, "sbs96_snvs_by_filter")
 
 saveRDS(list(files = files, raw = raw, per_caller = per_caller, per_caller_source = PER_CALLER_SOURCE,
              union_pass = union_pass, sets = sets, atom = atom, counts = counts, pairwise = pairwise,
