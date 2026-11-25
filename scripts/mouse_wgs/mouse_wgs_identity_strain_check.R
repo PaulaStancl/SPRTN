@@ -286,19 +286,23 @@ if (nrow(pl)) {
   save_plot(p_gen, "discordant_sites_genome", 14, 6)
 
   # Slide version: one message, two colours - differences in blocks (inherited) vs isolated (could be somatic)
-  # block = at least one other difference within the window; everything else counts as isolated here
-  pl[, slide := fifelse(nb_disc_labelled > 0L, "in a block with other differences (inherited)", "isolated (could be somatic)")]
+  # inherited = in a block (another difference within the window) OR the tumour has another KI normal's genotype;
+  # unexplained = isolated AND the tumour genotype is in no KI normal (somatic, LOH or genotyping error).
+  # Isolated sites that match another mouse are inherited too: the panel is sparse, so not every inherited
+  # difference has a neighbour (HCC_1 and HCC_2 show the same KI1-vs-KI2 sites).
+  pl[, slide := fifelse(nb_disc_labelled > 0L | !in_no_normal, "inherited (in a block, or the tumour has another mouse's genotype)",
+                        "unexplained (isolated, genotype in no normal: could be somatic)")]
   tot <- long[, .(n_sites = .N, n_disc = sum(disc_labelled)), by = tumour]
   tot[, lab := sprintf("%s vs %s\n%d of %d sites differ", tumour, KI_NORMALS[tumour], n_disc, n_sites)]
   pl[tot, on = "tumour", panel := i.lab]
   pl[, panel := factor(panel, levels = tot$lab)]
   p_slide <- ggplot(pl, aes(POS / 1e6, factor(chr_n, levels = 19:1), colour = slide)) +
     geom_point(shape = 124, size = 5) + facet_wrap(~ panel, nrow = 1, drop = FALSE) +
-    scale_colour_manual(values = c("in a block with other differences (inherited)" = "#1565C0",
-                                   "isolated (could be somatic)" = "#C62828"), name = NULL) +
+    scale_colour_manual(values = c("inherited (in a block, or the tumour has another mouse's genotype)" = "#1565C0",
+                                   "unexplained (isolated, genotype in no normal: could be somatic)" = "#C62828"), name = NULL, drop = FALSE) +
     labs(x = "position (Mb)", y = "chromosome",
          title = "Where each tumour differs from its labelled normal",
-         subtitle = sprintf("Inherited differences between two mice come in blocks; somatic mutations are isolated (no other difference within %g Mb)",
+         subtitle = sprintf("Inherited: another difference within %g Mb, or the tumour has another mouse's genotype. Unexplained: neither.",
                             NEIGHBOUR_WINDOW / 1e6)) +
     theme_bw(base_size = 14) + theme(legend.position = "bottom", plot.subtitle = element_text(size = 11))
   save_plot(p_slide, "discordant_sites_genome_slide", 14, 7)
