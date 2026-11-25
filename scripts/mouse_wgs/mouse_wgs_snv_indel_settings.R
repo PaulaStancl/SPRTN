@@ -5,18 +5,13 @@
 # mouse_wgs_snv_indel_settings.R - compare the three calling settings per tumour.
 #
 # Sets (per tumour; PASS = FILTER == PASS in each file's own FILTER, never the merged file):
-#   A_m2_strelka  A: tumour vs matched KI normal, PASS in the Mutect2 file AND PASS in the Strelka file
-#                 (FreeBayes ignored; "all records" = found by both, any FILTER)
-#   A_mutect2     A: Mutect2 alone (INCLUDE_A_MUTECT2). B and C are Mutect2 only, so this is the
-#                 same-caller comparison; A_m2_strelka is a subset of it by definition.
-#   B_joint_wt    B: tumor_vs_joint_wt/  Mutect2 joint calls with the WT normals
-#   C_pon         C: tumor_only_pon/     Mutect2 tumour-only + WT panel of normals
-#
-# SAMPLE SWAP (final 2026-11-25, README section 3.3): setting A paired HCC_1 with KI1 and HCC_2 with KI2,
-# but HCC_1 = KI2 animal and HCC_2 = KI1 animal. Setting-A sets for HCC_1 and HCC_2 therefore contain
-# germline differences between the mice and are NOT valid somatic sets. HCC_3 is correctly paired.
-# The setting-B file names also name a KI normal (..._vs_..._KI1); block 2 prints the samples in each
-# file so you can see whether the KI normal was part of the joint calling.
+#   A_freebayes          A: tumor_vs_normal, FreeBayes PASS
+#   A_mutect2_strelka    A: PASS first in Mutect2's and in Strelka's own file, then intersected
+#                        ("all records" = found by both, any FILTER)
+#   A_strelka            A: Strelka PASS
+#   A_mutect2            A: Mutect2 PASS
+#   B_mutect2_joint_wt   B: tumor_vs_joint_wt/  Mutect2 joint calls with the WT normals, PASS
+#   C_mutect2_pon        C: tumor_only_pon/     Mutect2 tumour-only + WT panel of normals, PASS
 #
 # Questions answered, per tumour:
 #   1. SNV / indel counts per set (all records vs PASS)
@@ -59,15 +54,13 @@ SAMTOOLS <- Sys.which("samtools"); if (!nzchar(SAMTOOLS)) SAMTOOLS <- file.path(
 TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
              HCC_2 = "sfb_dikic_2025_05_11_KI_HCC_2",
              HCC_3 = "sfb_dikic_2025_05_12_KI_HCC_3")
-KI_NORMALS <- c(KI1 = "sfb_dikic_2025_05_05_KI1", KI2 = "sfb_dikic_2025_05_06_KI2", KI3 = "sfb_dikic_2025_05_07_KI3")
-INCLUDE_A_MUTECT2 <- TRUE          # FALSE = only A_m2_strelka from setting A
-
-SET_LABELS <- c(A_m2_strelka = "A: vs KI normal, Mutect2 & Strelka PASS",
-                A_mutect2    = "A: vs KI normal, Mutect2 PASS",
-                B_joint_wt   = "B: joint WT normals, Mutect2",
-                C_pon        = "C: tumour-only + WT PoN, Mutect2")
-SET_LEVELS <- c("A_m2_strelka", if (INCLUDE_A_MUTECT2) "A_mutect2", "B_joint_wt", "C_pon")
-SWAP_NOTE  <- "Setting A HCC_1/HCC_2 were called against the wrong KI normal (sample swap): not valid somatic sets"
+SET_LABELS <- c(A_freebayes        = "A: tumor_vs_normal, FreeBayes PASS",
+                A_mutect2_strelka  = "A: tumor_vs_normal, Mutect2 PASS & Strelka PASS (intersect)",
+                A_strelka          = "A: tumor_vs_normal, Strelka PASS",
+                A_mutect2          = "A: tumor_vs_normal, Mutect2 PASS",
+                B_mutect2_joint_wt = "B: tumor_vs_joint_wt, Mutect2 PASS",
+                C_mutect2_pon      = "C: tumor_only_pon, Mutect2 PASS")
+SET_LEVELS <- names(SET_LABELS)
 
 
 # ---- 1. Setup ----------------------------------------------------------------
@@ -134,24 +127,22 @@ files[, has_CALLER := sapply(rel, function(r) any(startsWith(hdr[[r]], "##INFO=<
 files[, caller := fcase(grepl("mutect2", rel, ignore.case = TRUE), "mutect2",
                         grepl("strelka", rel, ignore.case = TRUE), "strelka",
                         grepl("freebayes", rel, ignore.case = TRUE), "freebayes", default = NA_character_)]
-# Setting A: only the single-caller Mutect2 and Strelka files (not FreeBayes, not the merged file)
-files[, src := fcase(setting == "A" & !has_CALLER & caller == "mutect2", "A_mutect2",
+# Setting A: the single-caller files (not the merged file)
+files[, src := fcase(setting == "A" & !has_CALLER & caller == "freebayes", "A_freebayes",
+                     setting == "A" & !has_CALLER & caller == "mutect2", "A_mutect2",
                      setting == "A" & !has_CALLER & caller == "strelka", "A_strelka",
-                     setting == "B", "B_joint_wt",
-                     setting == "C", "C_pon", default = NA_character_)]
+                     setting == "B", "B_mutect2_joint_wt",
+                     setting == "C", "C_mutect2_pon", default = NA_character_)]
 files[, .(setting, tumour, src, has_CALLER, file = rel)]
 files <- files[!is.na(src)]
 stopifnot(!anyNA(files$tumour))
 print(dcast(files[, .N, by = .(tumour, src)], tumour ~ src, value.var = "N", fill = 0))   # expect >= 1 everywhere
-miss <- CJ(tumour = names(TUMOURS), src = c("A_mutect2", "A_strelka", "B_joint_wt", "C_pon"))[!files, on = .(tumour, src)]
+miss <- CJ(tumour = names(TUMOURS), src = c("A_freebayes", "A_mutect2", "A_strelka", "B_mutect2_joint_wt", "C_mutect2_pon"))[!files, on = .(tumour, src)]
 if (nrow(miss)) stop("Missing files:\n", paste(capture.output(print(miss)), collapse = "\n"))
 
-# Samples in each file; flags files of B/C that contain a KI normal (then the swap matters there too)
+# Samples in each file
 files[, samples := sapply(path, function(f) paste(bcf(c("query", "-l", shQuote(f))), collapse = ","))]
-files[, KI_normal_in_file := sapply(samples, function(s) paste(names(KI_NORMALS)[sapply(KI_NORMALS, grepl, s, fixed = TRUE)], collapse = ","))]
-print(files[, .(tumour, src, KI_normal_in_file, samples)])
-if (files[src %chin% c("B_joint_wt", "C_pon") & nzchar(KI_normal_in_file), .N])
-  message("NOTE: a B/C file contains a KI normal - check whether it was used as the normal (swap, README 3.3)")
+print(files[, .(tumour, src, samples)])
 
 # ---- 3. Read records and build the sets ----------------------------------------
 read_rec <- function(i) {
@@ -179,14 +170,14 @@ rec <- rec[REF %like% "^[ACGT]+$" & ALT %like% "^[ACGT]+$"]
 rec[, TYPE := fifelse(nchar(REF) == nchar(ALT), fifelse(nchar(REF) == 1L, "SNV", "MNV"), "INDEL")]
 rec <- split_mnv(rec)[, .(PASS = any(PASS)), by = .(tumour, src, CLASS = fifelse(TYPE == "SNV", "SNV", "INDEL"), CHROM, POS, REF, ALT)]
 
-# A_m2_strelka: found by both Mutect2 and Strelka (own files, any FILTER); PASS = PASS in both own files
+# A_mutect2_strelka: PASS first in each caller's own file, then intersected. "all records" = found by both
+# (own files, any FILTER); PASS = PASS in both own files
 key <- c("tumour", "CLASS", "CHROM", "POS", "REF", "ALT")
 m2s <- merge(rec[src == "A_mutect2", c(key, "PASS"), with = FALSE], rec[src == "A_strelka", c(key, "PASS"), with = FALSE],
              by = key, suffixes = c("_m2", "_st"))[, .(PASS = PASS_m2 & PASS_st), by = key]
-allset <- rbind(m2s[, SET := "A_m2_strelka"],
-                if (INCLUDE_A_MUTECT2) rec[src == "A_mutect2", c(key, "PASS"), with = FALSE][, SET := "A_mutect2"],
-                rec[src == "B_joint_wt", c(key, "PASS"), with = FALSE][, SET := "B_joint_wt"],
-                rec[src == "C_pon", c(key, "PASS"), with = FALSE][, SET := "C_pon"], use.names = TRUE)
+one <- function(s) rec[src == s, c(key, "PASS"), with = FALSE][, SET := s]
+allset <- rbind(one("A_freebayes"), m2s[, SET := "A_mutect2_strelka"], one("A_strelka"), one("A_mutect2"),
+                one("B_mutect2_joint_wt"), one("C_mutect2_pon"), use.names = TRUE)
 rm(m2s)
 allset[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
 allset[, SET := factor(SET, levels = SET_LEVELS)]
@@ -209,7 +200,7 @@ p_counts <- ggplot(counts_filter, aes(SET, N, fill = CLASS)) +
   scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
   labs(x = NULL, y = "variants (MNVs split)", fill = NULL,
        title = "SNVs and indels per setting, all records vs PASS",
-       subtitle = paste0("A_m2_strelka all = found by both; PASS = PASS in both own files. ", SWAP_NOTE)) +
+       subtitle = "A_mutect2_strelka: all = found by both; PASS = PASS in both own files") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
 save_plot(p_counts, "counts_per_setting", 12, 8)
 
@@ -219,8 +210,7 @@ p_counts_pass <- ggplot(counts_filter[filter == "PASS"], aes(SET, N, fill = CLAS
   geom_text(aes(label = N), position = position_dodge(width = 0.9), vjust = -0.3, size = 3) +
   facet_wrap(~ tumour, scales = "free_y") +
   scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
-  labs(x = NULL, y = "PASS variants (MNVs split)", fill = NULL, title = "PASS SNVs and indels per setting",
-       subtitle = SWAP_NOTE) +
+  labs(x = NULL, y = "PASS variants (MNVs split)", fill = NULL, title = "PASS SNVs and indels per setting") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
 save_plot(p_counts_pass, "counts_per_setting_PASS", 12, 5)
 
@@ -256,7 +246,7 @@ p_pair <- ggplot(pairwise, aes(set_2, set_1, fill = pct_of_1)) +
   scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 100)) +
   scale_y_discrete(limits = rev) +
   labs(x = "found also in", y = "set (row = 100%)", fill = "% of row",
-       title = "Shared PASS variants between settings", subtitle = SWAP_NOTE) +
+       title = "Shared PASS variants between settings") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
 save_plot(p_pair, "pairwise_shared", 14, 7)
 
@@ -292,7 +282,7 @@ p_excl <- ggplot(exclusive, aes(factor(SETS, levels = lvl), N, fill = factor(N_S
   scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
   labs(x = "found in (exclusive)", y = "PASS variants", fill = "sets",
        title = "Overlap between settings, exclusive categories (UpSet-style)",
-       subtitle = paste0(if (INCLUDE_A_MUTECT2) "A_m2_strelka is a subset of A_mutect2 by definition. ", SWAP_NOTE)) +
+       subtitle = "A_mutect2_strelka is a subset of A_mutect2 and A_strelka by definition") +
   theme_bw() + theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 7), plot.subtitle = element_text(size = 8))
 save_plot(p_excl, "overlap_exclusive", 15, 8)
 
@@ -306,8 +296,7 @@ p_share <- ggplot(share_n, aes(SET, pct, fill = factor(other_sets))) +
   geom_col() +
   facet_grid(CLASS ~ tumour) +
   scale_fill_brewer(palette = "Blues", name = "also in\n# other sets") +
-  labs(x = NULL, y = "% of the set's PASS variants", title = "Proportion of PASS variants shared with the other settings",
-       subtitle = SWAP_NOTE) +
+  labs(x = NULL, y = "% of the set's PASS variants", title = "Proportion of PASS variants shared with the other settings") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
 save_plot(p_share, "proportion_shared", 12, 7)
 
@@ -387,8 +376,7 @@ if (HAVE_FASTA) {
       geom_col(width = 0.8) +
       facet_grid(row ~ SUB, scales = "free_x", space = "free_x") +
       scale_fill_manual(values = sub_cols, guide = "none") +
-      labs(x = NULL, y = "% of SNVs", title = paste(t, "- SBS96 per setting, PASS SNVs (GRCm38 context)"),
-           subtitle = if (t %chin% c("HCC_1", "HCC_2")) SWAP_NOTE) +
+      labs(x = NULL, y = "% of SNVs", title = paste(t, "- SBS96 per setting, PASS SNVs (GRCm38 context)")) +
       theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 5, family = "mono"),
                          strip.text.y = element_text(angle = 0), panel.spacing.x = unit(0.5, "mm"))
     save_plot(p96, paste0("sbs96_", t), 16, 2 + 1.4 * uniqueN(prof[tumour == t, row]))
@@ -425,7 +413,7 @@ if (HAVE_FASTA) {
       geom_text(aes(label = sprintf("%.2f", cosine)), size = 3) + facet_wrap(~ tumour) +
       scale_fill_gradient(low = "white", high = "darkred", limits = c(0, 1)) +
       scale_y_discrete(limits = rev) +
-      labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles between settings (PASS SNVs)", subtitle = SWAP_NOTE) +
+      labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles between settings (PASS SNVs)") +
       theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.subtitle = element_text(size = 8))
     save_plot(p_cos, "sbs96_cosine", 14, 6)
   }
@@ -475,9 +463,9 @@ saveRDS(list(files = files, records_per_file = records_per_file, pass = pass, co
              cosine_samples = cosine_samples, params = list(FASTA = FASTA, SET_LEVELS = SET_LEVELS)),
         file.path(OUT, "settings.rds"))
 
-fwrite(data.table(parameter = c("DIR_A", "DIR_B", "DIR_C", "OUT", "FASTA", "BCFTOOLS", "SAMTOOLS", "INCLUDE_A_MUTECT2",
+fwrite(data.table(parameter = c("DIR_A", "DIR_B", "DIR_C", "OUT", "FASTA", "BCFTOOLS", "SAMTOOLS",
                                 paste0("TUMOUR_", names(TUMOURS)), paste0("SET_", names(SET_LABELS))),
-                  value = c(DIR_A, DIR_B, DIR_C, OUT, FASTA, BCFTOOLS, SAMTOOLS, INCLUDE_A_MUTECT2, TUMOURS, SET_LABELS)),
+                  value = c(DIR_A, DIR_B, DIR_C, OUT, FASTA, BCFTOOLS, SAMTOOLS, TUMOURS, SET_LABELS)),
        file.path(OUT, "parameters.tsv"), sep = "\t")
 fwrite(data.table(file = files$rel, md5 = unname(tools::md5sum(files$path))), file.path(OUT, "input_md5.tsv"), sep = "\t")
 git_hash <- tryCatch(system2("git", c("-C", shQuote(REPO), "rev-parse", "--short", "HEAD"), stdout = TRUE), error = function(e) "unknown")
@@ -497,8 +485,7 @@ writeLines(c(
   "# mouse_wgs_snv_indel_settings summary", "",
   paste0("Run ", format(started, "%Y-%m-%d %H:%M"), ". PASS = FILTER of each file's own FILTER; MNVs split into SNVs."), "",
   "Sets:", "", paste0("- `", SET_LEVELS, "`: ", SET_LABELS[SET_LEVELS]), "",
-  paste0("**", SWAP_NOTE, ".**"), "",
-  "## Samples per file", "", md_table(files[, .(tumour, src, KI_normal_in_file, samples)]), "",
+  "## Samples per file", "", md_table(files[, .(tumour, src, samples)]), "",
   "## Counts per setting", "", md_table(counts), "",
   "## Pairwise shared PASS (row set = 100%)", "", md_table(pairwise[set_1 != set_2]), "",
   "## Exclusive categories", "", md_table(exclusive), "",
@@ -508,8 +495,8 @@ writeLines(c(
                         md_table(dcast(cosine_samples, set + tumour_1 ~ tumour_2, value.var = "cosine")), "")) else
     "SBS96 skipped (no FASTA/samtools).",
   "## Notes", "",
-  "- B and C are Mutect2 only; compare them with A_mutect2 for a same-caller view.",
-  "- C has no matched normal: expect germline variants not in the PoN to remain.",
+  "- B and C are Mutect2 only; A_mutect2 is the same-caller comparison.",
+  "- C has no matched normal: germline variants not in the PoN can remain.",
   "- Doublet halves are left out of SBS96 (counted as one DBS event).",
   "- Counts, not mutations per Mb (no BAMs, no callable territory)."),
   file.path(OUT, "summary.md"))
@@ -521,7 +508,7 @@ writeLines(c(
   paste0("- Run by:     ", Sys.info()[["user"]], "@", Sys.info()[["nodename"]], " (", R.version.string, ")"),
   paste0("- Script:     ", SCRIPT, "  git: ", git_hash),
   paste0("- Parameters: sets ", paste(SET_LEVELS, collapse = ", "), "; PASS from each file's own FILTER"),
-  paste0("- Inputs:     ", DIR_A, " (Mutect2 + Strelka files), ", DIR_B, ", ", DIR_C, " (", nrow(files), " files); FASTA ", FASTA),
+  paste0("- Inputs:     ", DIR_A, " (FreeBayes, Mutect2, Strelka files), ", DIR_B, ", ", DIR_C, " (", nrow(files), " files); FASTA ", FASTA),
   paste0("- Outputs:    ", OUT),
   paste0("- Counts/QC:  records read ", nrow(raw), ", PASS variants (all sets) ", nrow(pass)),
   "", old_log), log_file)
