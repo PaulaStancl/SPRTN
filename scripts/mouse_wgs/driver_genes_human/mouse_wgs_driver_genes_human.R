@@ -193,6 +193,7 @@ for (L in names(LISTS)) {
       facet_wrap(~ tumour, nrow = 1) +
       scale_fill_manual(values = c(HIGH = "#D7301F", "MODERATE only" = "#FDBB84"), name = "VEP impact") +
       scale_y_discrete(limits = rev) +
+      scale_x_discrete(drop = FALSE) +                                   # all 9 sets, also those without hits
       labs(x = NULL, y = paste0("human gene (", L, "), mouse ortholog mutated"),
            title = paste0("Harmful (VEP HIGH/MODERATE) PASS mutations in mouse orthologs of ", L, " genes"),
            subtitle = "number = PASS variants per gene and set; * = patient (RJALS) tumourevo driver gene") +
