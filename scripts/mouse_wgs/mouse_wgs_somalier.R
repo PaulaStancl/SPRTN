@@ -204,7 +204,9 @@ if (HAVE_SOMALIER) for (sub_cmd in c("extract", "relate")) {
 gtcheck_usage <- character()
 if (HAVE_BCFTOOLS) {
   f <- file.path(OUT, "tool_help", "bcftools_version.txt"); writeLines(capture(BCFTOOLS, "--version"), f); help_files <- c(help_files, f)
-  gtcheck_usage <- capture(BCFTOOLS, "gtcheck")          # no arguments: prints its usage, exit status 1
+  # [CHANGE 15] "-h", not no arguments: with no file and stdin not a terminal (Rscript, pipes) 1.4.1 reads
+  # stdin instead of printing its usage (vcfgtcheck.c: optind==argc && !isatty -> fname = "-")
+  gtcheck_usage <- capture(BCFTOOLS, c("gtcheck", "-h"))  # prints its usage, exit status 1
   f <- file.path(OUT, "tool_help", "bcftools_gtcheck_usage.txt"); writeLines(gtcheck_usage, f); help_files <- c(help_files, f)
   # 1.4.1 prints "Version: 1.4.1 (using htslib 1.4.1)": bcftools and htslib versions are separate numbers
   print(grep("Version|htslib", c(bcftools_version, gtcheck_usage), value = TRUE))
