@@ -85,7 +85,14 @@ hits[, germline_like_popAF := !is.na(max_pop_AF) & max_pop_AF > GERMLINE_AF]
 hits[, in_normal_table := NA]
 if (NORMAL %in% names(x) && !is.null(x[[NORMAL]]$mutations) && !anyNA(c(c_chr, c_pos, c_ref, c_alt))) {
   pn <- as.data.table(x[[NORMAL]]$mutations)
-  if (all(c(c_chr, c_pos, c_ref, c_alt) %in% names(pn)))
+  pt <- as.data.table(x[[TUMOUR]]$mutations)
+  same <- all(c(c_chr, c_pos, c_ref, c_alt) %in% names(pn)) &&
+    setequal(pn[, paste(get(c_chr), get(c_pos), get(c_ref), get(c_alt))], pt[, paste(get(c_chr), get(c_pos), get(c_ref), get(c_alt))])
+  if (same) {
+    # 2026-11-25: in the RJALS rds the normal element holds the same mutation list as the tumour (all TRUE) -
+    # not a germline check; use the normal's AD in the Mutect2 VCF instead
+    message("normal element of the rds has the same mutations as the tumour - in_normal_table left NA (not informative)")
+  } else if (all(c(c_chr, c_pos, c_ref, c_alt) %in% names(pn)))
     hits[, in_normal_table := paste(get(c_chr), get(c_pos), get(c_ref), get(c_alt)) %chin%
            pn[, paste(get(c_chr), get(c_pos), get(c_ref), get(c_alt))]]
 }
