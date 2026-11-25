@@ -61,7 +61,7 @@ All are tutorial-style, numbered blocks, run line by line in RStudio or with `Rs
 | `mouse_wgs_example_sites.R` | Diagnostics for chr19:30419577 T>C and chr10:3184122 G>T from the single-caller files: per-caller metrics, FreeBayes criteria, per-caller read counts in all samples, plots 01–08 | run, reviewed |
 | `mouse_wgs_sample_identity.R` | Sample identity from FreeBayes genotypes: IBS0 rates per shared confident sites (WT from Mutect2 joint), LD-thinned rate, IBS0 blocks and chromosomes, depth and GQ/MQM at IBS0 sites, optional MGP strains, bcftools gtcheck | v1 run (counts in section 3); **current version not run yet** |
 | `gtcheck_freebayes.sh` | bcftools gtcheck: biallelic autosomal SNVs, QUAL/DP/GQ filter, merge `-m none`, all-sites and common-sites runs, per-1000 table | run; common-sites rows not reviewed yet |
-| `mouse_wgs_somalier.R` | Identity with three methods (somalier, bcftools gtcheck, custom IBS0) on one masked 6-sample genotype file; panels A/B/C x thinning; see 2.1 | rewritten 2026-11-24 (94c7d76); synthetic test passes on the Mac (R logic only); **not yet run on ssi** |
+| `mouse_wgs_somalier.R` | Identity with three methods (somalier, bcftools gtcheck, custom IBS0) on one masked 6-sample genotype file; panels A/B/C x thinning; see 2.1 | rewritten 2026-11-24 (94c7d76); `--test` passes on ssi 2026-11-25 (all checks incl. somalier, 9a19573); **real data not run yet** |
 | `mouse_wgs_snv_indel.R` | Task 1: settings A/B/C (counts, VAF, FILTER, overlaps, annotation) | written, not run; block 9 reads ANN and must switch to **CSQ** |
 
 Run commands (from the repo on ssi):
