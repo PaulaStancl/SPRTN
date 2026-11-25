@@ -575,8 +575,8 @@ if (HAVE_FASTA) {
   for (cl in setdiff(names(m96), "SBS96")) set(m96, which(is.na(m96[[cl]])), cl, 0L)
   setnames(m96, "SBS96", "MutationType")
 
-  # 8b. SBS96 plots with ALL records, split by FILTER: within each set three rows - all SNVs, PASS, not PASS.
-  #     (m96 and the cosine similarity above stay PASS-only.) Sets:
+  # 8b. SBS96 plots: ggplot sbs96_<tumour> = PASS SNVs per set (one row per set); qcVCF plot = ALL records,
+  #     split by FILTER (all SNVs, PASS, not PASS). (m96 and the cosine similarity above stay PASS-only.) Sets:
   #       callers         every record of the caller's own file; PASS = that file's FILTER
   #       union           every record of the merged file; PASS = merged FILTER
   #       >=2 / all 3     found by >=2 / all 3 callers (any FILTER); PASS = PASS in >=2 / all 3 callers' own files
@@ -595,17 +595,15 @@ if (HAVE_FASTA) {
   sbs96_filter_n <- a[, .(SNVs = .N, PASS = sum(PASS), not_PASS = sum(!PASS)), by = .(tumour, SET)][order(tumour, SET)]
   print(sbs96_filter_n)
 
-  # ggplot: rows = set x (all SNVs, PASS, not PASS), columns = substitution; % of each row's SNVs
-  FILTER_LEVELS <- c("all SNVs", "PASS", "not PASS")
-  prof <- rbind(a[, .N, by = .(tumour, SET, SBS96)][, filter := "all SNVs"], a[, .N, by = .(tumour, SET, filter, SBS96)], use.names = TRUE)
-  prof <- prof[CJ(tumour = unique(prof$tumour), SET = factor(SET96, levels = SET96), filter = FILTER_LEVELS,
-                  SBS96 = SBS96_TYPES, unique = TRUE), on = .(tumour, SET, filter, SBS96)]
+  # ggplot: rows = set, PASS SNVs only (PASS as defined per set above), columns = substitution; % of each row's SNVs
+  prof <- a[(PASS), .N, by = .(tumour, SET, SBS96)]
+  prof <- prof[CJ(tumour = unique(prof$tumour), SET = factor(SET96, levels = SET96),
+                  SBS96 = SBS96_TYPES, unique = TRUE), on = .(tumour, SET, SBS96)]
   prof[is.na(N), N := 0L][, SUB := substr(SBS96, 3, 5)]
-  prof[, `:=`(n_row = sum(N), pct = if (sum(N)) 100 * N / sum(N) else 0), by = .(tumour, SET, filter)]
+  prof[, `:=`(n_row = sum(N), pct = if (sum(N)) 100 * N / sum(N) else 0), by = .(tumour, SET)]
   prof <- prof[n_row > 0]
-  prof[, filter := factor(filter, levels = FILTER_LEVELS)]
-  setorder(prof, tumour, SET, filter)
-  prof[, row := paste0(SET, "\n", filter, " (n=", n_row, ")")]
+  setorder(prof, tumour, SET)
+  prof[, row := paste0(SET, "\nPASS (n=", n_row, ")")]
   prof[, row := factor(row, levels = unique(row))]
   prof[, SBS96 := factor(SBS96, levels = SBS96_TYPES[order(substr(SBS96_TYPES, 3, 5), SBS96_TYPES)])]
   sub_cols <- c("C>A" = "#1EBFF0", "C>G" = "#050708", "C>T" = "#E62725", "T>A" = "#CBCACB", "T>C" = "#A1CF64", "T>G" = "#EDC8C5")
@@ -614,7 +612,7 @@ if (HAVE_FASTA) {
       geom_col(width = 0.8) +
       facet_grid(row ~ SUB, scales = "free_x", space = "free_x") +
       scale_fill_manual(values = sub_cols, guide = "none") +
-      labs(x = NULL, y = "% of SNVs", title = paste(t, "- SBS96 per set: all SNVs, PASS, not PASS (GRCm38 context)")) +
+      labs(x = NULL, y = "% of SNVs", title = paste(t, "- SBS96 per set, PASS SNVs (GRCm38 context)")) +
       theme_bw() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, size = 5, family = "mono"),
                          strip.text.y = element_text(angle = 0), panel.spacing.x = unit(0.5, "mm"))
     save_plot(p96, paste0("sbs96_", t), 16, 2 + 1.4 * uniqueN(prof[tumour == t, row]))
