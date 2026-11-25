@@ -284,6 +284,23 @@ if (nrow(pl)) {
          subtitle = sprintf("Blocks = inherited differences between two mice; isolated = no discordant site within %g Mb", NEIGHBOUR_WINDOW / 1e6)) +
     theme_bw() + theme(legend.position = "bottom")
   save_plot(p_gen, "discordant_sites_genome", 14, 6)
+
+  # Slide version: one message, two colours - differences in blocks (inherited) vs isolated (could be somatic)
+  pl[, slide := fifelse(isolated, "isolated (could be somatic)", "in a block with other differences (inherited)")]
+  tot <- long[, .(n_sites = .N, n_disc = sum(disc_labelled)), by = tumour]
+  tot[, lab := sprintf("%s vs %s\n%d of %d sites differ", tumour, KI_NORMALS[tumour], n_disc, n_sites)]
+  pl[tot, on = "tumour", panel := i.lab]
+  pl[, panel := factor(panel, levels = tot$lab)]
+  p_slide <- ggplot(pl, aes(POS / 1e6, factor(chr_n, levels = 19:1), colour = slide)) +
+    geom_point(shape = 124, size = 5) + facet_wrap(~ panel, nrow = 1, drop = FALSE) +
+    scale_colour_manual(values = c("in a block with other differences (inherited)" = "#1565C0",
+                                   "isolated (could be somatic)" = "#C62828"), name = NULL) +
+    labs(x = "position (Mb)", y = "chromosome",
+         title = "Where each tumour differs from its labelled normal",
+         subtitle = sprintf("Inherited differences between two mice come in blocks; somatic mutations are isolated (no other difference within %g Mb)",
+                            NEIGHBOUR_WINDOW / 1e6)) +
+    theme_bw(base_size = 14) + theme(legend.position = "bottom", plot.subtitle = element_text(size = 11))
+  save_plot(p_slide, "discordant_sites_genome_slide", 14, 7)
 }
 sb <- melt(summ, id.vars = c("tumour", "comparison"), measure.vars = c("pct_disc_known_polymorphism", "pct_disc_129_carries_alt",
                                                                     "pct_disc_with_discordant_neighbour"))
