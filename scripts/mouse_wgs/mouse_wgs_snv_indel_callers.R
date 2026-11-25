@@ -99,6 +99,13 @@ save_plot <- function(p, name, w = 9, h = 6) {
 # Callers in INFO/CALLER, matched like bcftools' INFO/CALLER~"mutect2" (name anywhere in the value,
 # whatever the separator). Returns a TRUE/FALSE column per caller.
 caller_flags <- function(x) setNames(lapply(CALLERS, function(cl) grepl(cl, x, ignore.case = TRUE)), CALLERS)
+# One row per ALT of multiallelic records (as the provider's bcftools norm -m -any)
+split_alt <- function(x) {
+  m <- x[ALT %like% ","]
+  if (!nrow(m)) return(x)
+  s <- strsplit(m$ALT, ",", fixed = TRUE)
+  rbind(x[!ALT %like% ","], m[rep(seq_len(.N), lengths(s))][, ALT := unlist(s)])
+}
 
 # ---- 2. Files ----------------------------------------------------------------
 files <- data.table(path = list.files(DIR_A, recursive = TRUE, full.names = TRUE, pattern = "\\.(bcf|vcf|vcf\\.gz)$"))
@@ -148,15 +155,16 @@ if (nrow(merged)) {
   print(merged_filter)
 }
 
-# 3b. Per-caller PASS sets from INFO/CALLER of the merged PASS records.
-# Only if there is no merged file, fall back to per-caller files.
-if (nrow(merged)) {
+# 3b. Per-caller PASS sets: PASS by each caller's OWN filters, i.e. FILTER == PASS in its own file
+#     (multiallelics split). NOT from the merged file: its FILTER drops a variant one caller passed
+#     when another caller filtered it. Fallback to INFO/CALLER only if there are no single-caller files.
+if (nrow(raw[kind == "caller"])) {
+  per_caller <- split_alt(raw[kind == "caller" & PASS == TRUE, .(tumour, SET = CALLER, CHROM, POS, REF, ALT, FILTER)])
+  PER_CALLER_SOURCE <- "single-caller files, FILTER == PASS in each caller's own file"
+} else {
   per_caller <- rbindlist(lapply(CALLERS, function(cl)
     merged[PASS == TRUE & get(cl), .(tumour, SET = cl, CHROM, POS, REF, ALT, FILTER)]))
-  PER_CALLER_SOURCE <- "merged file, INFO/CALLER (record FILTER = merged FILTER)"
-} else {
-  per_caller <- raw[kind == "caller" & PASS == TRUE, .(tumour, SET = CALLER, CHROM, POS, REF, ALT, FILTER)]
-  PER_CALLER_SOURCE <- "per-caller files (no merged file found)"
+  PER_CALLER_SOURCE <- "merged file, INFO/CALLER (no single-caller files; record FILTER = merged FILTER)"
 }
 per_caller <- unique(per_caller[SET %chin% CALLERS])
 PER_CALLER_SOURCE
@@ -361,12 +369,6 @@ atom[, SET := factor(SET, levels = SET_LEVELS)]
 #     callers = every record of the caller's own file, PASS = that file's FILTER;
 #     union   = every record of the merged file, PASS = merged FILTER.
 #     Multiallelics and MNVs split; one row per tumour x set x variant.
-split_alt <- function(x) {                         # one row per ALT of multiallelic records
-  m <- x[ALT %like% ","]
-  if (!nrow(m)) return(x)
-  s <- strsplit(m$ALT, ",", fixed = TRUE)
-  rbind(x[!ALT %like% ","], m[rep(seq_len(.N), lengths(s))][, ALT := unlist(s)])
-}
 allrec <- rbind(raw[kind == "caller", .(tumour, SET = CALLER, CHROM, POS, REF, ALT, PASS)],
                 raw[kind == "merged", .(tumour, SET = "union (merged)", CHROM, POS, REF, ALT, PASS)])
 allrec <- split_alt(allrec)[REF %like% "^[ACGT]+$" & ALT %like% "^[ACGT]+$"]
@@ -475,9 +477,9 @@ save_plot(p_upset, "caller_overlap_exclusive", 12, 6)
 
 # ---- 7. Union vs single callers ---------------------------------------------
 # Union = PASS records of the merged file. Per caller: how much of its PASS set is in the union, and
-# how much of the union it contributes. Since the caller sets come from the same file (INFO/CALLER),
-# union_check should show only_merged = only_callers = 0; anything else flags a CALLER value none
-# of CALLERS matches (see block 3a).
+# how much of the union it contributes. The caller sets are PASS by each caller's own filters, so
+# union_check only_callers > 0 = variants PASS in a caller's own file but not PASS in the merged
+# file (another caller filtered them; see header).
 un <- atom[SET == "union (merged)", .(tumour, CLASS, ID)]
 cal_union <- unique(cal[, .(tumour, CLASS, ID)])          # union of the callers' PASS sets
 union_vs <- rbind(
