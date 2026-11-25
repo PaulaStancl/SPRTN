@@ -234,6 +234,29 @@ DP ≥ 30 and GQ ≥ 30). Discordance per 1000 sites, all-sites run:
 - These checks use the same FreeBayes calls, so they are two methods but not independent evidence. Lab
   records, or a pileup if BAMs ever become available, would be independent.
 
+**somalier / custom IBS0 rewrite** (`mouse_wgs_somalier.R`, real data, 2026-11-25). The run used one
+masked 6-sample file: sites with REF+ALT ≥ 30 in all six samples; KI normals confidently genotyped;
+ambiguous tumour genotypes masked. The table is the primary result: panel A, thinned at 20 kb, about 7,200
+jointly callable sites per tumour–normal pair.
+
+| Tumour | Labelled normal: IBS0 rate | Best normal | Best IBS0 (95% CI upper) | Second best: IBS0 (CI lower) | Ambiguous | somalier best |
+|---|---|---|---|---|---|---|
+| HCC_1 | KI1: 0.0714 (n = 7,228) | **KI2** | 0 (0.0005) | KI3: 0.0167 (0.0139) | no | KI2 |
+| HCC_2 | KI2: 0.0710 (n = 7,254) | **KI1** | 0 (0.0005) | KI3: 0.0306 (0.0268) | no | KI1 |
+| HCC_3 | KI3: 0 (n = 7,190) | **KI3** | 0 (0.0005) | KI2: 0.0168 (0.0140) | no | KI3 |
+
+- **The swap is confirmed with zero opposite homozygotes.** HCC_1 matches KI2 and HCC_2 matches KI1, each at 0 IBS0 over about 7,200 sites. The labelled
+  pairs have about 7% IBS0.
+- **Mouse 3 is now resolved: HCC_3 and KI3 are the same animal.** This replaces the open point above. They
+  have 0 IBS0, and the next-best normal is clearly separated.
+- **somalier agrees on all three tumours.** gtcheck was skipped in this run because of a bug in how the
+  script checked the gtcheck options, fixed in be67ed8; it is to be re-run.
+- **Still to review:**
+  - `robustness.tsv` (panels B/C and the coarser thinning);
+  - `assignment_scores.tsv`;
+  - the plots in `results/mouse_wgs/mouse_wgs_somalier/`.
+- All three methods use the same FreeBayes calls. Lab records remain the independent confirmation.
+
 ### 3.4 The mice are not genetically identical
 
 Over 1,000 confident opposite homozygotes between animals means the KI colony is not isogenic. Possible
