@@ -39,7 +39,7 @@
 # Comparison unit: chrom:pos:ref:alt. MNVs are split into SNVs (Strelka writes a CC>TT as two C>T,
 # Mutect2/FreeBayes as one MNV), as in scripts/analysis/01_sarek.R. Doublet halves (adjacent SNVs
 # within one set) are left out of SBS96, as in scripts/analysis/00_setup.R.
-# Open question (memory, 2026-10-07): split MNVs vs join doublets as the comparison unit - not changed here.
+# Decided 2026-11-25: MNVs split for caller comparison; doublets count once (DBS) for signatures (scripts/analysis/README.md, Open questions 1).
 # Indels are not left-aligned (no -f in the provider's bcftools norm), so FreeBayes indels written
 # differently from Mutect2/Strelka will not match even when they are the same event.
 #

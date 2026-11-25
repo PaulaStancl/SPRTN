@@ -35,7 +35,7 @@ and Tier1-5, as its authors recommend for WGS (CALLERS.md; `SPRTN_MUSE_TIERS` re
 same reads as one MNV record; Strelka2 and MuSE write them as separate SNVs. For overlap,
 concordance, caller totals, set QC and the summary table, each MNV is split into its SNVs
 (`atomize_mnv()`), so e.g. SAGE's 2,124 SNV + 17 MNV records give 2,158 SNVs to match.
-Not final - see Open questions 1.
+Decided 2026-11-25 (Open questions 1): split for caller comparison; doublets count once (DBS) in signatures.
 
 **Doublets count once in mutational-signature analyses (since 2026-10-07).** An SNV with
 another SNV at the neighbouring position in the same caller or set is half of a doublet base
@@ -183,7 +183,7 @@ Done and checked on the server:
 Next:
 1. ~~Germline table filter~~ - decided 2026-10-08: keep it broad (every PASS germline variant in a PURPLE germline-catalogue gene, ~42 rows, incl. benign polymorphisms); PURPLE's `REPORTED` flag and the ClinVar column show which matter.
 2. Compare the ROQ check on sarek's original Mutect2 VCF (`roq_original_mutect2.log`, `qc_vcf/pass/mutect2_original_roq_qc.pdf`) with the analysis-set result, and record it under Method decisions.
-3. Decide Open questions 1 (MNV split vs doublet join) and 2 (ROQ < 30 unless confirmed; then extra tumourevo runs on filtered and consensus calls).
+3. Decide Open questions 2 (ROQ < 30 unless confirmed; then extra tumourevo runs on filtered and consensus calls).
 4. OncoKB (API allowed for this patient's data? not decided) / CIViC for the somatic table's Annotation and Tier columns.
 5. Optional: VEP annotation from the sarek annotate run into `06` (consequences for Strelka2 / MuSE-only candidates).
 6. Not yet confirmed on the server: FitMS (01c) after installing NNLM, and the reruns of 01b / 01c / 05 / 05b after the doublet change (05b should show SIGS 2,124 = SigProfiler 2,124, 96/96 channels).
@@ -229,7 +229,7 @@ Still to do:
 
 ## Open questions
 
-**1. Compare callers in single bases (MNVs split) or in events (doublets joined)?** *Open since 2026-10-07.*
+**1. Compare callers in single bases (MNVs split) or in events (doublets joined)?** *Decided 2026-11-25: A (split) for caller comparison; signatures keep doublets as one DBS.* Reason: the callers write the same doublet differently, and FreeBayes (mouse) also joins non-adjacent SNVs into one haplotype record, so only split units compare across callers. Record counts as called stay in the count tables.
 
 The callers write the same doublet differently: SAGE and Mutect2 as one MNV record
 (`162683852 GC>CT`), Strelka2 and MuSE as two SNVs (`162683852 G>C`, `162683853 C>T`). The
