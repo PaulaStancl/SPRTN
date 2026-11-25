@@ -357,6 +357,22 @@ atom[, .N, by = .(tumour, SET, CLASS)][order(tumour, SET, CLASS)]
 SET_LEVELS <- c(CALLERS, "union")
 atom[, SET := factor(SET, levels = SET_LEVELS)]
 
+# 4b. ALL records (any FILTER), for the all vs PASS plots (counts, SBS96):
+#     callers = every record of the caller's own file, PASS = that file's FILTER;
+#     union   = every record of the merged file, PASS = merged FILTER.
+#     Multiallelics and MNVs split; one row per tumour x set x variant.
+split_alt <- function(x) {                         # one row per ALT of multiallelic records
+  m <- x[ALT %like% ","]
+  if (!nrow(m)) return(x)
+  s <- strsplit(m$ALT, ",", fixed = TRUE)
+  rbind(x[!ALT %like% ","], m[rep(seq_len(.N), lengths(s))][, ALT := unlist(s)])
+}
+allrec <- rbind(raw[kind == "caller", .(tumour, SET = CALLER, CHROM, POS, REF, ALT, PASS)],
+                raw[kind == "merged", .(tumour, SET = "union", CHROM, POS, REF, ALT, PASS)])
+allrec <- split_alt(allrec)[REF %like% "^[ACGT]+$" & ALT %like% "^[ACGT]+$"]
+allrec[, TYPE := fifelse(nchar(REF) == nchar(ALT), fifelse(nchar(REF) == 1L, "SNV", "MNV"), "INDEL")]
+allrec <- split_mnv(allrec)[, .(PASS = any(PASS)), by = .(tumour, SET, CLASS = fifelse(TYPE == "SNV", "SNV", "INDEL"), CHROM, POS, REF, ALT)]
+
 # ---- 5. Counts per caller and the union ---------------------------------------
 counts <- sets[, .(records = .N, SNV = sum(TYPE == "SNV"), MNV = sum(TYPE == "MNV"),
                    INS = sum(TYPE == "INS"), DEL = sum(TYPE == "DEL"), complex = sum(TYPE == "complex")),
@@ -367,15 +383,22 @@ counts[, SET := factor(SET, levels = SET_LEVELS)]
 setorder(counts, tumour, SET)
 counts
 
-p_counts <- ggplot(atom[, .N, by = .(tumour, SET, CLASS)], aes(SET, N, fill = CLASS)) +
+# All records vs PASS only, per caller (own file) and the union (merged file); rows = all / PASS
+counts_filter <- rbind(allrec[, .N, by = .(tumour, SET, CLASS, filter = "all")],
+                       allrec[PASS == TRUE, .N, by = .(tumour, SET, CLASS, filter = "PASS")])
+counts_filter[, `:=`(SET = factor(SET, levels = SET_LEVELS), filter = factor(filter, levels = c("all", "PASS")))]
+setorder(counts_filter, tumour, filter, SET, CLASS)
+print(dcast(counts_filter, tumour + SET + CLASS ~ filter, value.var = "N"))
+p_counts <- ggplot(counts_filter, aes(SET, N, fill = CLASS)) +
   geom_col(position = "dodge") +
   geom_text(aes(label = N), position = position_dodge(width = 0.9), vjust = -0.3, size = 3) +
-  facet_wrap(~ tumour, scales = "free_y") +
-  labs(x = NULL, y = "PASS variants (MNVs split)", fill = NULL,
-       title = paste("Tumour vs matched KI normal: SNVs and indels per caller",
-                     "")) +
+  facet_grid(filter ~ tumour, scales = "free_y") +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
+  labs(x = NULL, y = "variants (MNVs split)", fill = NULL,
+       title = "Tumour vs matched KI normal: SNVs and indels per caller, all records vs PASS",
+       subtitle = "callers: FILTER of their own file; union: FILTER of the merged file") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1))
-save_plot(p_counts, "counts_per_caller", 10, 5)
+save_plot(p_counts, "counts_per_caller", 11, 8)
 
 # qcVCF: counts per caller (MUTTYPE classes SNV, MNV, INS, DEL; records as called)
 if (HAVE_QCVCF) {
@@ -551,19 +574,9 @@ if (HAVE_FASTA) {
   #       callers         every record of the caller's own file; PASS = that file's FILTER
   #       union           every record of the merged file; PASS = merged FILTER
   #       >=2 / all 3     found by >=2 / all 3 callers (any FILTER); PASS = PASS in >=2 / all 3 callers' own files
-  #     Multiallelics and MNVs split, doublet halves out.
-  split_alt <- function(x) {                       # one row per ALT of multiallelic records
-    m <- x[ALT %like% ","]
-    if (!nrow(m)) return(x)
-    s <- strsplit(m$ALT, ",", fixed = TRUE)
-    rbind(x[!ALT %like% ","], m[rep(seq_len(.N), lengths(s))][, ALT := unlist(s)])
-  }
-  a <- rbind(raw[kind == "caller", .(tumour, SET = CALLER, CHROM, POS, REF, ALT, PASS)],
-             raw[kind == "merged", .(tumour, SET = "union", CHROM, POS, REF, ALT, PASS)])
-  a <- split_alt(a)[nchar(REF) == nchar(ALT) & REF %like% "^[ACGT]+$" & ALT %like% "^[ACGT]+$"]
-  a[, TYPE := fifelse(nchar(REF) == 1L, "SNV", "MNV")]
-  a <- split_mnv(a)[, .(PASS = any(PASS)), by = .(tumour, SET, CHROM, POS, REF, ALT)]
-  cc <- a[SET %chin% CALLERS, .(n_found = .N, n_pass = sum(PASS)), by = .(tumour, CHROM, POS, REF, ALT)]
+  #     Multiallelics and MNVs split (allrec, block 4b), doublet halves out.
+  a <- allrec[CLASS == "SNV", .(tumour, SET, CHROM, POS, REF, ALT, PASS)]
+  cc <-a[SET %chin% CALLERS, .(n_found = .N, n_pass = sum(PASS)), by = .(tumour, CHROM, POS, REF, ALT)]
   a <- rbind(a,
              cc[n_found >= 2, .(tumour, SET = ">=2 callers", CHROM, POS, REF, ALT, PASS = n_pass >= 2)],
              cc[n_found == length(CALLERS), .(tumour, SET = "all 3 callers", CHROM, POS, REF, ALT, PASS = n_pass == length(CALLERS))])
@@ -638,7 +651,7 @@ if (HAVE_FASTA) {
 w <- function(x, name) if (nrow(x)) fwrite(x, file.path(OUT, paste0(name, ".tsv")), sep = "\t")
 w(files[, !"path"], "files")
 if (nrow(merged)) w(merged_filter, "merged_filter_by_caller_combination")
-w(counts, "counts_per_caller")
+w(counts, "counts_per_caller"); w(counts_filter, "counts_per_caller_all_vs_PASS")
 w(pairwise, "pairwise_shared"); w(qc_pairwise, "qcVCF_pairwise_shared")
 w(exclusive, "caller_overlap_exclusive"); w(by_n_callers, "caller_overlap_by_n_callers")
 w(union_vs, "union_vs_callers"); w(union_check, "union_merged_vs_callers_union"); w(union_n, "union_by_n_callers")
