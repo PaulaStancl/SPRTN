@@ -28,7 +28,7 @@
 #   0  EDIT THIS BLOCK
 #   1  setup and helpers
 #   2  files: per-caller files and/or the merged file
-#   3  read PASS records; per-caller sets (from per-caller files if present, else from INFO/CALLER)
+#   3  read records; per-caller PASS sets from each caller's own file only (union = merged file, separate set)
 #   4  variant types; MNVs split into SNVs for the comparison
 #   5  counts per caller and the union (+ qcVCF plot_mutation_counts)
 #   6  pairwise sharing between callers (+ qcVCF plot_pairwise_shared_mutations), exclusive categories
