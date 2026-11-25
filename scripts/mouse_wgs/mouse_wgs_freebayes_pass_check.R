@@ -107,7 +107,8 @@ print(fail_by_cond[order(tumour, -N)])
 # (an original multiallelic or complex FreeBayes record split later keeps one QUAL for all its pieces).
 # If FILTER was set on the original record, the disagreements should sit almost only on siblings.
 setorder(fb, tumour, CHROM, POS)
-fb[, grp := cumsum(c(TRUE, diff(POS) > 50 | QUAL[-1] != QUAL[-.N] | CHROM[-1] != CHROM[-.N])), by = tumour]
+fb[, q := fcoalesce(QUAL, -1)]
+fb[, grp := cumsum(c(TRUE, diff(POS) > 50 | q[-1] != q[-.N] | CHROM[-1] != CHROM[-.N])), by = tumour][, q := NULL]
 fb[, split_piece := .N > 1, by = .(tumour, grp)]
 sibling_check <- fb[, .(records = .N, PASS = sum(PASS), rule = sum(rule), PASS_but_rule_FALSE = sum(PASS & !rule),
                         notPASS_but_rule_TRUE = sum(!PASS & rule)), by = .(tumour, split_piece)][order(tumour, split_piece)]
