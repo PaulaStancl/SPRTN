@@ -6,7 +6,7 @@
 # a tumour and its labelled normal) known germline polymorphisms, and do they behave like inherited blocks?
 #
 # For every panel A site of mouse_wgs_somalier.R (masked 6-sample genotypes):
-#   A. Mouse Genomes Project (Sanger MGP, GRCm38 release, e.g. REL-2005): in MGP with the same REF/ALT, ID
+#   A. Mouse Genomes Project (Sanger MGP, GRCm38 release, e.g. REL-1505): in MGP with the same REF/ALT, ID
 #      (rsID where the release has one), number of strains carrying the ALT and which, C57BL/6NJ and the 129
 #      strains (possible donor-strain blocks of the knock-in line). C57BL/6J is the reference genome, so its
 #      genotype is 0/0 by definition (not a sample in the MGP VCF).
@@ -38,9 +38,10 @@ ENV_BIN  <- "/common/WORK/pstancl/envs/r-mutation/bin"
 BCFTOOLS <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path(ENV_BIN, "bcftools")
 
 # MGP SNP VCF on GRCm38 (bgzipped + .tbi next to it). A local path, or a URL that bcftools reads directly
-# (only the needed blocks are fetched). CHECK the exact link on the MGP FTP page; must be a GRCm38 release
-# (REL-2005 or REL-1505), NOT REL-2112 (GRCm39). NA = skip the MGP part.
-MGP_VCF <- "https://ftp.ebi.ac.uk/pub/databases/mousegenomes/REL-2005-SNPs_Indels/mgp_REL2005_snps_indels.vcf.gz"
+# (only the needed blocks are fetched). Must be GRCm38: REL-1505 (default; ID = dbSNP142 rsIDs) or REL-1807
+# (mgp.v6.merged.norm.snp.indels.sfiltered.vcf.gz), NOT REL-2112 (GRCm39). EBI has no REL-2005 folder
+# (checked 2026-11-25). NA = skip the MGP part.
+MGP_VCF <- "https://ftp.ebi.ac.uk/pub/databases/mousegenomes/REL-1505-SNPs_Indels/mgp.v5.merged.snps_all.dbSNP142.vcf.gz"
 
 TUMOURS    <- c("HCC_1", "HCC_2", "HCC_3")
 KI_NORMALS <- c(HCC_1 = "KI1", HCC_2 = "KI2", HCC_3 = "KI3")   # labelled pairing
