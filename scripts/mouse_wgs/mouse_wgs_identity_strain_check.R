@@ -286,7 +286,8 @@ if (nrow(pl)) {
   save_plot(p_gen, "discordant_sites_genome", 14, 6)
 
   # Slide version: one message, two colours - differences in blocks (inherited) vs isolated (could be somatic)
-  pl[, slide := fifelse(isolated, "isolated (could be somatic)", "in a block with other differences (inherited)")]
+  # block = at least one other difference within the window; everything else counts as isolated here
+  pl[, slide := fifelse(nb_disc_labelled > 0L, "in a block with other differences (inherited)", "isolated (could be somatic)")]
   tot <- long[, .(n_sites = .N, n_disc = sum(disc_labelled)), by = tumour]
   tot[, lab := sprintf("%s vs %s\n%d of %d sites differ", tumour, KI_NORMALS[tumour], n_disc, n_sites)]
   pl[tot, on = "tumour", panel := i.lab]
