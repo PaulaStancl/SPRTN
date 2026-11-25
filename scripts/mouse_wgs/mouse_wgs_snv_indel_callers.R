@@ -276,29 +276,38 @@ if (nrow(rawc) && nrow(merged)) {
   fwrite(m2_strelka[order(tumour, CHROM, POS)], file.path(OUT, "intersect_mutect2_strelka_PASS.tsv"), sep = "\t")
   fwrite(m2_strelka_n, file.path(OUT, "intersect_mutect2_strelka_PASS_counts.tsv"), sep = "\t")
 
-  # Venn per tumour, SNVs: my intersect vs the merged file (same PASS >=2-caller sets as the bar plot)
-  v2 <- dcast(int[type == "SNV" & source != "Mutect2 & Strelka"], tumour + ID ~ source, fun.aggregate = length, value.var = "ID")
-  setnames(v2, c("my intersect", "merged file"), c("mine", "mrg"), skip_absent = TRUE)
-  venn2 <- v2[, .(only_mine = sum(mine > 0 & mrg == 0), shared = sum(mine > 0 & mrg > 0),
-                  only_merged = sum(mine == 0 & mrg > 0), n_mine = sum(mine > 0), n_merged = sum(mrg > 0)), by = tumour]
-  print(venn2)
-  fwrite(venn2, file.path(OUT, "venn_snv_my_intersect_vs_merged.tsv"), sep = "\t")
-  venn2_lab <- melt(venn2, id.vars = "tumour", measure.vars = c("only_mine", "shared", "only_merged"), value.name = "N")
-  venn2_lab[, `:=`(x = c(only_mine = -1.0, shared = 0, only_merged = 1.0)[as.character(variable)], y = 0)]
-  venn2_names <- melt(venn2, id.vars = "tumour", measure.vars = c("n_mine", "n_merged"), value.name = "n")
-  venn2_names[, `:=`(x = fifelse(variable == "n_mine", -0.6, 0.6), y = 1.3,
-                     label = paste0(fifelse(variable == "n_mine", "my intersect", "merged file"), "\n(n=", n, ")"))]
-  circ2 <- data.table(set = c("my intersect", "merged file"), cx = c(-0.55, 0.55))[
-    , .(x = cx + cos(seq(0, 2 * pi, length.out = 200)), y = sin(seq(0, 2 * pi, length.out = 200))), by = set]
-  p_venn2 <- ggplot() +
-    geom_polygon(data = circ2, aes(x, y, group = set, fill = set), alpha = 0.3, colour = "grey30") +
-    geom_text(data = venn2_lab, aes(x, y, label = N), size = 4.5) +
-    geom_text(data = venn2_names, aes(x, y, label = label), size = 3.5, fontface = "bold") +
-    facet_wrap(~ tumour) + coord_equal(clip = "off") +
-    scale_fill_manual(values = c("my intersect" = "#4C72B0", "merged file" = "#DD8452"), guide = "none") +
-    labs(title = "SNVs PASS by >=2 callers: my intersect vs merged file") +
+  # Venn per tumour, SNVs: my intersect (>=2 callers PASS, own files) vs Mutect2 & Strelka (PASS in both
+  # own files) vs the merged file (FILTER PASS, >=2 callers). Mutect2 & Strelka is a subset of my
+  # intersect by definition, so its regions outside my intersect are 0.
+  VSETS <- c(mine = "my intersect", m2s = "Mutect2 & Strelka", mrg = "merged file")
+  v3 <- dcast(int[type == "SNV"], tumour + ID ~ source, fun.aggregate = length, value.var = "ID")
+  for (s in VSETS) if (!s %in% names(v3)) v3[, (s) := 0L]
+  setnames(v3, VSETS, names(VSETS))
+  v3[, `:=`(a = mine > 0, b = m2s > 0, c = mrg > 0)]
+  venn3 <- v3[, .(only_mine = sum(a & !b & !c), only_m2s = sum(!a & b & !c), only_merged = sum(!a & !b & c),
+                  mine_m2s = sum(a & b & !c), mine_merged = sum(a & !b & c), m2s_merged = sum(!a & b & c),
+                  all_three = sum(a & b & c), n_mine = sum(a), n_m2s = sum(b), n_merged = sum(c)), by = tumour]
+  print(venn3)
+  fwrite(venn3, file.path(OUT, "venn_snv_my_intersect_vs_mutect2_strelka_vs_merged.tsv"), sep = "\t")
+  # circles: my intersect top left, merged file top right, Mutect2 & Strelka bottom
+  ctr <- data.table(set = unname(VSETS), cx = c(-0.6, 0, 0.6), cy = c(0.35, -0.65, 0.35))
+  circ3 <- ctr[, .(x = cx + cos(seq(0, 2 * pi, length.out = 200)), y = cy + sin(seq(0, 2 * pi, length.out = 200))), by = set]
+  pos <- data.table(variable = c("only_mine", "only_m2s", "only_merged", "mine_m2s", "mine_merged", "m2s_merged", "all_three"),
+                    x = c(-1.05, 0, 1.05, -0.65, 0, 0.65, 0), y = c(0.6, -1.2, 0.6, -0.4, 0.8, -0.4, 0.05))
+  venn3_lab <- melt(venn3, id.vars = "tumour", measure.vars = pos$variable, value.name = "N")[pos, on = "variable"]
+  venn3_names <- melt(venn3, id.vars = "tumour", measure.vars = c("n_mine", "n_m2s", "n_merged"), value.name = "n")
+  venn3_names[, set := unname(VSETS)[match(variable, c("n_mine", "n_m2s", "n_merged"))]]
+  venn3_names <- venn3_names[ctr, on = "set"][, `:=`(x = cx, y = fifelse(cy > 0, cy + 1.3, cy - 1.3),
+                                                     label = paste0(set, "\n(n=", n, ")"))]
+  p_venn3 <- ggplot() +
+    geom_polygon(data = circ3, aes(x, y, group = set, fill = set), alpha = 0.3, colour = "grey30") +
+    geom_text(data = venn3_lab, aes(x, y, label = N), size = 4.5) +
+    geom_text(data = venn3_names, aes(x, y, label = label), size = 3.5, fontface = "bold") +
+    facet_wrap(~ tumour) + coord_equal(xlim = c(-1.8, 1.8), ylim = c(-2.2, 1.9), clip = "off") +
+    scale_fill_manual(values = setNames(c("#4C72B0", "#55A868", "#DD8452"), VSETS), guide = "none") +
+    labs(title = "SNVs PASS: my intersect (>=2 callers) vs Mutect2 & Strelka vs merged file (>=2 callers)") +
     theme_void() + theme(strip.text = element_text(face = "bold", size = 12), plot.margin = margin(10, 20, 10, 20))
-  save_plot(p_venn2, "venn_snv_my_intersect_vs_merged", 12, 4.5)
+  save_plot(p_venn3, "venn_snv_my_intersect_vs_mutect2_strelka_vs_merged", 13, 6)
   # Panels nested: tumour, then source (ggh4x::facet_nested; plain facet_grid if ggh4x is missing)
   int[, source := factor(source, levels = c("my intersect", "Mutect2 & Strelka", "merged file"))]
   p_int <- ggplot(int[, .N, by = .(tumour, source, type)], aes(type, N, fill = type)) +
