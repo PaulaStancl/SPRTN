@@ -42,7 +42,10 @@ BCFTOOLS <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path(
 # (mgp.v6.merged.norm.snp.indels.sfiltered.vcf.gz), NOT REL-2112 (GRCm39). EBI has no REL-2005 folder
 # (checked 2026-11-25). NA = skip the MGP part.
 # ftp:// (not https://): the r-mutation bcftools has no https support but reads ftp (checked 2026-11-25, 36 strains).
-MGP_VCF <- "ftp://ftp.ebi.ac.uk/pub/databases/mousegenomes/REL-1505-SNPs_Indels/mgp.v5.merged.snps_all.dbSNP142.vcf.gz"
+# Local copy (downloaded once, with its .tbi) if present, else read over ftp.
+MGP_LOCAL <- "/common/WORK/pstancl/references/mgp/mgp.v5.merged.snps_all.dbSNP142.vcf.gz"
+MGP_VCF <- if (file.exists(MGP_LOCAL) && file.exists(paste0(MGP_LOCAL, ".tbi"))) MGP_LOCAL else
+  "ftp://ftp.ebi.ac.uk/pub/databases/mousegenomes/REL-1505-SNPs_Indels/mgp.v5.merged.snps_all.dbSNP142.vcf.gz"
 
 TUMOURS    <- c("HCC_1", "HCC_2", "HCC_3")
 KI_NORMALS <- c(HCC_1 = "KI1", HCC_2 = "KI2", HCC_3 = "KI3")   # labelled pairing
