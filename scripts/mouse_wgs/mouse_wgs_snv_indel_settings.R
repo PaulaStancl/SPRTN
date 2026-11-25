@@ -250,15 +250,43 @@ p_pair <- ggplot(pairwise, aes(set_2, set_1, fill = pct_of_1)) +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
 save_plot(p_pair, "pairwise_shared", 14, 7)
 
-# qcVCF pairwise plots (SNV, INDEL): every tumour x set against every other, so sharing between tumours shows too
+# qcVCF pairwise plots (SNV, INDEL): every tumour x set against every other, so sharing between tumours shows too.
+# qcVCF::plot_pairwise_shared_mutations() merges the table with itself without allow.cartesian: a variant in
+# k columns gives k^2 rows, which data.table refuses for the SNVs here (18 columns, many shared variants).
+# Fallback: the same numbers (100 * shared / N of the row column) from a sparse variant x column matrix,
+# drawn like qcVCF's heatmap; columns ordered tumour, then set.
+pairwise_shared_sparse <- function(q, cohort) {
+  q <- unique(q[, .(ID = paste(CHROM, POS, REF, ALT, sep = ":"), sample_tool)])
+  cols <- unique(q$sample_tool)
+  cols <- cols[order(sub("^(HCC_[0-9]+)_.*$", "\\1", cols), match(sub("^HCC_[0-9]+_", "", cols), SET_LEVELS))]
+  ids <- unique(q$ID)
+  M <- Matrix::sparseMatrix(i = match(q$ID, ids), j = match(q$sample_tool, cols), x = 1, dims = c(length(ids), length(cols)),
+                            dimnames = list(NULL, cols))
+  S <- as.matrix(Matrix::crossprod(M))                      # S[x, y] = variants in both x and y
+  d <- data.table(sampleID.x = rownames(S)[row(S)], sampleID.y = colnames(S)[col(S)], N.y = as.vector(S))
+  d[, N.x := diag(S)[sampleID.x]]
+  d[, prop_shared := 100 * N.y / N.x]
+  d[, `:=`(sampleID.x = factor(sampleID.x, levels = cols), sampleID.y = factor(sampleID.y, levels = cols))]
+  p <- ggplot(d, aes(x = sampleID.y, y = sampleID.x, fill = prop_shared)) +
+    geom_tile(color = "black") +
+    geom_text(aes(label = sprintf("%.1f", prop_shared)), size = 3.5) +
+    scale_fill_distiller(palette = "Blues", direction = 1, name = "% of shared\nmutations") +
+    theme_minimal(base_size = 16) +
+    theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+          legend.title = element_text(size = rel(0.9)), legend.text = element_text(size = rel(0.9))) +
+    labs(title = paste0("Pairwise comparison of shared mutations between samples (", cohort, ")"),
+         subtitle = "only PASS variants before QC filtering", x = NULL, y = NULL,
+         caption = "Proportion of mutations from sampleID.x shared with sampleID.y")
+  list(data = d, plot = p)
+}
 qc_pairwise <- data.table()
 if (HAVE_QCVCF) {
   qc_pairwise <- rbindlist(lapply(c("SNV", "INDEL"), function(cl) {
     q <- pass[CLASS == cl, .(CHROM, POS, REF, ALT, subjectID = tumour, tool = as.character(SET))]
     q[, sample_tool := paste(subjectID, tool, sep = "_")]
     pw <- tryCatch(qcVCF::plot_pairwise_shared_mutations(q, sample_col = "sample_tool", cohort = cl),
-                   error = function(e) { message("qcVCF pairwise ", cl, " skipped: ", conditionMessage(e)); NULL })
-    if (is.null(pw)) return(NULL)
+                   error = function(e) { message("qcVCF pairwise ", cl, " failed (", conditionMessage(e), ") - same plot from pairwise_shared_sparse()"); NULL })
+    if (is.null(pw)) pw <- pairwise_shared_sparse(q, cohort = cl)
     save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", cl), 13, 11)
     as.data.table(pw$data)[, CLASS := cl]
   }), fill = TRUE)
