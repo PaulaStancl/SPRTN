@@ -463,3 +463,106 @@ compared with FILTER:
 
 Not possible without BAMs: pileups, callable regions and mutations per Mb, SV read support, copy number,
 new caller runs for strategies D (GM normal vs WT) and E (WT vs WT).
+
+---
+
+## 6. Agreed and done on 2026-11-25
+
+### 6.1 Callers in setting A (`mouse_wgs_snv_indel_callers.R`)
+
+Agreed rules (do not change without Paula):
+- **Per-caller PASS = FILTER == PASS in that caller's own file**, by its own internal filters. The merged
+  file (`union.ann.bcf`) is a separate set, labelled **"union (merged)"**, and never filters, defines or
+  falls back for a caller's variants. The script stops if the single-caller files are missing.
+  Why: taking caller sets from the merged FILTER dropped variants (HCC_1 Strelka: 28,817 own-file PASS vs
+  21,439 plotted before the fix; Mutect2 6,838 PASS).
+- **MNVs are split into SNVs for every caller comparison** (counts, pairwise, intersects, Venn). Signatures
+  count a doublet once (DBS); doublet halves are left out of SBS96. Why: Strelka2 writes a doublet as two SNVs,
+  Mutect2/FreeBayes as one MNV, and FreeBayes also joins non-adjacent SNVs into one haplotype record
+  (HCC_1 FreeBayes PASS: 55,611 records = 29,234 SNV + 1,864 MNV + 24,513 indel; the MNVs hold 4,386 SNVs).
+  Also recorded in `scripts/analysis/README.md`, Open questions 1.
+- **Mutect2 & Strelka intersect:** PASS in each caller's own file first, then present in both (FreeBayes
+  ignored). Paula distrusts FreeBayes, so this is the high-confidence set.
+
+Changes to the outputs:
+- `intersect_mutect2_strelka_PASS.tsv` and `_counts.tsv`; the set also appears in the raw-vs-merged bar
+  plot, the SBS96 sets and both cosine heatmaps.
+- **Venn** with three sets: my intersect (≥ 2 callers PASS), Mutect2 & Strelka (PASS in both), merged file
+  (PASS, ≥ 2 callers) (`venn_snv_my_intersect_vs_mutect2_strelka_vs_merged.png/.tsv`).
+- **counts_per_caller** plot: all records vs PASS as rows (`counts_per_caller_all_vs_PASS.tsv`).
+- **qcVCF pairwise shared:** one plot per class (SNV, INDEL) across all tumour × caller sets
+  (`HCC_1 mutect2`, `HCC_2 strelka`, ...) instead of one plot per tumour.
+- **SBS96:** qcVCF plots stacked in one column, each set split into all SNVs / PASS / not PASS
+  (`sbs96_snvs_by_filter.tsv`); the ggplot `sbs96_<tumour>` shows PASS only, one row per set. The SBS96
+  matrix and cosine similarities stay PASS-only; there is a between-tumour cosine heatmap per set.
+
+FreeBayes checks done in the R console:
+- The provider's prefilter is the rule above (section 1). The check that every FreeBayes PASS satisfies it,
+  and the reverse, is now `mouse_wgs_freebayes_pass_check.R` (not run yet).
+- FreeBayes sample names differ from the other callers; read them with `bcftools query -l` (normal first).
+- The BCFs are not indexed: query sites with `-i 'CHROM=="10" && POS==3184122'`, not `-r`.
+
+### 6.2 Sample identity: how the evidence is read
+
+- **Primary evidence:** opposite homozygotes (IBS0: one sample 0/0, the other 1/1). One animal cannot have
+  them except by error, LOH or a somatic event, so they separate animals best.
+- **Complementary evidence:** heterozygous vs homozygous differences (e.g. chr1:5609923). They also arise from
+  LOH, copy number or allelic imbalance in a tumour, so they support but do not decide.
+- **Genotype bins on VAF:** ≤ 0.05 hom-ref, 0.35–0.65 het, ≥ 0.95 hom-alt, anything else ambiguous.
+- **The ascertainment critique** (sites chosen through each pair's FreeBayes file) does not overturn the
+  result: the 0 discordance for the genetic matches and 15–23 % for the labelled pairs are genotypes at the
+  sites, not which sites were kept. Checked on a tumour-independent site set (all three KI normals non-ref);
+  the README and `mouse_wgs_somalier.R` header wording was corrected.
+
+### 6.3 Informativeness and BAM check (`mouse_wgs_identity_informativeness.R`, run)
+
+- Outputs in `results/mouse_wgs/mouse_wgs_identity_informativeness/`: genotype patterns across KI1–3,
+  informativeness summary, opposite homozygotes per pair of normals, private sites, tumour-dependent
+  retention, discordance on the tumour-independent site set, sites per chromosome.
+- **`bam_check_sites_for_patrik.csv`:** 5 opposite-homozygous sites per pair of normals (`N_PER_TEST`), one per
+  chromosome, deepest first, plus the example sites chr10:3184122 and chr1:5609923. Patrik fills in the
+  `BAM_reads_ref_alt_*` and comment columns. Five per pair is enough for an independent read-level check;
+  raise `N_PER_TEST` for more.
+
+### 6.4 Are the differences germline? (`mouse_wgs_identity_strain_check.R`)
+
+Question: could the tumour-vs-labelled-normal differences be real somatic mutations instead of another
+animal's germline? Three checks per panel A site:
+- **Mouse Genomes Project** (MGP REL-1505, GRCm38, dbSNP142 rsIDs, 36 strains): known polymorphism with the
+  same ALT, which strains carry it, C57BL/6NJ and the 129 strains (donor blocks of the knock-in line).
+  EBI has no REL-2005; REL-2112 is GRCm39 and must not be used.
+- **WT normals** (WT1–3) from the setting-B Mutect2 files.
+- **Neighbouring SNPs** (± 5 Mb, ≥ 3 neighbours): inherited differences come in blocks where the tumour
+  matches another mouse's normal; a real somatic mutation is isolated. Isolated sites are split into
+  "matches another mouse's normal" and candidates whose tumour genotype is in no KI normal
+  (LOH-compatible vs tumour gained an allele).
+- Not in MGP does not mean somatic (private germline variants exist).
+
+Status:
+- The first run (20.5 min) read MGP over ftp and got **0 MGP records**; the MGP columns are NA and the
+  summaries show n/a. A single-site ftp query works (1:3000287 → rs587313017), cause unknown.
+- Agreed: download MGP locally. The script uses
+  `/common/WORK/pstancl/references/mgp/mgp.v5.merged.snps_all.dbSNP142.vcf.gz` (+ `.tbi`) when present,
+  else ftp. Delete the cached `mgp_panelA_positions*.vcf.gz` in the output folder before re-running.
+
+```
+cd /common/WORK/pstancl/projects/MariaBoskovic/SPRTN
+git pull
+micromamba activate /common/WORK/pstancl/envs/r-mutation
+rm -f results/mouse_wgs/mouse_wgs_identity_strain_check/mgp_panelA_positions*.vcf.gz*
+mkdir -p /common/WORK/pstancl/references/mgp
+nohup bash -c '
+  cd /common/WORK/pstancl/references/mgp &&
+  wget -c -q https://ftp.ebi.ac.uk/pub/databases/mousegenomes/REL-1505-SNPs_Indels/mgp.v5.merged.snps_all.dbSNP142.vcf.gz{,.tbi,.md5} &&
+  md5sum -c mgp.v5.merged.snps_all.dbSNP142.vcf.gz.md5 &&
+  cd /common/WORK/pstancl/projects/MariaBoskovic/SPRTN &&
+  Rscript scripts/mouse_wgs/mouse_wgs_identity_strain_check.R
+' > results/mouse_wgs/strain_check.log 2>&1 &
+```
+Then check `grep -n MGP results/mouse_wgs/strain_check.log` and `summary_discordant_sites.tsv`.
+
+### 6.5 Still open from today
+
+- Mutect2 low-ROQ artefacts: proposed ROQ < 30 filter and extra tumourevo runs on filtered calls; not agreed.
+- Consensus definition for the main somatic set (section 4).
+- Optional: recolour the IBS0-vs-IBS2 plot so IBS0 and IBS2 are labelled directly (offered, not confirmed).
