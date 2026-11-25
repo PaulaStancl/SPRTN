@@ -17,11 +17,13 @@
 #              REST API (rest.ensembl.org); without internet: no domains, axis to the last mutation
 #   table      every coding variant in these genes x the 9 sets (TRUE/FALSE), mouse and patient
 #
-# Needs: settings.rds (mouse_wgs_snv_indel_settings.R), Bioconductor trackViewer in r-mutation
-#   (install: micromamba install -p /common/WORK/pstancl/envs/r-mutation -c bioconda -c conda-forge bioconductor-trackviewer)
+# Needs: settings.rds (mouse_wgs_snv_indel_settings.R). Runs in its OWN env r-lollipop (trackViewer cannot be
+#   solved into r-mutation, 2026-11-25); bcftools is taken from r-mutation's bin/ (ENV_BIN). Create once:
+#   micromamba create -p /common/WORK/pstancl/envs/r-lollipop -c conda-forge -c bioconda \
+#     r-base=4.5 bioconductor-trackviewer bioconductor-genomicranges r-data.table r-jsonlite
 # Blocks: 0 EDIT | 1 setup | 2 genes | 3 mouse coding variants per set | 4 patient variants
 #         | 5 protein length + domains | 6 lollipop plots | 7 outputs, RUN_LOG.md
-# Env on ssi: r-mutation. Output: results/mouse_wgs/driver_genes_human/lollipop/
+# Env on ssi: r-lollipop (not r-mutation). Output: results/mouse_wgs/driver_genes_human/lollipop/
 
 # ---- 0. EDIT THIS BLOCK ------------------------------------------------------
 REPO      <- "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN"
@@ -39,7 +41,8 @@ IMPACT_COLS <- c(HIGH = "#D7301F", MODERATE = "#FC8D59", LOW = "#9ECAE1", MODIFI
 # ---- 1. Setup ----------------------------------------------------------------
 suppressPackageStartupMessages({ library(data.table); library(GenomicRanges) })
 options(width = max(80, suppressWarnings(as.numeric(system("tput cols", intern = TRUE, ignore.stderr = TRUE)))[1], na.rm = TRUE))
-if (!requireNamespace("trackViewer", quietly = TRUE)) stop("trackViewer not installed - see the install line in the header")
+if (!requireNamespace("trackViewer", quietly = TRUE)) stop("trackViewer not installed - run this script in the r-lollipop env (header)")
+if (!file.exists(BCFTOOLS)) stop("bcftools not found at ", BCFTOOLS)
 for (f in c(SETTINGS, ORTHOLOGS, PATIENT_RDS)) if (!file.exists(f)) stop("Not found: ", f)
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 started <- Sys.time()
