@@ -106,6 +106,17 @@ split_alt <- function(x) {
   s <- strsplit(m$ALT, ",", fixed = TRUE)
   rbind(x[!ALT %like% ","], m[rep(seq_len(.N), lengths(s))][, ALT := unlist(s)])
 }
+# Split MNVs into their SNVs (positions where REF and ALT differ)
+split_mnv <- function(x) {
+  m <- x[TYPE == "MNV"]
+  if (!nrow(m)) return(x[, FROM_MNV := FALSE][])
+  n <- nchar(m$REF)
+  e <- m[rep(seq_len(.N), n)]
+  e[, k := sequence(n)]
+  e[, `:=`(POS = POS + k - 1L, REF = substring(REF, k, k), ALT = substring(ALT, k, k))]
+  e <- e[REF != ALT][, `:=`(TYPE = "SNV", FROM_MNV = TRUE, k = NULL)]
+  rbind(x[TYPE != "MNV"][, FROM_MNV := FALSE], e)
+}
 
 # ---- 2. Files ----------------------------------------------------------------
 files <- data.table(path = list.files(DIR_A, recursive = TRUE, full.names = TRUE, pattern = "\\.(bcf|vcf|vcf\\.gz)$"))
@@ -259,15 +270,25 @@ if (nrow(rawc) && nrow(merged)) {
   # R7. My intersect (PASS in each caller's own file, then overlapped; >=2 callers) vs the merged file
   #     (FILTER PASS, >=2 callers in INFO/CALLER). Fill = SNV / INDEL.
   #     + Mutect2 & Strelka: PASS in the Mutect2 file AND PASS in the Strelka file (FreeBayes ignored)
-  int <- rbind(rp_w[N_CALLERS >= 2, .(tumour, ID, source = "my intersect")],
-               rp_w[mutect2 > 0 & strelka > 0, .(tumour, ID, source = "Mutect2 & Strelka")],
-               merged[N_CALLERS >= 2 & PASS == TRUE, .(tumour, ID, source = "merged file")])
+  #     MNVs split into SNVs first (decided 2026-11-25), as in the pairwise plots (block 6): a Mutect2
+  #     CC>TT and Strelka's two C>T then match. Callers per variant counted after the split.
+  mnv_type <- function(x) x[, TYPE := fifelse(nchar(REF) == nchar(ALT) & nchar(REF) > 1L, "MNV", "other")]
+  rp_s <- split_mnv(mnv_type(unique(rawc[PASS == TRUE, .(tumour, CALLER, CHROM, POS, REF, ALT)])))
+  rp_s[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
+  rp_sw <- dcast(unique(rp_s[, .(tumour, CALLER, ID)]), tumour + ID ~ CALLER, fun.aggregate = length, value.var = "ID")
+  for (cl in CALLERS) if (!cl %in% names(rp_sw)) rp_sw[, (cl) := 0L]
+  rp_sw[, N_CALLERS := rowSums(.SD > 0), .SDcols = CALLERS]
+  mg_s <- split_mnv(mnv_type(merged[N_CALLERS >= 2 & PASS == TRUE, .(tumour, CHROM, POS, REF, ALT)]))
+  mg_s[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
+  int <- rbind(rp_sw[N_CALLERS >= 2, .(tumour, ID, source = "my intersect")],
+               rp_sw[mutect2 > 0 & strelka > 0, .(tumour, ID, source = "Mutect2 & Strelka")],
+               mg_s[, .(tumour, ID, source = "merged file")])
   int <- unique(int)                     # each variant once per tumour and source (also if >1 merged file)
-  int[, type := fifelse(nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]]), "SNV", "INDEL")]
+  rm(rp_s, mg_s)
+  int[, type := fifelse(nchar(tstrsplit(ID, ":")[[3]]) == 1L & nchar(tstrsplit(ID, ":")[[4]]) == 1L, "SNV", "INDEL")]
   int[, .N, by = .(tumour, source, type)][order(tumour, source, type)]
 
-  # R7b. Mutect2 & Strelka intersect: the variant list (chrom:pos:ref:alt as in the raw files, MNVs not
-  #      split - a Strelka doublet written as two SNVs does not match a Mutect2 MNV) and its counts
+  # R7b. Mutect2 & Strelka intersect: the variant list (chrom:pos:ref:alt, MNVs split into SNVs) and its counts
   m2_strelka <- int[source == "Mutect2 & Strelka", .(tumour, ID, type)]
   m2_strelka[, c("CHROM", "POS", "REF", "ALT") := tstrsplit(ID, ":", fixed = TRUE, type.convert = FALSE)]
   m2_strelka[, POS := as.integer(POS)]
@@ -350,17 +371,7 @@ add_type <- function(x) {
 sets <- add_type(rbind(per_caller, union_pass))
 sets[, .N, by = .(tumour, SET, TYPE)][order(tumour, SET, TYPE)]   # records as called (MNVs whole)
 
-# Split MNVs into their SNVs (positions where REF and ALT differ)
-split_mnv <- function(x) {
-  m <- x[TYPE == "MNV"]
-  if (!nrow(m)) return(x[, FROM_MNV := FALSE][])
-  n <- nchar(m$REF)
-  e <- m[rep(seq_len(.N), n)]
-  e[, k := sequence(n)]
-  e[, `:=`(POS = POS + k - 1L, REF = substring(REF, k, k), ALT = substring(ALT, k, k))]
-  e <- e[REF != ALT][, `:=`(TYPE = "SNV", FROM_MNV = TRUE, k = NULL)]
-  rbind(x[TYPE != "MNV"][, FROM_MNV := FALSE], e)
-}
+# split_mnv(): see helpers (block 1)
 atom <- split_mnv(copy(sets))
 atom[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
 atom <- unique(atom, by = c("tumour", "SET", "ID"))
