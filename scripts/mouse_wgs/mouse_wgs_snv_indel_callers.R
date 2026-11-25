@@ -412,18 +412,20 @@ p_pair <- ggplot(pairwise, aes(caller_2, caller_1, fill = pct_of_1)) +
   theme_bw()
 save_plot(p_pair, "pairwise_shared", 10, 6)
 
-# qcVCF pairwise plots (SNV and INDEL apart), as in scripts/analysis/01_sarek.R
+# qcVCF pairwise plots, one for SNVs and one for indels: every tumour x caller set against every other
+# (HCC_1_mutect2, HCC_2_mutect2, HCC_1_strelka, ...), so sharing between tumours shows too
 qc_pairwise <- data.table()
 if (HAVE_QCVCF) {
-  qc_pairwise <- rbindlist(lapply(names(TUMOURS), function(t) rbindlist(lapply(c("SNV", "INDEL"), function(cl) {
-    q <- cal[tumour == t & CLASS == cl, .(CHROM, POS, REF, ALT, subjectID = tumour, tool = as.character(SET))]
+  qc_pairwise <- rbindlist(lapply(c("SNV", "INDEL"), function(cl) {
+    q <- cal[CLASS == cl, .(CHROM, POS, REF, ALT, subjectID = tumour, tool = as.character(SET))]
+    q[, sample_tool := paste(subjectID, tool, sep = "_")]
     # qcVCF's by = get() fails on very small classes; skip those instead of stopping
-    pw <- tryCatch(plot_pairwise_shared_mutations(q, sample_col = "tool", cohort = paste(t, cl)),
-                   error = function(e) { message("qcVCF pairwise ", t, " ", cl, " skipped: ", conditionMessage(e)); NULL })
+    pw <- tryCatch(plot_pairwise_shared_mutations(q, sample_col = "sample_tool", cohort = cl),
+                   error = function(e) { message("qcVCF pairwise ", cl, " skipped: ", conditionMessage(e)); NULL })
     if (is.null(pw)) return(NULL)
-    save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", t, "_", cl), 7, 6)
-    as.data.table(pw$data)[, `:=`(tumour = t, CLASS = cl)]
-  }), fill = TRUE)), fill = TRUE)
+    save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", cl), 12, 10)
+    as.data.table(pw$data)[, CLASS := cl]
+  }), fill = TRUE)
   print(qc_pairwise)
 }
 
