@@ -241,7 +241,7 @@ print(pairwise[set_1 != set_2])
 
 p_pair <- ggplot(pairwise, aes(set_2, set_1, fill = pct_of_1)) +
   geom_tile(colour = "white") +
-  geom_text(aes(label = sprintf("%d\n%.0f%%", shared, pct_of_1)), size = 2.8) +
+  geom_text(aes(label = sprintf("%.1f", pct_of_1)), size = 3) +
   facet_grid(CLASS ~ tumour) +
   scale_fill_gradient(low = "white", high = "steelblue", limits = c(0, 100)) +
   scale_y_discrete(limits = rev) +
