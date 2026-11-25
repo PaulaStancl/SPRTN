@@ -84,6 +84,8 @@ save_plot <- function(p, name, w = 9, h = 6) {
   ggsave(file.path(OUT, paste0(name, ".png")), p, width = w, height = h, dpi = 150, limitsize = FALSE)
 }
 pct <- function(x, n) fifelse(n > 0, round(100 * x / n, 1), NA_real_)
+# count TRUE; NA when the column was not available at all (e.g. MGP not read), so it is not reported as 0
+nsum <- function(x) if (!length(x) || all(is.na(x))) NA_integer_ else sum(x, na.rm = TRUE)
 
 # ---- 2. Panel A sites (masked 6-sample genotypes) ----------------------------
 MASKED <- file.path(SOM, "masked", "masked_6samples.bcf")
@@ -116,11 +118,24 @@ if (!is.na(MGP_VCF)) {
     mgp_chr <- any(grepl("^##contig=<ID=chr", hdr))
     reg <- file.path(OUT, "regions_panelA.tsv")
     fwrite(A[, .(CHROM = paste0(if (mgp_chr) "chr" else "", sub("^chr", "", CHROM)), POS, POS2 = POS)], reg, sep = "\t", col.names = FALSE)
-    cmd <- paste(B, "view -R", shQuote(reg), "-Ou", shQuote(MGP_VCF), "|", B, "norm -m -any -Ou |", B,
-                 "query -f", shQuote("%CHROM\\t%POS\\t%ID\\t%REF\\t%ALT[\\t%GT]\\n"))
-    mgp <- fread(cmd = cmd, sep = "\t", header = FALSE, quote = "", col.names = c("CHROM", "POS", "ID", "REF", "ALT", MGP_STRAINS),
-                 colClasses = c("character", "integer", rep("character", 3 + length(MGP_STRAINS))))
-    mgp[, CHROM := sub("^chr", "", CHROM)]
+    # Step 1: fetch the MGP records at the panel A positions into a local file (cached: a rerun skips the
+    # remote fetch). bcf() stops with bcftools' own message if this fails. Written to .tmp first, so an
+    # interrupted fetch leaves no partial cache.
+    mgp_sub <- file.path(OUT, "mgp_panelA_positions.vcf.gz")
+    if (!file.exists(mgp_sub)) {
+      bcf(c("view", "-R", shQuote(reg), "-Oz", "-o", shQuote(paste0(mgp_sub, ".tmp")), shQuote(MGP_VCF)))
+      file.rename(paste0(mgp_sub, ".tmp"), mgp_sub)
+    } else message("MGP: using the cached ", mgp_sub, " (delete it to fetch again)")
+    n_fetched <- length(bcf(c("view", "-H", shQuote(mgp_sub))))
+    message("MGP: ", n_fetched, " records fetched at panel A positions")
+    # Step 2: split multiallelics and read, locally
+    mgp_split <- file.path(OUT, "mgp_panelA_positions.split.vcf.gz")
+    bcf(c("norm", "-m", "-any", "-Oz", "-o", shQuote(mgp_split), shQuote(mgp_sub)))
+    cmd <- paste(B, "query -f", shQuote("%CHROM\\t%POS\\t%ID\\t%REF\\t%ALT[\\t%GT]\\n"), shQuote(mgp_split))
+    mgp <- if (n_fetched == 0) data.table() else
+      fread(cmd = cmd, sep = "\t", header = FALSE, quote = "", col.names = c("CHROM", "POS", "ID", "REF", "ALT", MGP_STRAINS),
+            colClasses = c("character", "integer", rep("character", 3 + length(MGP_STRAINS))))
+    if (nrow(mgp)) mgp[, CHROM := sub("^chr", "", CHROM)]
     MGP_STATUS <- sprintf("%s (%d strains, %d records at panel A positions)", MGP_VCF, length(MGP_STRAINS), nrow(mgp))
     if (!nrow(mgp)) {
       MGP_STATUS <- paste(MGP_STATUS, "- NO RECORDS: the region query failed (remote index or ftp); download the file and set MGP_VCF to it")
@@ -220,11 +235,11 @@ summ <- rbindlist(lapply(c("labelled", "genetic"), function(w) {
     .(compared_with = if (w == "labelled") KI_NORMALS[[.BY$tumour]] else HYPOTHESIS[[.BY$tumour]],
       comparison = if (w == "labelled") "labelled normal" else "genetic match",
       sites_genotyped = .N, discordant = nrow(d), pct_discordant = pct(nrow(d), .N),
-      disc_in_MGP_same_alt = sum(d$mgp_same_alt, na.rm = TRUE),
-      pct_disc_known_polymorphism = pct(sum(d$mgp_known_polymorphism, na.rm = TRUE), nrow(d)),
-      pct_disc_129_carries_alt = pct(sum(d$mgp_129_alt, na.rm = TRUE), nrow(d)),
+      disc_in_MGP_same_alt = nsum(d$mgp_same_alt),
+      pct_disc_known_polymorphism = pct(nsum(d$mgp_known_polymorphism), nrow(d)),
+      pct_disc_129_carries_alt = pct(nsum(d$mgp_129_alt), nrow(d)),
       disc_with_WT_genotype = sum(d$wt_n_genotyped > 0, na.rm = TRUE),
-      pct_of_those_WT_carries_alt = pct(sum(d$wt_any_alt, na.rm = TRUE), sum(d$wt_n_genotyped > 0, na.rm = TRUE)),
+      pct_of_those_WT_carries_alt = pct(nsum(d$wt_any_alt), sum(d$wt_n_genotyped > 0, na.rm = TRUE)),
       pct_disc_with_discordant_neighbour = pct(sum(d$nb_disc_labelled > 0), nrow(d)),
       isolated_discordant = sum(d$isolated), isolated_matching_another_normal = sum(d$isolated & !d$in_no_normal),
       candidates_in_no_normal = sum(d$candidate))
@@ -234,10 +249,10 @@ print(summ)
 
 # 5b. all panel A sites: how many are known polymorphisms (background for 5a)
 bg <- A[, .(sites = .N, informative = sum(informative),
-            pct_MGP_same_alt = pct(sum(mgp_same_alt, na.rm = TRUE), .N),
-            pct_known_polymorphism = pct(sum(mgp_known_polymorphism, na.rm = TRUE), .N),
-            pct_129_carries_alt = pct(sum(mgp_129_alt, na.rm = TRUE), .N),
-            pct_informative_known = pct(sum(mgp_known_polymorphism & informative, na.rm = TRUE), sum(informative)))]
+            pct_MGP_same_alt = pct(nsum(mgp_same_alt), .N),
+            pct_known_polymorphism = pct(nsum(mgp_known_polymorphism), .N),
+            pct_129_carries_alt = pct(nsum(mgp_129_alt), .N),
+            pct_informative_known = pct(nsum(mgp_known_polymorphism & informative), sum(informative)))]
 print(bg)
 
 # 5c. isolated discordant sites; candidate = tumour genotype in none of the KI normals
@@ -268,10 +283,11 @@ if (nrow(pl)) {
 sb <- melt(summ, id.vars = c("tumour", "comparison"), measure.vars = c("pct_disc_known_polymorphism", "pct_disc_129_carries_alt",
                                                                     "pct_disc_with_discordant_neighbour"))
 p_sum <- ggplot(sb[comparison == "labelled normal"], aes(variable, value, fill = tumour)) + geom_col(position = "dodge") +
-  geom_text(aes(label = value), position = position_dodge(0.9), vjust = -0.3, size = 3) +
+  geom_text(aes(label = fifelse(is.na(value), "n/a", as.character(value))), position = position_dodge(0.9), vjust = -0.3, size = 3) +
   scale_x_discrete(labels = c("known MGP\npolymorphism", "a 129 strain\ncarries the ALT", "has a discordant\nneighbour")) +
   labs(x = NULL, y = "% of discordant sites (tumour vs labelled normal)", fill = NULL,
-       title = "Are the tumour vs labelled-normal differences germline?") + theme_bw()
+       title = "Are the tumour vs labelled-normal differences germline?",
+       subtitle = paste("MGP:", if (nrow(mgp)) sprintf("%d records read", nrow(mgp)) else "NOT READ - MGP bars are n/a")) + theme_bw()
 save_plot(p_sum, "discordant_sites_germline_evidence", 8, 5)
 
 # ---- 7. Outputs, RUN_LOG.md --------------------------------------------------
