@@ -36,8 +36,8 @@ SCRIPT    <- file.path(REPO, "scripts/mouse_wgs/driver_genes_human/mouse_wgs_dri
 INTOGEN   <- "/common/WORK/pstancl/references/intogen/Compendium_Cancer_Genes.tsv"
 CANCER    <- "HCC"
 # COSMIC Cancer Gene Census (download needs a COSMIC login): old cancer_gene_census.csv or new
-# Cosmic_CancerGeneCensus_v*_GRCh38.tsv(.gz)
-CGC       <- "/common/WORK/pstancl/references/cosmic/cancer_gene_census.csv"
+# Cosmic_CancerGeneCensus_v*_GRCh38.tsv(.gz). NA or file missing = the CGC analysis is skipped (2026-11-25: not on ssi yet)
+CGC       <- NA
 # Patient (human RJALS) tumourevo driver annotation: is_driver per mutation
 PATIENT_RDS <- file.path(REPO, "results/wgs/tumourevo/RJALS/driver_annotation/annotate_driver/RJALS/RJALS/RJALS_RJALS_Tm/RJALS_RJALS_RJALS_RJALS_Tm_driver.rds")
 ORTHOLOGS <- "/common/WORK/pstancl/references/cross_species/ensembl110/orthologs_hsapiens_mmusculus.tsv"
@@ -48,7 +48,9 @@ BCFTOOLS  <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path
 # ---- 1. Setup ----------------------------------------------------------------
 suppressPackageStartupMessages({ library(data.table); library(ggplot2) })
 options(width = max(80, suppressWarnings(as.numeric(system("tput cols", intern = TRUE, ignore.stderr = TRUE)))[1], na.rm = TRUE))
-for (f in c(SETTINGS, INTOGEN, CGC, ORTHOLOGS, PATIENT_RDS)) if (!file.exists(f)) stop("Not found: ", f,
+HAVE_CGC <- !is.na(CGC) && file.exists(CGC)
+if (!HAVE_CGC) message("CGC file not set or not found (", CGC, ") - CGC analysis skipped, IntOGen HCC only")
+for (f in c(SETTINGS, INTOGEN, ORTHOLOGS, PATIENT_RDS)) if (!file.exists(f)) stop("Not found: ", f,
   "\n  settings.rds: run mouse_wgs_snv_indel_settings.R; orthologs: run scripts/cross_species/h2m 00_resources.R;",
   "\n  IntOGen / CGC / patient rds: set the path in block 0")
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
@@ -63,11 +65,13 @@ ig <- fread(INTOGEN)
 stopifnot(all(c("SYMBOL", "CANCER_TYPE") %in% names(ig)))
 intogen <- ig[CANCER_TYPE == CANCER, .(ROLE = if ("ROLE" %in% names(ig)) paste(sort(unique(na.omit(ROLE))), collapse = ";") else NA_character_,
                                        TIER = NA_character_), by = .(symbol_h = SYMBOL)]
-cg <- fread(CGC)
-pick <- function(cands) { k <- intersect(cands, names(cg)); if (!length(k)) stop("CGC: none of ", paste(cands, collapse = "/"), " in ", CGC); k[1] }
-c_sym <- pick(c("GENE_SYMBOL", "Gene Symbol")); c_tier <- pick(c("TIER", "Tier")); c_role <- pick(c("ROLE_IN_CANCER", "Role in Cancer"))
-cgc <- unique(cg[, .(symbol_h = get(c_sym), ROLE = as.character(get(c_role)), TIER = as.character(get(c_tier)))], by = "symbol_h")
-LISTS <- list(IntOGen_HCC = intogen, CGC = cgc)
+LISTS <- list(IntOGen_HCC = intogen)
+if (HAVE_CGC) {
+  cg <- fread(CGC)
+  pick <- function(cands) { k <- intersect(cands, names(cg)); if (!length(k)) stop("CGC: none of ", paste(cands, collapse = "/"), " in ", CGC); k[1] }
+  c_sym <- pick(c("GENE_SYMBOL", "Gene Symbol")); c_tier <- pick(c("TIER", "Tier")); c_role <- pick(c("ROLE_IN_CANCER", "Role in Cancer"))
+  LISTS$CGC <- unique(cg[, .(symbol_h = get(c_sym), ROLE = as.character(get(c_role)), TIER = as.character(get(c_tier)))], by = "symbol_h")
+}
 for (L in names(LISTS)) message(L, ": ", nrow(LISTS[[L]]), " genes")
 
 # Patient: human genes with is_driver == TRUE in the tumourevo driver.rds (mutations table of the sample)
@@ -79,7 +83,7 @@ patient_genes <- unique(as.character(pm[is_driver %in% TRUE, SYMBOL]))
 message("patient driver genes (is_driver): ", paste(patient_genes, collapse = ", "))
 
 # Orthologs of every gene in either list (CSQ is read once for all; lists are separated in block 6)
-all_genes <- unique(c(intogen$symbol_h, cgc$symbol_h))
+all_genes <- unique(unlist(lapply(LISTS, `[[`, "symbol_h")))
 orth <- fread(ORTHOLOGS, colClasses = "character", na.strings = c("", "NA"))
 d_orth <- orth[!is.na(gene_id_m) & symbol_h %chin% all_genes, .(symbol_h, gene_id_h, gene_id_m, symbol_m, homology_type, perc_id_h_to_m)]
 print(d_orth[, .N, by = homology_type])
@@ -204,7 +208,7 @@ old_log <- if (file.exists(log_file)) readLines(log_file) else character()
 git_hash <- tryCatch(system2("git", c("-C", shQuote(REPO), "rev-parse", "--short", "HEAD"), stdout = TRUE), error = function(e) "unknown")
 writeLines(c(paste0("## ", format(Sys.time(), "%Y-%m-%d %H:%M"), " - mouse_wgs_driver_genes_human"),
              paste0("- Script: ", SCRIPT, "  git: ", git_hash, "  (", R.version.string, ")"),
-             paste0("- Inputs: ", SETTINGS, "; ", INTOGEN, " (", CANCER, "); ", CGC, "; ", ORTHOLOGS, "; ", PATIENT_RDS),
+             paste0("- Inputs: ", SETTINGS, "; ", INTOGEN, " (", CANCER, "); CGC ", if (HAVE_CGC) CGC else "not used", "; ", ORTHOLOGS, "; ", PATIENT_RDS),
              paste0("- Parameters: impacts ", paste(IMPACTS, collapse = "/"), "; sets ", paste(SET_LEVELS, collapse = ", ")),
              paste0("- ", names(res_n), ": ", sapply(res_n, function(v) paste(names(v), v, sep = " ", collapse = ", "))),
              paste0("- Patient driver genes: ", paste(patient_genes, collapse = ", ")),
