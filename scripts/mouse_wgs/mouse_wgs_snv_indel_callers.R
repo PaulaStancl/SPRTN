@@ -163,7 +163,7 @@ PER_CALLER_SOURCE
 per_caller[, .N, by = .(tumour, SET)][order(tumour, SET)]
 
 # 3c. The union = PASS records of the merged file
-union_pass <- if (nrow(merged)) merged[PASS == TRUE, .(tumour, SET = "union", CHROM, POS, REF, ALT, FILTER)] else data.table()
+union_pass <- if (nrow(merged)) merged[PASS == TRUE, .(tumour, SET = "union (merged)", CHROM, POS, REF, ALT, FILTER)] else data.table()
 union_pass[, .N, by = tumour]
 
 
@@ -354,7 +354,7 @@ atom[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
 atom <- unique(atom, by = c("tumour", "SET", "ID"))
 atom[, .N, by = .(tumour, SET, CLASS)][order(tumour, SET, CLASS)]
 
-SET_LEVELS <- c(CALLERS, "union")
+SET_LEVELS <- c(CALLERS, "union (merged)")
 atom[, SET := factor(SET, levels = SET_LEVELS)]
 
 # 4b. ALL records (any FILTER), for the all vs PASS plots (counts, SBS96):
@@ -368,7 +368,7 @@ split_alt <- function(x) {                         # one row per ALT of multiall
   rbind(x[!ALT %like% ","], m[rep(seq_len(.N), lengths(s))][, ALT := unlist(s)])
 }
 allrec <- rbind(raw[kind == "caller", .(tumour, SET = CALLER, CHROM, POS, REF, ALT, PASS)],
-                raw[kind == "merged", .(tumour, SET = "union", CHROM, POS, REF, ALT, PASS)])
+                raw[kind == "merged", .(tumour, SET = "union (merged)", CHROM, POS, REF, ALT, PASS)])
 allrec <- split_alt(allrec)[REF %like% "^[ACGT]+$" & ALT %like% "^[ACGT]+$"]
 allrec[, TYPE := fifelse(nchar(REF) == nchar(ALT), fifelse(nchar(REF) == 1L, "SNV", "MNV"), "INDEL")]
 allrec <- split_mnv(allrec)[, .(PASS = any(PASS)), by = .(tumour, SET, CLASS = fifelse(TYPE == "SNV", "SNV", "INDEL"), CHROM, POS, REF, ALT)]
@@ -478,7 +478,7 @@ save_plot(p_upset, "caller_overlap_exclusive", 12, 6)
 # how much of the union it contributes. Since the caller sets come from the same file (INFO/CALLER),
 # union_check should show only_merged = only_callers = 0; anything else flags a CALLER value none
 # of CALLERS matches (see block 3a).
-un <- atom[SET == "union", .(tumour, CLASS, ID)]
+un <- atom[SET == "union (merged)", .(tumour, CLASS, ID)]
 cal_union <- unique(cal[, .(tumour, CLASS, ID)])          # union of the callers' PASS sets
 union_vs <- rbind(
   cal[, .(n_caller = .N, in_union = sum(ID %chin% un[tumour == .BY$tumour & CLASS == .BY$CLASS, ID])),
@@ -558,7 +558,7 @@ if (HAVE_FASTA) {
   snv[!IN_DBS & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT, NC_3)]
   print(snv[, .(SNVs = .N, doublet_halves = sum(IN_DBS), with_SBS96 = sum(!is.na(SBS96))), by = .(tumour, SET)])
 
-  SET96 <- c(CALLERS, "union", ">=2 callers", "all 3 callers")
+  SET96 <- c(CALLERS, "union (merged)", ">=2 callers", "all 3 callers")
   snv96 <- snv[!is.na(SBS96)]
   snv96[, SET := factor(SET, levels = SET96)]
   snv96[, SUB := substr(SBS96, 3, 5)]
