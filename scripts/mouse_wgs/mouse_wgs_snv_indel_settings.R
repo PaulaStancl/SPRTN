@@ -10,6 +10,8 @@
 #   A_freebayes_expr       A: FreeBayes, prefilter expression only; the FILTER column is not used
 #   A_mutect2_strelka    A: PASS first in Mutect2's and in Strelka's own file, then intersected
 #                        ("all records" = found by both, any FILTER)
+#   A_ge2_callers        A: PASS in >= 2 of: A_freebayes_pass_expr (FreeBayes PASS AND expression),
+#                        A_mutect2 (PASS), A_strelka (PASS) ("all records" = found in >= 2 of the 3 files)
 #   A_strelka            A: Strelka PASS
 #   A_mutect2            A: Mutect2 PASS
 #   B_mutect2_joint_wt   B: tumor_vs_joint_wt/  Mutect2 joint calls with the WT normals, PASS
@@ -65,6 +67,7 @@ SET_LABELS <- c(A_freebayes        = "A: tumor_vs_normal, FreeBayes PASS",
                 A_freebayes_pass_expr = "A: tumor_vs_normal, FreeBayes PASS & prefilter expression",
                 A_freebayes_expr   = "A: tumor_vs_normal, FreeBayes prefilter expression only (FILTER not used)",
                 A_mutect2_strelka  = "A: tumor_vs_normal, Mutect2 PASS & Strelka PASS (intersect)",
+                A_ge2_callers      = "A: tumor_vs_normal, PASS in >=2 of FreeBayes (PASS & expression), Mutect2, Strelka",
                 A_strelka          = "A: tumor_vs_normal, Strelka PASS",
                 A_mutect2          = "A: tumor_vs_normal, Mutect2 PASS",
                 B_mutect2_joint_wt = "B: tumor_vs_joint_wt, Mutect2 PASS",
@@ -212,12 +215,18 @@ fbv <- merge(rec[src == "A_freebayes", c(key, "PASS"), with = FALSE], rec[src ==
              by = key, suffixes = c("_file", "_expr"))
 print(fbv[, .(variants = .N, PASS_only = sum(PASS_file & !PASS_expr), expr_only = sum(!PASS_file & PASS_expr),
               PASS_and_expr = sum(PASS_file & PASS_expr), neither = sum(!PASS_file & !PASS_expr)), by = .(tumour, CLASS)])
+# A_ge2_callers: per variant, PASS in >= 2 of FreeBayes (file PASS AND expression), Mutect2 (PASS), Strelka (PASS);
+# "all records" = found in >= 2 of the 3 files (any FILTER)
+ge2 <- rbind(fbv[, .(PASS = PASS_file & PASS_expr), by = key],
+             rec[src == "A_mutect2", c(key, "PASS"), with = FALSE],
+             rec[src == "A_strelka", c(key, "PASS"), with = FALSE])[
+  , .(n_found = .N, n_pass = sum(PASS)), by = key][n_found >= 2, .(PASS = n_pass >= 2), by = key]
 allset <- rbind(one("A_freebayes"),
                 fbv[, c(key, "PASS_file", "PASS_expr"), with = FALSE][, .(PASS = PASS_file & PASS_expr), by = key][, SET := "A_freebayes_pass_expr"],
                 fbv[, c(key, "PASS_file", "PASS_expr"), with = FALSE][, .(PASS = PASS_expr), by = key][, SET := "A_freebayes_expr"],
-                m2s[, SET := "A_mutect2_strelka"], one("A_strelka"), one("A_mutect2"),
+                m2s[, SET := "A_mutect2_strelka"], ge2[, SET := "A_ge2_callers"], one("A_strelka"), one("A_mutect2"),
                 one("B_mutect2_joint_wt"), one("C_mutect2_pon"), use.names = TRUE)
-rm(m2s, fbv)
+rm(m2s, fbv, ge2)
 allset[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
 allset[, SET := factor(SET, levels = SET_LEVELS)]
 pass <- allset[PASS == TRUE]
