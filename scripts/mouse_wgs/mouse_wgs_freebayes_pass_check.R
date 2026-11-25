@@ -73,6 +73,7 @@ read_fb <- function(i) {
   }
   num <- c("QUAL", "MQM", "AO", "SAF", "SAR", "DP_tumour", "DP_normal")
   x[, (num) := lapply(.SD, as.numeric), .SDcols = num]
+  x[, POS := as.integer(POS)]
   x[, `:=`(tumour = f$tumour, rel = f$rel, multiallelic_records = multi)]
   x
 }
