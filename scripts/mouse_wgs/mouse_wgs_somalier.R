@@ -28,7 +28,9 @@
 #   no sample deeper than MAX_DP_FACTOR x its median depth (collapsed duplications); optional MASK_BED;
 #   optionally not a FreeBayes PASS record (provider's somatic prefilter; EXCLUDE_FB_PASS, default FALSE,
 #   TRUE run as a sensitivity analysis)
-#   tumours: same bins, ambiguous -> MASKED (./.), never hom-ref; tumours are never used to select sites
+#   tumours: same bins, ambiguous -> MASKED (./.), never hom-ref; the filters use only the normals, but a
+#   FreeBayes file holds a site only if its tumour or normal is non-ref, so the site list depends on the
+#   tumours where a labelled normal is 0/0 (see mouse_wgs_identity_informativeness.R)
 # Panels on the final site set: A all; B KI1-3 not all identical; C opposite homs (0/0 vs 1/1) in >= 2 KI
 # normals. Thinning: at most one site per window (greedy minimum distance; sites closest to their samples'
 # median depth first, seeded random tie-break), primary 20 kb, sensitivity 100 kb, 500 kb, 1 Mb. Every method

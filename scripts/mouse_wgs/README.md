@@ -62,6 +62,7 @@ All are tutorial-style, numbered blocks, run line by line in RStudio or with `Rs
 | `mouse_wgs_sample_identity.R` | Sample identity from FreeBayes genotypes: IBS0 rates per shared confident sites (WT from Mutect2 joint), LD-thinned rate, IBS0 blocks and chromosomes, depth and GQ/MQM at IBS0 sites, optional MGP strains, bcftools gtcheck | v1 run (counts in section 3); **current version not run yet** |
 | `gtcheck_freebayes.sh` | bcftools gtcheck: biallelic autosomal SNVs, QUAL/DP/GQ filter, merge `-m none`, all-sites and common-sites runs, per-1000 table | run; common-sites rows not reviewed yet |
 | `mouse_wgs_somalier.R` | Identity: normal-homozygous discordance (primary), IBS0, somalier and gtcheck on one masked 6-sample genotype file; panels A/B/C × thinning, bootstrap, jackknife; see 2.1 | revised 2026-11-25 (f5e1226); `--test` (swap + null) passes on ssi incl. somalier n check and gtcheck 1.24; real data run 2026-11-25: swap confirmed, HCC_3-KI3 confirmed (section 3.3) |
+| `mouse_wgs_identity_informativeness.R` | Reads the outputs of `mouse_wgs_somalier.R` (masked 6-sample BCF, primary sites): genotype patterns across the KI normals, informative sites, opposite homozygotes per pair of normals, private sites, tumour-dependent retention, identity on a tumour-independent site set (all normals non-ref), sites per chromosome, and `bam_check_sites_for_patrik.csv` | written 2026-11-25, tested on synthetic data; not run on real data |
 | `mouse_wgs_snv_indel.R` | Task 1: settings A/B/C (counts, VAF, FILTER, overlaps, annotation) | written, not run; block 9 reads ANN and must switch to **CSQ** |
 
 Run commands (from the repo on ssi):
@@ -105,7 +106,13 @@ Design:
     its own pair, so the old ≥ 4-of-6 rule compared labelled pairs at more sites than cross pairs;
   - genotype bins on VAF: ≤ 0.05 hom-ref, 0.35–0.65 het, ≥ 0.95 hom-alt, anything else ambiguous;
   - every KI normal confidently genotyped, at least one of them non-ref;
-  - tumours are never used to select sites. Their ambiguous genotypes are masked (`./.`), never set to hom-ref.
+  - the site filters use only the KI normals. **Correction 2026-11-25:** the site list still depends on the
+    tumours. A FreeBayes file only holds a site if its tumour or its normal is non-ref, so where a labelled
+    normal is 0/0 the site is in that file only because the tumour is non-ref ("tumour-dependent
+    retention"). It cannot create the swap result: the zeros for the genetic matches and the 15-23%
+    discordance of the labelled pairs are genotypes at the sites, not which sites were kept. Checked on a
+    tumour-independent site set (all three normals non-ref) in `mouse_wgs_identity_informativeness.R`;
+  - tumour genotypes that are ambiguous are masked (`./.`), never set to hom-ref.
 - **One masked file:** `masked/masked_6samples.bcf` (GT:AD, INFO/AF from the KI normals, no GL/PL).
   somalier, gtcheck and the custom IBS0 all read this file.
 - **Panels:**
@@ -338,9 +345,10 @@ In a 2-of-3 rule it casts the deciding vote wherever Strelka2 and Mutect2 disagr
   - sensitivity tier = 1 somatic caller PASS plus the other filtered only for low support (`weak_evidence`,
     `LowEVS`, `LowDepth`), never for `germline` / `normal_artifact` / `panel_of_normals`.
   - Not agreed yet.
-- **Callers script.** Blocks 4–8 of `mouse_wgs_snv_indel_callers.R` still take caller sets and the union
-  from the merged file. Switching them to the raw route was proposed but not agreed.
-- **MNV comparison unit.** Split MNVs vs join doublets is still open (memory, 2026-10-07).
+- **Callers script.** Done 2026-11-25: every per-caller set in `mouse_wgs_snv_indel_callers.R` is PASS in the
+  caller's own file; the merged file is only the separate "union (merged)" set and never filters a caller.
+- **MNV comparison unit.** Decided 2026-11-25: MNVs split for caller comparison; doublets count once (DBS)
+  for signatures (`scripts/analysis/README.md`, Open questions 1).
 
 ## 5. Next steps, in order
 
@@ -352,11 +360,14 @@ In a 2-of-3 rule it casts the deciding vote wherever Strelka2 and Mutect2 disagr
 4. Run **`mouse_wgs_somalier.R`**: `--test` first, then the real data (commands in 2.1). somalier is already
    installed at `/common/WORK/pstancl/tools/somalier/somalier` (v0.3.5). Review `verdict.tsv`, `robustness.png`
    and the heatmaps, then add the result to section 3.3.
-5. **Ask Patrik and the lab** where the KI1/KI2 swap happened and what the `id_` numbers mean; ask about
+5. Run **`mouse_wgs_identity_informativeness.R`** (minutes; needs the `mouse_wgs_somalier.R` outputs). Check
+   `informativeness_summary.tsv`, `tumour_dependent_retention.tsv` and `tumour_independent_discordance.png`,
+   then send `bam_check_sites_for_patrik.csv` to Patrik (fill in the `BAM_reads_ref_alt_*` columns).
+6. **Ask Patrik and the lab** where the KI1/KI2 swap happened and what the `id_` numbers mean; ask about
    HCC_3/KI3.
-6. **Re-call setting A** with HCC_1 vs KI2 and HCC_2 vs KI1 (Strelka2, Mutect2, FreeBayes, merge). Compare
+7. **Re-call setting A** with HCC_1 vs KI2 and HCC_2 vs KI1 (Strelka2, Mutect2, FreeBayes, merge). Compare
    the old and corrected burden, VAF, SBS96 and germline overlap; the false positives should drop.
-7. Then continue the plan: Task 1 (`mouse_wgs_snv_indel.R`, after switching annotation to CSQ), Task 2
+8. Then continue the plan: Task 1 (`mouse_wgs_snv_indel.R`, after switching annotation to CSQ), Task 2
    (cross-sample evidence from FORMAT fields), Tasks 3–6.
 
 Not possible without BAMs: pileups, callable regions and mutations per Mb, SV read support, copy number,
