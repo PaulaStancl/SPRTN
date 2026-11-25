@@ -556,8 +556,8 @@ if (HAVE_FASTA) {
   snv_cal <- memb[CLASS == "SNV", .(tumour, ID, N_CALLERS, M2_STRELKA = mutect2 > 0 & strelka > 0)]
   snv <- rbind(snv,
                snv[SET %chin% CALLERS][snv_cal[(M2_STRELKA), .(tumour, ID)], on = .(tumour, ID), nomatch = NULL][, SET := "mutect2+strelka"],
-               snv[SET %chin% CALLERS][snv_cal[N_CALLERS >= 2], on = .(tumour, ID), nomatch = NULL][, SET := ">=2 callers"][, N_CALLERS := NULL],
-               snv[SET %chin% CALLERS][snv_cal[N_CALLERS == 3], on = .(tumour, ID), nomatch = NULL][, SET := "all 3 callers"][, N_CALLERS := NULL])
+               snv[SET %chin% CALLERS][snv_cal[N_CALLERS >= 2, .(tumour, ID)], on = .(tumour, ID), nomatch = NULL][, SET := ">=2 callers"],
+               snv[SET %chin% CALLERS][snv_cal[N_CALLERS == 3, .(tumour, ID)], on = .(tumour, ID), nomatch = NULL][, SET := "all 3 callers"])
   snv <- unique(snv, by = c("tumour", "SET", "ID"))
   snv[, NC_3 := trinuc_context(snv)]
   ref_mismatch <- snv[!is.na(NC_3) & substr(NC_3, 2, 2) != REF, .N]
