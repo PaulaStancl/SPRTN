@@ -384,8 +384,8 @@ setorder(counts, tumour, SET)
 counts
 
 # All records vs PASS only, per caller (own file) and the union (merged file); rows = all / PASS
-counts_filter <- rbind(allrec[, .N, by = .(tumour, SET, CLASS, filter = "all")],
-                       allrec[PASS == TRUE, .N, by = .(tumour, SET, CLASS, filter = "PASS")])
+counts_filter <- rbind(allrec[, .N, by = .(tumour, SET, CLASS)][, filter := "all"],
+                       allrec[PASS == TRUE, .N, by = .(tumour, SET, CLASS)][, filter := "PASS"])
 counts_filter[, `:=`(SET = factor(SET, levels = SET_LEVELS), filter = factor(filter, levels = c("all", "PASS")))]
 setorder(counts_filter, tumour, filter, SET, CLASS)
 print(dcast(counts_filter, tumour + SET + CLASS ~ filter, value.var = "N"))
@@ -591,7 +591,7 @@ if (HAVE_FASTA) {
 
   # ggplot: rows = set x (all SNVs, PASS, not PASS), columns = substitution; % of each row's SNVs
   FILTER_LEVELS <- c("all SNVs", "PASS", "not PASS")
-  prof <- rbind(a[, .N, by = .(tumour, SET, filter = "all SNVs", SBS96)], a[, .N, by = .(tumour, SET, filter, SBS96)])
+  prof <- rbind(a[, .N, by = .(tumour, SET, SBS96)][, filter := "all SNVs"], a[, .N, by = .(tumour, SET, filter, SBS96)], use.names = TRUE)
   prof <- prof[CJ(tumour = unique(prof$tumour), SET = factor(SET96, levels = SET96), filter = FILTER_LEVELS,
                   SBS96 = SBS96_TYPES, unique = TRUE), on = .(tumour, SET, filter, SBS96)]
   prof[is.na(N), N := 0L][, SUB := substr(SBS96, 3, 5)]
