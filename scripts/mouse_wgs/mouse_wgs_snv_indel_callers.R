@@ -663,12 +663,21 @@ if (HAVE_FASTA) {
   if (nrow(cosine_samples)) {
     cosine_samples[, set := factor(set, levels = SET96)]
     print(dcast(cosine_samples, set + tumour_1 ~ tumour_2, value.var = "cosine"))
-    p_cos_s <- ggplot(cosine_samples, aes(tumour_2, tumour_1, fill = cosine)) + geom_tile(colour = "white") +
-      geom_text(aes(label = sprintf("%.2f", cosine)), size = 3) + facet_wrap(~ set, nrow = 2) +
-      scale_fill_gradient(low = "white", high = "darkred", limits = c(0, 1)) +
+    # Colour scale over the off-diagonal range only (all values are high, a 0-1 scale hides the differences):
+    # lower limit = min off-diagonal cosine rounded down to 0.05; diagonal (always 1) drawn grey
+    off <- cosine_samples[tumour_1 != tumour_2]
+    cos_lo <- if (nrow(off)) min(0.95, floor(min(off$cosine) * 20) / 20) else 0
+    cosine_samples[, fill := fifelse(tumour_1 == tumour_2, NA_real_, cosine)]
+    cosine_samples[, txt_col := fifelse(!is.na(fill) & fill > cos_lo + 0.6 * (1 - cos_lo), "white", "black")]
+    p_cos_s <- ggplot(cosine_samples, aes(tumour_2, tumour_1, fill = fill)) + geom_tile(colour = "white") +
+      geom_text(aes(label = sprintf("%.2f", cosine), colour = txt_col), size = 3) + scale_colour_identity() +
+      facet_wrap(~ set, nrow = 2) +
+      scale_fill_gradientn(colours = c("#FFF7EC", "#FDD49E", "#FC8D59", "#D7301F", "#7F0000"), limits = c(cos_lo, 1),
+                           oob = scales::squish, na.value = "grey85", name = "cosine") +
       labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles between tumours, per set (PASS SNVs)") +
       theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
     save_plot(p_cos_s, "sbs96_cosine_between_tumours", 11, 7)
+    cosine_samples[, c("fill", "txt_col") := NULL]
   }
 }
 
