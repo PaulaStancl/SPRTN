@@ -255,14 +255,26 @@ if (nrow(rawc) && nrow(merged)) {
 
   # R7. My intersect (PASS in each caller's own file, then overlapped; >=2 callers) vs the merged file
   #     (FILTER PASS, >=2 callers in INFO/CALLER). Fill = SNV / INDEL.
+  #     + Mutect2 & Strelka: PASS in the Mutect2 file AND PASS in the Strelka file (FreeBayes ignored)
   int <- rbind(rp_w[N_CALLERS >= 2, .(tumour, ID, source = "my intersect")],
+               rp_w[mutect2 > 0 & strelka > 0, .(tumour, ID, source = "Mutect2 & Strelka")],
                merged[N_CALLERS >= 2 & PASS == TRUE, .(tumour, ID, source = "merged file")])
   int <- unique(int)                     # each variant once per tumour and source (also if >1 merged file)
   int[, type := fifelse(nchar(tstrsplit(ID, ":")[[3]]) == nchar(tstrsplit(ID, ":")[[4]]), "SNV", "INDEL")]
   int[, .N, by = .(tumour, source, type)][order(tumour, source, type)]
 
+  # R7b. Mutect2 & Strelka intersect: the variant list (chrom:pos:ref:alt as in the raw files, MNVs not
+  #      split - a Strelka doublet written as two SNVs does not match a Mutect2 MNV) and its counts
+  m2_strelka <- int[source == "Mutect2 & Strelka", .(tumour, ID, type)]
+  m2_strelka[, c("CHROM", "POS", "REF", "ALT") := tstrsplit(ID, ":", fixed = TRUE, type.convert = FALSE)]
+  m2_strelka[, POS := as.integer(POS)]
+  m2_strelka_n <- m2_strelka[, .N, by = .(tumour, type)][order(tumour, type)]
+  print(m2_strelka_n)
+  fwrite(m2_strelka[order(tumour, CHROM, POS)], file.path(OUT, "intersect_mutect2_strelka_PASS.tsv"), sep = "\t")
+  fwrite(m2_strelka_n, file.path(OUT, "intersect_mutect2_strelka_PASS_counts.tsv"), sep = "\t")
+
   # Venn per tumour, SNVs: my intersect vs the merged file (same PASS >=2-caller sets as the bar plot)
-  v2 <- dcast(int[type == "SNV"], tumour + ID ~ source, fun.aggregate = length, value.var = "ID")
+  v2 <- dcast(int[type == "SNV" & source != "Mutect2 & Strelka"], tumour + ID ~ source, fun.aggregate = length, value.var = "ID")
   setnames(v2, c("my intersect", "merged file"), c("mine", "mrg"), skip_absent = TRUE)
   venn2 <- v2[, .(only_mine = sum(mine > 0 & mrg == 0), shared = sum(mine > 0 & mrg > 0),
                   only_merged = sum(mine == 0 & mrg > 0), n_mine = sum(mine > 0), n_merged = sum(mrg > 0)), by = tumour]
@@ -285,14 +297,14 @@ if (nrow(rawc) && nrow(merged)) {
     theme_void() + theme(strip.text = element_text(face = "bold", size = 12), plot.margin = margin(10, 20, 10, 20))
   save_plot(p_venn2, "venn_snv_my_intersect_vs_merged", 12, 4.5)
   # Panels nested: tumour, then source (ggh4x::facet_nested; plain facet_grid if ggh4x is missing)
-  int[, source := factor(source, levels = c("my intersect", "merged file"))]
+  int[, source := factor(source, levels = c("my intersect", "Mutect2 & Strelka", "merged file"))]
   p_int <- ggplot(int[, .N, by = .(tumour, source, type)], aes(type, N, fill = type)) +
     geom_col(width = 0.7) +
     geom_text(aes(label = N), vjust = -0.3, size = 3.2) +
     scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
     (if (requireNamespace("ggh4x", quietly = TRUE)) ggh4x::facet_nested(~ tumour + source) else facet_grid(~ tumour + source)) +
-    labs(x = NULL, y = "PASS variants, >=2 callers") + theme_bw() + theme(legend.position = "none")
-  save_plot(p_int, "intersect_raw_vs_merged", 11, 5)
+    labs(x = NULL, y = "PASS variants, >=2 callers (Mutect2 & Strelka: PASS in both)") + theme_bw() + theme(legend.position = "none")
+  save_plot(p_int, "intersect_raw_vs_merged", 14, 5)
 } else message("RAW -> PASS -> INTERSECT skipped: no single-caller files (kind == 'caller') or no merged file")
 
 
