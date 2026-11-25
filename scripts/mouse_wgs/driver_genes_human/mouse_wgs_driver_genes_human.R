@@ -40,6 +40,7 @@ CANCER    <- "HCC"
 # Cosmic_CancerGeneCensus_v*_GRCh38.tsv(.gz). NA or file missing = the CGC analysis is skipped (2026-11-25: not on ssi yet)
 CGC       <- NA
 # Patient (human RJALS) tumourevo driver annotation: is_driver per mutation
+PATIENT_SAMPLE <- "RJALS_RJALS_Tm"          # element of the rds = the tumour (the rds also holds RJALS_RJALS_N)
 PATIENT_RDS <- file.path(REPO, "results/wgs/tumourevo/RJALS/driver_annotation/annotate_driver/RJALS/RJALS/RJALS_RJALS_Tm/RJALS_RJALS_RJALS_RJALS_Tm_driver.rds")
 ORTHOLOGS <- "/common/WORK/pstancl/references/cross_species/ensembl110/orthologs_hsapiens_mmusculus.tsv"
 IMPACTS   <- c("HIGH", "MODERATE")
@@ -80,9 +81,9 @@ for (L in names(LISTS)) message(L, ": ", nrow(LISTS[[L]]), " genes")
 
 # Patient: human genes with is_driver == TRUE in the tumourevo driver.rds (mutations table of the sample)
 px <- readRDS(PATIENT_RDS)
-pm <- NULL
-for (el in px) if (is.list(el) && !is.null(el$mutations)) pm <- as.data.table(el$mutations)
-if (is.null(pm) || !all(c("is_driver", "SYMBOL") %in% names(pm))) stop("PATIENT_RDS: no mutations table with is_driver and SYMBOL")
+if (!PATIENT_SAMPLE %in% names(px)) stop("PATIENT_RDS: no element ", PATIENT_SAMPLE, "; elements: ", paste(names(px), collapse = ", "))
+pm <- as.data.table(px[[PATIENT_SAMPLE]]$mutations)
+if (!all(c("is_driver", "SYMBOL") %in% names(pm))) stop("PATIENT_RDS: ", PATIENT_SAMPLE, "$mutations has no is_driver / SYMBOL")
 patient_genes <- unique(as.character(pm[is_driver %in% TRUE, SYMBOL]))
 message("patient driver genes (is_driver): ", paste(patient_genes, collapse = ", "))
 
