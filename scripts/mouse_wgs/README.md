@@ -73,6 +73,24 @@ Rscript scripts/mouse_wgs/<script>.R          # or: bash scripts/mouse_wgs/gtche
 
 ### 2.1 `mouse_wgs_somalier.R` (rewritten 2026-11-24)
 
+**Revised 2026-11-25 after review (CHANGE 22–39 in the script).**
+- **Why:** the ascertainment means IBS0 can detect a swap but can't confirm correct labels. Each FreeBayes
+  file only holds sites where its pair is non-ref, so a correctly paired animal is never 0/0 at the
+  retained sites.
+- **New primary metric:** discordance at sites where the **normal is homozygous** (Conpair-style).
+- **New statistics:**
+  - paired sign tests, using sites where at least one candidate normal is homozygous; the spec's
+    both-homozygous version is in the `*_bothhom` columns;
+  - 10 Mb block bootstrap, leave-one-chromosome-out jackknife and discordant-segment counts;
+  - max-depth filter and optional `MASK_BED`.
+- **FreeBayes PASS sites are kept by default** (`EXCLUDE_FB_PASS = FALSE`); excluding them is a
+  sensitivity run.
+- **Other sensitivity runs:** the files-1+2 ascertainment and MIN_DP 15/20.
+- **Test:** `--test` now runs a swap scenario and a null scenario (all labels correct). Both pass on the
+  Mac (R path only).
+- **On ssi:** run `--test` first (somalier n check, gtcheck with bcftools 1.24), then the real data. The
+  design notes below describe the 2026-11-24 version; the script header has the full changelog.
+
 Why it was rewritten:
 - The first real run crashed at block 5: somalier v0.3.5 `pairs.tsv` has no `hom_concordance` column. The
   site list had built fine (814,298 candidates, 62,946 germline-like, 12,339 after 20 kb bins).
