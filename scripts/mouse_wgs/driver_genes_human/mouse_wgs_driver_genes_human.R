@@ -2,10 +2,14 @@
 # Author: Paula Breyer
 # Project: SPRTN (Maria Boskovic), mouse WGS | Created: 2026-11-25
 #
-# mouse_wgs_driver_genes_human.R - harmful mutations in mouse orthologs of human HCC driver genes.
+# mouse_wgs_driver_genes_human.R - harmful mutations in mouse orthologs of human cancer driver genes.
 #
 # Logic (agreed 2026-11-25):
-#   driver genes  IntOGen Compendium_Cancer_Genes.tsv (tumourevo's), rows with CANCER_TYPE == "HCC"
+#   gene lists    two separate analyses (own tables and plots, suffix _IntOGen_HCC / _CGC):
+#                   IntOGen_HCC  Compendium_Cancer_Genes.tsv, rows with CANCER_TYPE == "HCC" (ROLE kept)
+#                   CGC          COSMIC Cancer Gene Census, all genes (Tier 1 + 2; TIER and ROLE kept);
+#                                old cancer_gene_census.csv or new Cosmic_CancerGeneCensus_*.tsv
+#   patient_driver  TRUE if the human gene has is_driver == TRUE in the RJALS tumourevo driver.rds
 #   orthologs     Ensembl Compara human -> mouse table from cross_species/h2m 00_resources.R
 #                 (ensembl<R>/orthologs_hsapiens_mmusculus.tsv); all ortholog types, homology type reported;
 #                 matched on the mouse Ensembl gene ID (VEP CSQ field Gene)
@@ -18,8 +22,8 @@
 #
 # Needs: mouse_wgs_snv_indel_settings.R run first (results/mouse_wgs/mouse_wgs_snv_indel_settings/settings.rds).
 #
-# Blocks: 0 EDIT | 1 setup | 2 driver genes + orthologs | 3 PASS variants per set | 4 CSQ of driver orthologs
-#         | 5 harmful hits | 6 plots | 7 outputs, RUN_LOG.md
+# Blocks: 0 EDIT | 1 setup | 2 gene lists, patient drivers, orthologs | 3 PASS variants per set
+#         | 4 CSQ of the orthologs | 5 harmful hits (all genes) | 6 per list: tables + plot | 7 RUN_LOG.md
 # Env on ssi: r-mutation. Output: results/mouse_wgs/driver_genes_human/
 
 # ---- 0. EDIT THIS BLOCK ------------------------------------------------------
@@ -31,6 +35,11 @@ SCRIPT    <- file.path(REPO, "scripts/mouse_wgs/driver_genes_human/mouse_wgs_dri
 #   find /common/WORK/pstancl ~/.nextflow -name Compendium_Cancer_Genes.tsv 2>/dev/null
 INTOGEN   <- "/common/WORK/pstancl/references/intogen/Compendium_Cancer_Genes.tsv"
 CANCER    <- "HCC"
+# COSMIC Cancer Gene Census (download needs a COSMIC login): old cancer_gene_census.csv or new
+# Cosmic_CancerGeneCensus_v*_GRCh38.tsv(.gz)
+CGC       <- "/common/WORK/pstancl/references/cosmic/cancer_gene_census.csv"
+# Patient (human RJALS) tumourevo driver annotation: is_driver per mutation
+PATIENT_RDS <- file.path(REPO, "results/wgs/tumourevo/RJALS/driver_annotation/annotate_driver/RJALS/RJALS/RJALS_RJALS_Tm/RJALS_RJALS_RJALS_RJALS_Tm_driver.rds")
 ORTHOLOGS <- "/common/WORK/pstancl/references/cross_species/ensembl110/orthologs_hsapiens_mmusculus.tsv"
 IMPACTS   <- c("HIGH", "MODERATE")
 ENV_BIN   <- "/common/WORK/pstancl/envs/r-mutation/bin"
@@ -39,9 +48,9 @@ BCFTOOLS  <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path
 # ---- 1. Setup ----------------------------------------------------------------
 suppressPackageStartupMessages({ library(data.table); library(ggplot2) })
 options(width = max(80, suppressWarnings(as.numeric(system("tput cols", intern = TRUE, ignore.stderr = TRUE)))[1], na.rm = TRUE))
-for (f in c(SETTINGS, INTOGEN, ORTHOLOGS)) if (!file.exists(f)) stop("Not found: ", f,
+for (f in c(SETTINGS, INTOGEN, CGC, ORTHOLOGS, PATIENT_RDS)) if (!file.exists(f)) stop("Not found: ", f,
   "\n  settings.rds: run mouse_wgs_snv_indel_settings.R; orthologs: run scripts/cross_species/h2m 00_resources.R;",
-  "\n  IntOGen: set INTOGEN (find command in block 0)")
+  "\n  IntOGen / CGC / patient rds: set the path in block 0")
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 started <- Sys.time()
 save_plot <- function(p, name, w, h) {
@@ -49,20 +58,31 @@ save_plot <- function(p, name, w, h) {
   ggsave(file.path(OUT, paste0(name, ".png")), p, width = w, height = h, dpi = 150, limitsize = FALSE)
 }
 
-# ---- 2. Driver genes and their mouse orthologs ----------------------------------
+# ---- 2. Gene lists, patient drivers, orthologs -----------------------------------
 ig <- fread(INTOGEN)
 stopifnot(all(c("SYMBOL", "CANCER_TYPE") %in% names(ig)))
-drivers <- ig[CANCER_TYPE == CANCER, .(ROLE = if ("ROLE" %in% names(ig)) paste(sort(unique(na.omit(ROLE))), collapse = ";") else NA_character_),
-              by = .(symbol_h = SYMBOL)]
-message(nrow(drivers), " IntOGen ", CANCER, " driver genes")
+intogen <- ig[CANCER_TYPE == CANCER, .(ROLE = if ("ROLE" %in% names(ig)) paste(sort(unique(na.omit(ROLE))), collapse = ";") else NA_character_,
+                                       TIER = NA_character_), by = .(symbol_h = SYMBOL)]
+cg <- fread(CGC)
+pick <- function(cands) { k <- intersect(cands, names(cg)); if (!length(k)) stop("CGC: none of ", paste(cands, collapse = "/"), " in ", CGC); k[1] }
+c_sym <- pick(c("GENE_SYMBOL", "Gene Symbol")); c_tier <- pick(c("TIER", "Tier")); c_role <- pick(c("ROLE_IN_CANCER", "Role in Cancer"))
+cgc <- unique(cg[, .(symbol_h = get(c_sym), ROLE = as.character(get(c_role)), TIER = as.character(get(c_tier)))], by = "symbol_h")
+LISTS <- list(IntOGen_HCC = intogen, CGC = cgc)
+for (L in names(LISTS)) message(L, ": ", nrow(LISTS[[L]]), " genes")
 
+# Patient: human genes with is_driver == TRUE in the tumourevo driver.rds (mutations table of the sample)
+px <- readRDS(PATIENT_RDS)
+pm <- NULL
+for (el in px) if (is.list(el) && !is.null(el$mutations)) pm <- as.data.table(el$mutations)
+if (is.null(pm) || !all(c("is_driver", "SYMBOL") %in% names(pm))) stop("PATIENT_RDS: no mutations table with is_driver and SYMBOL")
+patient_genes <- unique(as.character(pm[is_driver %in% TRUE, SYMBOL]))
+message("patient driver genes (is_driver): ", paste(patient_genes, collapse = ", "))
+
+# Orthologs of every gene in either list (CSQ is read once for all; lists are separated in block 6)
+all_genes <- unique(c(intogen$symbol_h, cgc$symbol_h))
 orth <- fread(ORTHOLOGS, colClasses = "character", na.strings = c("", "NA"))
-d_orth <- orth[!is.na(gene_id_m), .(symbol_h, gene_id_h, gene_id_m, symbol_m, homology_type, perc_id_h_to_m)][drivers, on = "symbol_h"]
-no_ortholog <- d_orth[is.na(gene_id_m), .(symbol_h, ROLE)]
-d_orth <- d_orth[!is.na(gene_id_m)]
+d_orth <- orth[!is.na(gene_id_m) & symbol_h %chin% all_genes, .(symbol_h, gene_id_h, gene_id_m, symbol_m, homology_type, perc_id_h_to_m)]
 print(d_orth[, .N, by = homology_type])
-message(nrow(no_ortholog), " driver genes without a mouse ortholog in the table (or symbol not found): ",
-        paste(head(no_ortholog$symbol_h, 30), collapse = ", "))
 
 # ---- 3. PASS variants per set (settings.rds) -----------------------------------
 st <- readRDS(SETTINGS)
@@ -128,50 +148,65 @@ memb[, n_sets := rowSums(.SD), .SDcols = SET_LEVELS]
 setcolorder(memb, c("tumour", "CLASS", "CHROM", "POS", "REF", "ALT", "n_sets", SET_LEVELS))
 
 driver_hits <- h[memb, on = .(tumour, CHROM, POS, REF, ALT)]
-driver_hits <- d_orth[, .(gene_id_m, symbol_h, ROLE, homology_type, perc_id_h_to_m)][driver_hits, on = c(gene_id_m = "Gene"), allow.cartesian = TRUE]
+driver_hits <- d_orth[, .(gene_id_m, symbol_h, homology_type, perc_id_h_to_m)][driver_hits, on = c(gene_id_m = "Gene"), allow.cartesian = TRUE]
+driver_hits[, patient_driver := symbol_h %chin% patient_genes]
 setnames(driver_hits, c("SYMBOL"), c("symbol_m_vep"), skip_absent = TRUE)
-setcolorder(driver_hits, intersect(c("tumour", "symbol_h", "symbol_m_vep", "gene_id_m", "ROLE", "homology_type", "perc_id_h_to_m",
+setcolorder(driver_hits, intersect(c("tumour", "symbol_h", "symbol_m_vep", "gene_id_m", "patient_driver", "homology_type", "perc_id_h_to_m",
   "CLASS", "CHROM", "POS", "REF", "ALT", "FROM_MNV", "IMPACT", "Consequence", "HGVSp", "HGVSc", "SIFT", "CANONICAL",
   "Feature", "n_sets", SET_LEVELS), names(driver_hits)))
 setorder(driver_hits, tumour, symbol_h, CHROM, POS)
-print(driver_hits[, .(tumour, symbol_h, symbol_m_vep, CLASS, IMPACT, Consequence, HGVSp, n_sets)])
 
-# Gene x set per tumour: number of harmful PASS variants
-gene_set <- melt(driver_hits, id.vars = c("tumour", "symbol_h", "CHROM", "POS", "REF", "ALT", "IMPACT"),
-                 measure.vars = SET_LEVELS, variable.name = "SET", value.name = "PASS")[PASS == TRUE]
-gene_set <- gene_set[, .(n_variants = uniqueN(paste(CHROM, POS, REF, ALT)), n_HIGH = uniqueN(paste(CHROM, POS, REF, ALT)[IMPACT == "HIGH"])),
-                     by = .(tumour, symbol_h, SET)]
-print(dcast(gene_set, tumour + symbol_h ~ SET, value.var = "n_variants", fill = 0))
+# ---- 6. Per gene list: tables and plot ----------------------------------------
+res_n <- list()
+for (L in names(LISTS)) {
+  gl <- LISTS[[L]]
+  dh <- gl[driver_hits, on = "symbol_h", nomatch = NULL]                   # hits in this list's genes
+  setcolorder(dh, c("tumour", "symbol_h", "symbol_m_vep", "ROLE", "TIER", "patient_driver"))
+  setorder(dh, tumour, symbol_h, CHROM, POS)
+  message("== ", L, ": ", uniqueN(dh[, .(tumour, CHROM, POS, REF, ALT)]), " harmful PASS variants in ", uniqueN(dh$symbol_h), " genes")
+  print(dh[, .(tumour, symbol_h, symbol_m_vep, patient_driver, CLASS, IMPACT, Consequence, HGVSp, n_sets)])
+  no_orth <- gl[!symbol_h %chin% d_orth$symbol_h]
+  res_n[[L]] <- c(genes = nrow(gl), without_ortholog = nrow(no_orth), variants = uniqueN(dh[, .(tumour, CHROM, POS, REF, ALT)]),
+                  genes_hit = uniqueN(dh$symbol_h))
 
-# ---- 6. Plot: gene x set per tumour, number of harmful PASS variants (label), any HIGH (fill) ----
-if (nrow(gene_set)) {
-  gene_set[, `:=`(SET = factor(SET, levels = SET_LEVELS), worst = fifelse(n_HIGH > 0, "HIGH", "MODERATE only"))]
-  p <- ggplot(gene_set, aes(SET, symbol_h, fill = worst)) +
-    geom_tile(colour = "white") + geom_text(aes(label = n_variants), size = 3) +
-    facet_wrap(~ tumour, nrow = 1) +
-    scale_fill_manual(values = c(HIGH = "#D7301F", "MODERATE only" = "#FDBB84"), name = "VEP impact") +
-    scale_y_discrete(limits = rev) +
-    labs(x = NULL, y = "human HCC driver gene (IntOGen), mouse ortholog mutated",
-         title = "Harmful (VEP HIGH/MODERATE) PASS mutations in mouse orthologs of human HCC driver genes",
-         subtitle = "number = PASS variants per gene and set") +
-    theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  save_plot(p, "driver_orthologs_harmful_by_set", 16, 2 + 0.25 * uniqueN(gene_set$symbol_h))
+  # Gene x set per tumour: number of harmful PASS variants, any HIGH
+  gs <- melt(dh, id.vars = c("tumour", "symbol_h", "patient_driver", "CHROM", "POS", "REF", "ALT", "IMPACT"),
+             measure.vars = SET_LEVELS, variable.name = "SET", value.name = "PASS")[PASS == TRUE]
+  gs <- gs[, .(n_variants = uniqueN(paste(CHROM, POS, REF, ALT)), n_HIGH = uniqueN(paste(CHROM, POS, REF, ALT)[IMPACT == "HIGH"])),
+           by = .(tumour, symbol_h, patient_driver, SET)]
+  print(dcast(gs, tumour + symbol_h ~ SET, value.var = "n_variants", fill = 0))
+
+  if (nrow(gs)) {
+    gs[, `:=`(SET = factor(SET, levels = SET_LEVELS), worst = fifelse(n_HIGH > 0, "HIGH", "MODERATE only"),
+              gene = fifelse(patient_driver, paste0(symbol_h, " *"), symbol_h))]
+    p <- ggplot(gs, aes(SET, gene, fill = worst)) +
+      geom_tile(colour = "white") + geom_text(aes(label = n_variants), size = 3) +
+      facet_wrap(~ tumour, nrow = 1) +
+      scale_fill_manual(values = c(HIGH = "#D7301F", "MODERATE only" = "#FDBB84"), name = "VEP impact") +
+      scale_y_discrete(limits = rev) +
+      labs(x = NULL, y = paste0("human gene (", L, "), mouse ortholog mutated"),
+           title = paste0("Harmful (VEP HIGH/MODERATE) PASS mutations in mouse orthologs of ", L, " genes"),
+           subtitle = "number = PASS variants per gene and set; * = patient (RJALS) tumourevo driver gene") +
+      theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    save_plot(p, paste0("orthologs_harmful_by_set_", L), 16, 2 + 0.25 * uniqueN(gs$gene))
+  }
+  fwrite(gl, file.path(OUT, paste0("genes_", L, ".tsv")), sep = "\t")
+  fwrite(no_orth, file.path(OUT, paste0("genes_without_mouse_ortholog_", L, ".tsv")), sep = "\t")
+  fwrite(dh, file.path(OUT, paste0("orthologs_harmful_variants_", L, ".tsv")), sep = "\t")
+  fwrite(gs, file.path(OUT, paste0("orthologs_harmful_by_gene_set_", L, ".tsv")), sep = "\t")
 }
 
 # ---- 7. Outputs --------------------------------------------------------------
-fwrite(drivers, file.path(OUT, "intogen_drivers.tsv"), sep = "\t")
-fwrite(d_orth, file.path(OUT, "driver_orthologs.tsv"), sep = "\t")
-fwrite(no_ortholog, file.path(OUT, "drivers_without_mouse_ortholog.tsv"), sep = "\t")
-fwrite(driver_hits, file.path(OUT, "driver_orthologs_harmful_variants.tsv"), sep = "\t")
-fwrite(gene_set, file.path(OUT, "driver_orthologs_harmful_by_gene_set.tsv"), sep = "\t")
+fwrite(d_orth, file.path(OUT, "gene_orthologs.tsv"), sep = "\t")
+fwrite(data.table(patient_driver_gene = patient_genes), file.path(OUT, "patient_driver_genes.tsv"), sep = "\t")
 log_file <- file.path(OUT, "RUN_LOG.md")
 old_log <- if (file.exists(log_file)) readLines(log_file) else character()
 git_hash <- tryCatch(system2("git", c("-C", shQuote(REPO), "rev-parse", "--short", "HEAD"), stdout = TRUE), error = function(e) "unknown")
 writeLines(c(paste0("## ", format(Sys.time(), "%Y-%m-%d %H:%M"), " - mouse_wgs_driver_genes_human"),
              paste0("- Script: ", SCRIPT, "  git: ", git_hash, "  (", R.version.string, ")"),
-             paste0("- Inputs: ", SETTINGS, "; ", INTOGEN, " (", CANCER, ", ", nrow(drivers), " genes); ", ORTHOLOGS),
+             paste0("- Inputs: ", SETTINGS, "; ", INTOGEN, " (", CANCER, "); ", CGC, "; ", ORTHOLOGS, "; ", PATIENT_RDS),
              paste0("- Parameters: impacts ", paste(IMPACTS, collapse = "/"), "; sets ", paste(SET_LEVELS, collapse = ", ")),
-             paste0("- Result: ", uniqueN(driver_hits[, .(tumour, CHROM, POS, REF, ALT)]), " harmful PASS variants in ",
-                    uniqueN(driver_hits$symbol_h), " driver-gene orthologs"),
+             paste0("- ", names(res_n), ": ", sapply(res_n, function(v) paste(names(v), v, sep = " ", collapse = ", "))),
+             paste0("- Patient driver genes: ", paste(patient_genes, collapse = ", ")),
              paste0("- Outputs: ", OUT), "", old_log), log_file)
 message("Done in ", round(difftime(Sys.time(), started, units = "mins"), 1), " min. Outputs: ", OUT)
