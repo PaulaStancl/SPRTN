@@ -22,7 +22,7 @@
 #   1. how many SNVs and indels each caller finds
 #   2. how many are shared between each pair of callers (and by 1, 2 or 3 callers)
 #   3. how the merged union compares with the single callers
-#   4. the SBS96 (trinucleotide context) profile of each caller, the union, >=2 callers and all 3
+#   4. the SBS96 (trinucleotide context) profile of each caller, the union, >=2 callers, mutect2+strelka and all 3
 #
 # Blocks:
 #   0  EDIT THIS BLOCK
@@ -552,8 +552,10 @@ in_doublet <- function(d) {
 snv96 <- data.table(); m96 <- data.table(); cosine <- data.table(); cosine_samples <- data.table(); sbs96_filter_n <- data.table()
 if (HAVE_FASTA) {
   snv <- atom[CLASS == "SNV", .(tumour, SET = as.character(SET), CHROM, POS, REF, ALT, ID)]
-  snv_cal <- memb[CLASS == "SNV", .(tumour, ID, N_CALLERS)]
+  # mutect2+strelka = PASS in both Mutect2's and Strelka's own files; FreeBayes ignored (may or may not have called it)
+  snv_cal <- memb[CLASS == "SNV", .(tumour, ID, N_CALLERS, M2_STRELKA = mutect2 > 0 & strelka > 0)]
   snv <- rbind(snv,
+               snv[SET %chin% CALLERS][snv_cal[(M2_STRELKA), .(tumour, ID)], on = .(tumour, ID), nomatch = NULL][, SET := "mutect2+strelka"],
                snv[SET %chin% CALLERS][snv_cal[N_CALLERS >= 2], on = .(tumour, ID), nomatch = NULL][, SET := ">=2 callers"][, N_CALLERS := NULL],
                snv[SET %chin% CALLERS][snv_cal[N_CALLERS == 3], on = .(tumour, ID), nomatch = NULL][, SET := "all 3 callers"][, N_CALLERS := NULL])
   snv <- unique(snv, by = c("tumour", "SET", "ID"))
@@ -564,7 +566,7 @@ if (HAVE_FASTA) {
   snv[!IN_DBS & substr(NC_3, 2, 2) == REF, SBS96 := sbs96(REF, ALT, NC_3)]
   print(snv[, .(SNVs = .N, doublet_halves = sum(IN_DBS), with_SBS96 = sum(!is.na(SBS96))), by = .(tumour, SET)])
 
-  SET96 <- c(CALLERS, "union (merged)", ">=2 callers", "all 3 callers")
+  SET96 <- c(CALLERS, "union (merged)", ">=2 callers", "mutect2+strelka", "all 3 callers")
   snv96 <- snv[!is.na(SBS96)]
   snv96[, SET := factor(SET, levels = SET96)]
   snv96[, SUB := substr(SBS96, 3, 5)]
@@ -580,10 +582,14 @@ if (HAVE_FASTA) {
   #       callers         every record of the caller's own file; PASS = that file's FILTER
   #       union           every record of the merged file; PASS = merged FILTER
   #       >=2 / all 3     found by >=2 / all 3 callers (any FILTER); PASS = PASS in >=2 / all 3 callers' own files
+  #       mutect2+strelka found by both (any FILTER); PASS = PASS in both Mutect2's and Strelka's own files (FreeBayes ignored)
   #     Multiallelics and MNVs split (allrec, block 4b), doublet halves out.
   a <- allrec[CLASS == "SNV", .(tumour, SET, CHROM, POS, REF, ALT, PASS)]
-  cc <-a[SET %chin% CALLERS, .(n_found = .N, n_pass = sum(PASS)), by = .(tumour, CHROM, POS, REF, ALT)]
+  cc <- a[SET %chin% CALLERS, .(n_found = .N, n_pass = sum(PASS),
+                                m2s_found = sum(SET %chin% c("mutect2", "strelka")) == 2L,
+                                m2s_pass = sum(PASS & SET %chin% c("mutect2", "strelka")) == 2L), by = .(tumour, CHROM, POS, REF, ALT)]
   a <- rbind(a,
+             cc[(m2s_found), .(tumour, SET = "mutect2+strelka", CHROM, POS, REF, ALT, PASS = m2s_pass)],
              cc[n_found >= 2, .(tumour, SET = ">=2 callers", CHROM, POS, REF, ALT, PASS = n_pass >= 2)],
              cc[n_found == length(CALLERS), .(tumour, SET = "all 3 callers", CHROM, POS, REF, ALT, PASS = n_pass == length(CALLERS))])
   rm(cc)
@@ -648,7 +654,7 @@ if (HAVE_FASTA) {
     scale_fill_gradient(low = "white", high = "darkred", limits = c(0, 1)) +
     labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles") +
     theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-  save_plot(p_cos, "sbs96_cosine", 13, 5)
+  save_plot(p_cos, "sbs96_cosine", 15, 6)
 
   # Cosine similarity of the SBS96 profiles, per set, between tumours (pairwise, PASS SNVs = m96)
   cosine_samples <- rbindlist(lapply(SET96, function(s) {
@@ -676,7 +682,7 @@ if (HAVE_FASTA) {
                            oob = scales::squish, na.value = "grey85", name = "cosine") +
       labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles between tumours, per set (PASS SNVs)") +
       theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    save_plot(p_cos_s, "sbs96_cosine_between_tumours", 11, 7)
+    save_plot(p_cos_s, "sbs96_cosine_between_tumours", 14, 7)
     cosine_samples[, c("fill", "txt_col") := NULL]
   }
 }
