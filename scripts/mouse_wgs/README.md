@@ -1,6 +1,6 @@
 # Mouse WGS (Sprtn knock-in HCC): status, findings and how to continue
 
-Last updated 2026-11-24. Plan: Claude Docs "Mouse WGS → human comparison: analysis plan"
+Last updated 2026-11-25 (section 6: everything agreed and done on 2026-11-25). Plan: Claude Docs "Mouse WGS → human comparison: analysis plan"
 (https://claude.ai/artifact/Wm6n1M8AwjP9VZsCRqocbK). This README records what has been done since.
 
 **Most important finding so far: the setting-A tumour/normal pairs for mice 1 and 2 are swapped.**
@@ -57,15 +57,15 @@ All are tutorial-style, numbered blocks, run line by line in RStudio or with `Rs
 | Script | What it does | Status |
 |---|---|---|
 | `00_input_inspection.R` | Task 0: provenance and md5s, headers, normals used per setting, record counts, SV inventory, manifest, issues | written, result not reviewed |
-| `mouse_wgs_snv_indel_callers.R` | Callers within setting A. Blocks 3–8: counts, pairwise sharing, 1/2/3-caller categories, merged union, SBS96 (GRCm38 FASTA from h2m resources). R1–R7: raw single-caller PASS → intersect vs merged file, merged FILTER rule check (R5c), Venn and bar plot of my intersect vs merged | run; R1–R7 reviewed |
+| `mouse_wgs_snv_indel_callers.R` | Callers within setting A. Blocks 3–8: counts, pairwise sharing, 1/2/3-caller categories, merged union, SBS96 (GRCm38 FASTA from h2m resources). R1–R7: raw single-caller PASS → intersect vs merged file, merged FILTER rule check (R5c), Venn and bar plot of my intersect vs merged | run; R1–R7 reviewed; revised 2026-11-25 (section 6.1), re-run needed |
 | `mouse_wgs_snv_indel_settings.R` | Settings compared per tumour, 8 sets (PASS in each file's own FILTER): A_freebayes (file PASS), A_freebayes_pass_expr (PASS & prefilter expression), A_freebayes_expr (expression only), A_mutect2_strelka (PASS then intersect), A_strelka, A_mutect2, B_mutect2_joint_wt, C_mutect2_pon. Counts (all vs PASS), pairwise shared, exclusive categories, proportion shared, SBS96 (ggplot + qcVCF), cosine between settings and between tumours | new 2026-11-25, not run yet |
 | `mouse_wgs_freebayes_pass_check.R` | Checks that every FreeBayes PASS record (setting A, own files) satisfies the provider's prefilter (MQM, GT normal 0/0 and tumour 0/1, DP >= 30 both, QUAL/AO >= 5, SAF/SAR > 0), and the reverse; failing conditions per record | new 2026-11-25, not run yet |
 | `mouse_wgs_example_sites.R` | Diagnostics for chr19:30419577 T>C and chr10:3184122 G>T from the single-caller files: per-caller metrics, FreeBayes criteria, per-caller read counts in all samples, plots 01–08 | run, reviewed |
 | `mouse_wgs_sample_identity.R` | Sample identity from FreeBayes genotypes: IBS0 rates per shared confident sites (WT from Mutect2 joint), LD-thinned rate, IBS0 blocks and chromosomes, depth and GQ/MQM at IBS0 sites, optional MGP strains, bcftools gtcheck | v1 run (counts in section 3); **current version not run yet** |
 | `gtcheck_freebayes.sh` | bcftools gtcheck: biallelic autosomal SNVs, QUAL/DP/GQ filter, merge `-m none`, all-sites and common-sites runs, per-1000 table | run; common-sites rows not reviewed yet |
 | `mouse_wgs_somalier.R` | Identity: normal-homozygous discordance (primary), IBS0, somalier and gtcheck on one masked 6-sample genotype file; panels A/B/C × thinning, bootstrap, jackknife; see 2.1 | revised 2026-11-25 (f5e1226); `--test` (swap + null) passes on ssi incl. somalier n check and gtcheck 1.24; real data run 2026-11-25: swap confirmed, HCC_3-KI3 confirmed (section 3.3) |
-| `mouse_wgs_identity_informativeness.R` | Reads the outputs of `mouse_wgs_somalier.R` (masked 6-sample BCF, primary sites): genotype patterns across the KI normals, informative sites, opposite homozygotes per pair of normals, private sites, tumour-dependent retention, identity on a tumour-independent site set (all normals non-ref), sites per chromosome, and `bam_check_sites_for_patrik.csv` | written 2026-11-25, tested on synthetic data; not run on real data |
-| `mouse_wgs_identity_strain_check.R` | Are the identity sites and the tumour vs labelled-normal differences germline? Panel A sites annotated with the Mouse Genomes Project (GRCm38 release: rsID/ID, strains carrying the ALT, C57BL/6NJ and 129 strains), WT normals from the setting-B Mutect2 files, and a neighbouring-SNP check (inherited blocks vs isolated sites, ±5 Mb); annotates `bam_check_sites_for_patrik.csv` | written 2026-11-25, tested on synthetic data without MGP/WT; not run on real data; check `MGP_VCF` link first |
+| `mouse_wgs_identity_informativeness.R` | Reads the outputs of `mouse_wgs_somalier.R` (masked 6-sample BCF, primary sites): genotype patterns across the KI normals, informative sites, opposite homozygotes per pair of normals, private sites, tumour-dependent retention, identity on a tumour-independent site set (all normals non-ref), sites per chromosome, and `bam_check_sites_for_patrik.csv` | run on real data 2026-11-25 (section 6.3) |
+| `mouse_wgs_identity_strain_check.R` | Are the identity sites and the tumour vs labelled-normal differences germline? Panel A sites annotated with the Mouse Genomes Project (GRCm38 release: rsID/ID, strains carrying the ALT, C57BL/6NJ and 129 strains), WT normals from the setting-B Mutect2 files, and a neighbouring-SNP check (inherited blocks vs isolated sites, ±5 Mb); annotates `bam_check_sites_for_patrik.csv` | run 2026-11-25 without MGP (0 records over ftp); re-run with the local MGP copy pending (section 6.4) |
 | `mouse_wgs_snv_indel.R` | Task 1: settings A/B/C (counts, VAF, FILTER, overlaps, annotation) | written, not run; block 9 reads ANN and must switch to **CSQ** |
 
 Run commands (from the repo on ssi):
@@ -179,6 +179,46 @@ column -t results/mouse_wgs/mouse_wgs_somalier/verdict.tsv
   - `KNOCKIN_LOCUS = NA`. Set the Sprtn knock-in position to annotate IBS0 near it.
 
 ---
+
+### 2.2 Settings comparison and FreeBayes PASS check (2026-11-25)
+
+**`mouse_wgs_snv_indel_settings.R`** compares, per tumour, 8 sets. PASS is always each file's own FILTER;
+the merged file is not used. MNVs split into SNVs; doublet halves left out of SBS96.
+
+| Set | Definition |
+|---|---|
+| `A_freebayes` | tumor_vs_normal, FreeBayes FILTER PASS as in the file |
+| `A_freebayes_pass_expr` | FreeBayes PASS **and** the prefilter expression (3.6) on the split record |
+| `A_freebayes_expr` | FreeBayes, the prefilter expression only (FILTER ignored) |
+| `A_mutect2_strelka` | PASS first in Mutect2's and in Strelka's own file, then intersected ("all records" = found by both) |
+| `A_strelka` | Strelka PASS |
+| `A_mutect2` | Mutect2 PASS |
+| `B_mutect2_joint_wt` | `tumor_vs_joint_wt/`, Mutect2 PASS |
+| `C_mutect2_pon` | `tumor_only_pon/`, Mutect2 PASS |
+
+Outputs (`results/mouse_wgs/mouse_wgs_snv_indel_settings/`): counts all vs PASS (`counts_per_setting*`,
+qcVCF `plot_mutation_counts`), pairwise shared heatmap (`pairwise_shared`, labels = % of row, 1 decimal, as
+qcVCF), qcVCF pairwise heatmaps over all tumour × set (`qcVCF_pairwise_shared_SNV/INDEL`), exclusive
+categories, proportion shared, SBS96 per tumour (ggplot + qcVCF `plot96_matrix` all / PASS / not PASS),
+cosine between sets and between tumours, `sbs96_matrix.tsv`, `pass_variants_per_setting.tsv.gz`.
+First run 2026-11-25 (6 sets, 4.2 min); the 8-set version (commit 443d3cc) is not run yet.
+
+**qcVCF pairwise fix.** `qcVCF::plot_pairwise_shared_mutations()` merged the table with itself without
+`allow.cartesian`. data.table refuses a join with more rows than `nrow(x) + nrow(i)`; a variant in k columns
+gives k² rows. SNVs failed (428,433 rows > 316,290 = 2 × 158,145), INDELs passed only because most
+FreeBayes indels are in one column (171,222 < 212,616). Not a property of the data: fixed in qcVCF commit
+7cb2088 (`allow.cartesian = TRUE`). On ssi: `cd /common/WORK/pstancl/tools/qcVCF && git pull`, then
+`remotes::install_local("qcVCF", force = TRUE)` in r-mutation. The settings script keeps a fallback
+(`pairwise_shared_sparse()`, same numbers and look) if the installed qcVCF is the old one.
+
+**`mouse_wgs_freebayes_pass_check.R`** evaluates the FreeBayes prefilter expression on every record of the
+setting-A FreeBayes files and compares it with FILTER in both directions; writes the agreement table,
+failing conditions, the disagreeing records and the split-piece table. Result in 3.6.
+
+**Union check (chat code, not a script).** R code given in chat to read one tumour's `*.union.ann.bcf`, set the
+tumour/normal sample columns by hand, evaluate the expression and cross-tabulate it with the merged FILTER
+for records whose INFO/CALLER includes FreeBayes. Caveat: the merged QUAL is the bcftools-merge QUAL (not
+necessarily FreeBayes'), so QUAL/AO can differ from the FreeBayes file. Result not reviewed yet.
 
 ## 3. Findings
 
@@ -339,6 +379,40 @@ It is a germline caller with a crude prefilter:
 
 In a 2-of-3 rule it casts the deciding vote wherever Strelka2 and Mutect2 disagree.
 
+### 3.6 FreeBayes FILTER does not follow the provider's prefilter expression (2026-11-25)
+
+Checked with `mouse_wgs_freebayes_pass_check.R` on the setting-A FreeBayes files
+(`calls/*.freebayes.ann.norm.bcf`, fully split: no multiallelic ALT left). The expression
+
+`INFO/MQM >= 40 && GT[normal]="0/0" && GT[tumor]="0/1" && FMT/DP[normal] >= 30 && FMT/DP[tumor] >= 30 && QUAL/INFO/AO >= 5 && SAF > 0 && SAR > 0`
+
+was evaluated in R on every record (tumour/normal column from the sample names; a missing value fails) and
+compared with FILTER:
+
+| Tumour | records | FILTER PASS | expression TRUE | both | PASS, expression FALSE | expression TRUE, not PASS |
+|---|---|---|---|---|---|---|
+| HCC_1 | 1,272,624 | 55,611 | 54,890 | 24,579 | 31,032 | 30,311 |
+| HCC_2 | 1,138,614 | 34,433 | 35,866 | 11,164 | 23,269 | 24,702 |
+| HCC_3 | 1,158,627 | 34,672 | 33,674 | 10,076 | 24,596 | 23,598 |
+
+- Only 29–44% of PASS records satisfy the expression, and about as many records satisfy it but are `.`.
+- Among PASS records that fail it, the tumour genotype `0/1` fails most (HCC_3: 21,536 of 24,596), then
+  SAR > 0, SAF > 0, QUAL/AO, MQM. Depth and the normal genotype did not show up as failing.
+- PASS records that fail often come in groups with one QUAL at the same or nearby positions (e.g.
+  10:3202200 T>TA and T>G; 10:3450091 CAG>C and C>CAG; 10:3239159 and 10:3239164), with tumour GT `0/0`.
+- **Most likely explanation:** the filter was applied to the original FreeBayes records (multiallelic /
+  complex) before they were split and normalised (`.norm`). The pieces kept the original FILTER, but GT, AO,
+  SAF and SAR now describe the piece. Not yet confirmed: the script's `split_piece` table (same QUAL within
+  50 bp) is still to be reviewed, and records that pass the expression but are `.` are not fully explained.
+- **The expression as written cannot run as-is:** bcftools takes sample indices (`GT[0]`, `FMT/DP[1]`), not
+  names, and the samples are not called `normal` / `tumor`. Ask Patrik for the exact command and the order of
+  filter vs `norm`. A per-variant version, on the split file:
+  `bcftools filter -s FB_FAIL -i 'INFO/MQM>=40 && GT[N]="ref" && GT[T]="het" && FMT/DP[N]>=30 && FMT/DP[T]>=30 && QUAL/INFO/AO>=5 && INFO/SAF>0 && INFO/SAR>0'`
+  (N, T = normal and tumour index from `bcftools query -l`; "ref"/"het" also match phased or `1/0` genotypes).
+- Consequence: the file's FreeBayes PASS is not the expression; it is **not** enough to add the expression
+  on top of PASS (that drops the records that pass the expression but are `.`). Hence three FreeBayes sets in
+  the settings comparison (2.2). Mutect2 and Strelka PASS are unaffected (their own filters).
+
 ---
 
 ## 4. Open decisions (ask Paula before changing)
@@ -352,8 +426,19 @@ In a 2-of-3 rule it casts the deciding vote wherever Strelka2 and Mutect2 disagr
   caller's own file; the merged file is only the separate "union (merged)" set and never filters a caller.
 - **MNV comparison unit.** Decided 2026-11-25: MNVs split for caller comparison; doublets count once (DBS)
   for signatures (`scripts/analysis/README.md`, Open questions 1).
+- **FreeBayes PASS definition.** Decided 2026-11-25: keep the file's PASS as `A_freebayes` and compare it with
+  `A_freebayes_pass_expr` and `A_freebayes_expr` (settings script). Open: whether to add the same to
+  `mouse_wgs_snv_indel_callers.R` as a switch (`FREEBAYES_PASS = "filter" | "pass_expr" | "expr"`, one run
+  per value, separate output folders; changes FreeBayes, >=2 callers, all 3; not Mutect2, Strelka,
+  Mutect2 & Strelka or the merged union). Not done; Paula to decide.
+- **High-confidence set** stays Mutect2 & Strelka (PASS in both own files); unaffected by the FreeBayes issue.
 
 ## 5. Next steps, in order
+
+0. **Settings / FreeBayes (2026-11-25):** reinstall qcVCF on ssi (2.2); run the 8-set
+   `mouse_wgs_snv_indel_settings.R`; rerun `mouse_wgs_freebayes_pass_check.R` and review the `split_piece`
+   table; run the union chat code for one tumour; ask Patrik for the exact FreeBayes filter command and
+   whether it ran before or after `bcftools norm`; then decide on the callers-script switch (section 4).
 
 1. Review the **common-sites gtcheck rows**: `grep -E '^(site_set|common_sites)' results/mouse_wgs/gtcheck/gtcheck_table.tsv | column -t`.
 2. **Upgrade bcftools** in r-mutation (`"bcftools>=1.17"`), then re-run `gtcheck_freebayes.sh` to get
@@ -363,12 +448,12 @@ In a 2-of-3 rule it casts the deciding vote wherever Strelka2 and Mutect2 disagr
 4. Run **`mouse_wgs_somalier.R`**: `--test` first, then the real data (commands in 2.1). somalier is already
    installed at `/common/WORK/pstancl/tools/somalier/somalier` (v0.3.5). Review `verdict.tsv`, `robustness.png`
    and the heatmaps, then add the result to section 3.3.
-5. Run **`mouse_wgs_identity_informativeness.R`** (minutes; needs the `mouse_wgs_somalier.R` outputs). Check
-   `informativeness_summary.tsv`, `tumour_dependent_retention.tsv` and `tumour_independent_discordance.png`,
-   then send `bam_check_sites_for_patrik.csv` to Patrik (fill in the `BAM_reads_ref_alt_*` columns).
-   Then run **`mouse_wgs_identity_strain_check.R`** (check `MGP_VCF` first: GRCm38 release, link copied from
-   the MGP FTP page). Review `summary_discordant_sites.tsv`, `discordant_sites_genome.png` and
-   `isolated_discordant_sites.tsv`.
+5. Download MGP REL-1505 to `/common/WORK/pstancl/references/mgp/` and re-run
+   **`mouse_wgs_identity_strain_check.R`** (commands in 6.4). Review `summary_discordant_sites.tsv`,
+   `discordant_sites_genome.png` and `isolated_discordant_sites.tsv`; then send
+   `bam_check_sites_for_patrik_annotated.csv` to Patrik (he fills in the `BAM_reads_ref_alt_*` columns).
+   Re-run `mouse_wgs_snv_indel_callers.R` for the revised plots (6.1); run `mouse_wgs_snv_indel_settings.R`
+   and `mouse_wgs_freebayes_pass_check.R`.
 6. **Ask Patrik and the lab** where the KI1/KI2 swap happened and what the `id_` numbers mean; ask about
    HCC_3/KI3.
 7. **Re-call setting A** with HCC_1 vs KI2 and HCC_2 vs KI1 (Strelka2, Mutect2, FreeBayes, merge). Compare
