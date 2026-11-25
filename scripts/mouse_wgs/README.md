@@ -63,6 +63,7 @@ All are tutorial-style, numbered blocks, run line by line in RStudio or with `Rs
 | `gtcheck_freebayes.sh` | bcftools gtcheck: biallelic autosomal SNVs, QUAL/DP/GQ filter, merge `-m none`, all-sites and common-sites runs, per-1000 table | run; common-sites rows not reviewed yet |
 | `mouse_wgs_somalier.R` | Identity: normal-homozygous discordance (primary), IBS0, somalier and gtcheck on one masked 6-sample genotype file; panels A/B/C × thinning, bootstrap, jackknife; see 2.1 | revised 2026-11-25 (f5e1226); `--test` (swap + null) passes on ssi incl. somalier n check and gtcheck 1.24; real data run 2026-11-25: swap confirmed, HCC_3-KI3 confirmed (section 3.3) |
 | `mouse_wgs_identity_informativeness.R` | Reads the outputs of `mouse_wgs_somalier.R` (masked 6-sample BCF, primary sites): genotype patterns across the KI normals, informative sites, opposite homozygotes per pair of normals, private sites, tumour-dependent retention, identity on a tumour-independent site set (all normals non-ref), sites per chromosome, and `bam_check_sites_for_patrik.csv` | written 2026-11-25, tested on synthetic data; not run on real data |
+| `mouse_wgs_identity_strain_check.R` | Are the identity sites and the tumour vs labelled-normal differences germline? Panel A sites annotated with the Mouse Genomes Project (GRCm38 release: rsID/ID, strains carrying the ALT, C57BL/6NJ and 129 strains), WT normals from the setting-B Mutect2 files, and a neighbouring-SNP check (inherited blocks vs isolated sites, ±5 Mb); annotates `bam_check_sites_for_patrik.csv` | written 2026-11-25, tested on synthetic data without MGP/WT; not run on real data; check `MGP_VCF` link first |
 | `mouse_wgs_snv_indel.R` | Task 1: settings A/B/C (counts, VAF, FILTER, overlaps, annotation) | written, not run; block 9 reads ANN and must switch to **CSQ** |
 
 Run commands (from the repo on ssi):
@@ -363,6 +364,9 @@ In a 2-of-3 rule it casts the deciding vote wherever Strelka2 and Mutect2 disagr
 5. Run **`mouse_wgs_identity_informativeness.R`** (minutes; needs the `mouse_wgs_somalier.R` outputs). Check
    `informativeness_summary.tsv`, `tumour_dependent_retention.tsv` and `tumour_independent_discordance.png`,
    then send `bam_check_sites_for_patrik.csv` to Patrik (fill in the `BAM_reads_ref_alt_*` columns).
+   Then run **`mouse_wgs_identity_strain_check.R`** (check `MGP_VCF` first: GRCm38 release, link copied from
+   the MGP FTP page). Review `summary_discordant_sites.tsv`, `discordant_sites_genome.png` and
+   `isolated_discordant_sites.tsv`.
 6. **Ask Patrik and the lab** where the KI1/KI2 swap happened and what the `id_` numbers mean; ask about
    HCC_3/KI3.
 7. **Re-call setting A** with HCC_1 vs KI2 and HCC_2 vs KI1 (Strelka2, Mutect2, FreeBayes, merge). Compare
