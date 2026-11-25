@@ -180,7 +180,7 @@ message("WT normals: ", if (length(WT_IDS)) paste(WT_IDS, collapse = ", ") else 
 # ---- 5. Discordant sites per tumour and their neighbours ---------------------
 long <- rbindlist(lapply(TUMOURS, function(t) {
   data.table(tumour = t, site = A$key, CHROM = A$CHROM, POS = A$POS, tg = A[[t]],
-             lab = A[[KI_NORMALS[[t]]]], gen = A[[HYPOTHESIS[[t]]]])
+             lab = A[[KI_NORMALS[[t]]]], gen = A[[HYPOTHESIS[[t]]]], KI1 = A$KI1, KI2 = A$KI2, KI3 = A$KI3)
 }))
 long <- long[!is.na(tg)]
 long[, `:=`(disc_labelled = tg != lab, disc_genetic = tg != gen)]
@@ -192,6 +192,13 @@ nb <- long[long, on = .(tumour, CHROM), allow.cartesian = TRUE, nomatch = NULL][
 long <- nb[long, on = .(tumour, site)]
 for (cl in c("n_neighbours", "nb_disc_labelled", "nb_match_genetic")) set(long, which(is.na(long[[cl]])), cl, 0L)
 long[, isolated := disc_labelled & n_neighbours >= MIN_NEIGHBOURS & nb_disc_labelled == 0L]
+# Candidate = isolated AND the tumour genotype is in none of the KI normals: not explained by another
+# mouse, so somatic, LOH (het normal -> hom tumour) or a genotype error. Isolated sites where the tumour
+# matches another mouse's normal are inherited differences that just have no differing neighbour.
+long[, in_no_normal := tg != KI1 & tg != KI2 & tg != KI3]
+long[, candidate := isolated & in_no_normal]
+long[, candidate_type := fifelse(!candidate, NA_character_,
+                                 fifelse(lab == 1L & tg != 1L, "LOH-compatible (het normal, hom tumour)", "tumour gained an allele"))]
 ann_cols <- intersect(c("informative", "mgp_same_alt", "mgp_known_polymorphism", "mgp_129_alt", "mgp_C57BL_alt",
                         "mgp_n_strains_alt", "mgp_ID", "wt_any_alt", "wt_n_genotyped"), names(A))
 long <- setnames(A[, c("key", ann_cols), with = FALSE], "key", "site")[long, on = "site"]
@@ -210,7 +217,8 @@ summ <- rbindlist(lapply(c("labelled", "genetic"), function(w) {
       disc_with_WT_genotype = sum(d$wt_n_genotyped > 0, na.rm = TRUE),
       pct_of_those_WT_carries_alt = pct(sum(d$wt_any_alt, na.rm = TRUE), sum(d$wt_n_genotyped > 0, na.rm = TRUE)),
       pct_disc_with_discordant_neighbour = pct(sum(d$nb_disc_labelled > 0), nrow(d)),
-      isolated_discordant = sum(d$isolated))
+      isolated_discordant = sum(d$isolated), isolated_matching_another_normal = sum(d$isolated & !d$in_no_normal),
+      candidates_in_no_normal = sum(d$candidate))
   }, by = tumour]
 }))
 print(summ)
@@ -223,22 +231,25 @@ bg <- A[, .(sites = .N, informative = sum(informative),
             pct_informative_known = pct(sum(mgp_known_polymorphism & informative, na.rm = TRUE), sum(informative)))]
 print(bg)
 
-# 5c. isolated discordant sites (candidates for real somatic mutations or genotype errors)
-isolated <- long[isolated == TRUE][order(tumour, CHROM, POS)]
+# 5c. isolated discordant sites; candidate = tumour genotype in none of the KI normals
+isolated <- long[isolated == TRUE][order(-candidate, tumour, CHROM, POS)]
 print(isolated[, .(tumour, site, tg = GT[tg + 1], labelled = GT[lab + 1], genetic = GT[gen + 1], n_neighbours,
+                   matches_another_normal = !in_no_normal, candidate_type,
                    mgp_known_polymorphism = if ("mgp_known_polymorphism" %in% names(isolated)) mgp_known_polymorphism else NA)])
 
 # ---- 6. Plots ------------------------------------------------------------------
 pl <- long[disc_labelled == TRUE]
 if (nrow(pl)) {
   pl[, chr_n := as.integer(sub("^chr", "", CHROM))]
-  pl[, status := fcase(isolated, "isolated (no discordant neighbour)",
+  pl[, status := fcase(candidate, "isolated, tumour genotype in no KI normal",
+                       isolated, "isolated, matches another mouse's normal",
                        mgp_known_polymorphism %in% TRUE, "known MGP polymorphism",
                        default = if (nrow(mgp)) "not in MGP (same ALT)" else "MGP not checked")]
   p_gen <- ggplot(pl, aes(POS / 1e6, factor(chr_n, levels = 19:1), colour = status)) +
     geom_point(shape = 124, size = 4) + facet_wrap(~ tumour, nrow = 1) +
     scale_colour_manual(values = c("known MGP polymorphism" = "#2E7D32", "not in MGP (same ALT)" = "#F9A825",
-                                   "isolated (no discordant neighbour)" = "#C62828", "MGP not checked" = "grey50"), name = NULL) +
+                                   "isolated, tumour genotype in no KI normal" = "#C62828",
+                                   "isolated, matches another mouse's normal" = "#7B1FA2", "MGP not checked" = "grey50"), name = NULL) +
     labs(x = "position (Mb)", y = "chromosome",
          title = "Sites where the tumour differs from its LABELLED normal (would be called somatic in setting A)",
          subtitle = sprintf("Blocks = inherited differences between two mice; isolated = no discordant site within %g Mb", NEIGHBOUR_WINDOW / 1e6)) +
@@ -288,6 +299,6 @@ writeLines(c(
          "; genetic match ", paste(names(HYPOTHESIS), HYPOTHESIS, sep = "-", collapse = ", ")),
   paste0("- Tools:      ", bcf("--version")[1], "; data.table ", packageVersion("data.table")),
   paste0("- Outputs:    ", OUT),
-  paste0("- Counts:     panel A ", nrow(A), " sites; WT normals ", length(WT_IDS), "; isolated discordant ", nrow(isolated)),
+  paste0("- Counts:     panel A ", nrow(A), " sites; WT normals ", length(WT_IDS), "; isolated discordant ", nrow(isolated), " (candidates in no normal: ", sum(isolated$candidate), ")"),
   "", old_log), log_file)
 message("Done in ", round(difftime(Sys.time(), started, units = "mins"), 1), " min. Outputs: ", OUT)
