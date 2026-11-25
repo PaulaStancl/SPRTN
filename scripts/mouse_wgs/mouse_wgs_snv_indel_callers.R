@@ -156,16 +156,11 @@ if (nrow(merged)) {
 }
 
 # 3b. Per-caller PASS sets: PASS by each caller's OWN filters, i.e. FILTER == PASS in its own file
-#     (multiallelics split). NOT from the merged file: its FILTER drops a variant one caller passed
-#     when another caller filtered it. Fallback to INFO/CALLER only if there are no single-caller files.
-if (nrow(raw[kind == "caller"])) {
-  per_caller <- split_alt(raw[kind == "caller" & PASS == TRUE, .(tumour, SET = CALLER, CHROM, POS, REF, ALT, FILTER)])
-  PER_CALLER_SOURCE <- "single-caller files, FILTER == PASS in each caller's own file"
-} else {
-  per_caller <- rbindlist(lapply(CALLERS, function(cl)
-    merged[PASS == TRUE & get(cl), .(tumour, SET = cl, CHROM, POS, REF, ALT, FILTER)]))
-  PER_CALLER_SOURCE <- "merged file, INFO/CALLER (no single-caller files; record FILTER = merged FILTER)"
-}
+#     (multiallelics split). The merged (union) file is a separate set and NEVER used to filter or
+#     define a caller's variants - no fallback to it.
+if (!nrow(raw[kind == "caller"])) stop("No single-caller files in ", DIR_A, " - per-caller sets need each caller's own file")
+per_caller <- split_alt(raw[kind == "caller" & PASS == TRUE, .(tumour, SET = CALLER, CHROM, POS, REF, ALT, FILTER)])
+PER_CALLER_SOURCE <- "single-caller files, FILTER == PASS in each caller's own file"
 per_caller <- unique(per_caller[SET %chin% CALLERS])
 PER_CALLER_SOURCE
 per_caller[, .N, by = .(tumour, SET)][order(tumour, SET)]
