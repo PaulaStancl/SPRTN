@@ -43,7 +43,7 @@ files <- data.table(path = list.files(DIR_A, recursive = TRUE, full.names = TRUE
 files <- files[grepl("freebayes", path, ignore.case = TRUE)]
 files[, rel := substring(path, nchar(DIR_A) + 2)]
 files[, has_CALLER := sapply(path, function(f) any(startsWith(bcf(c("view", "-h", shQuote(f))), "##INFO=<ID=CALLER,")))]
-files <- files[!has_CALLER]
+files <- files[has_CALLER == FALSE]
 files[, tumour := NA_character_]
 for (k in names(TUMOURS)) files[grepl(TUMOURS[[k]], basename(rel), fixed = TRUE), tumour := k]
 files[, samples := sapply(path, function(f) paste(bcf(c("query", "-l", shQuote(f))), collapse = ","))]
