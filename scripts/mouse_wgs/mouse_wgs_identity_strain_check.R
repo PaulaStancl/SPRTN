@@ -41,7 +41,8 @@ BCFTOOLS <- Sys.which("bcftools"); if (!nzchar(BCFTOOLS)) BCFTOOLS <- file.path(
 # (only the needed blocks are fetched). Must be GRCm38: REL-1505 (default; ID = dbSNP142 rsIDs) or REL-1807
 # (mgp.v6.merged.norm.snp.indels.sfiltered.vcf.gz), NOT REL-2112 (GRCm39). EBI has no REL-2005 folder
 # (checked 2026-11-25). NA = skip the MGP part.
-MGP_VCF <- "https://ftp.ebi.ac.uk/pub/databases/mousegenomes/REL-1505-SNPs_Indels/mgp.v5.merged.snps_all.dbSNP142.vcf.gz"
+# ftp:// (not https://): the r-mutation bcftools has no https support but reads ftp (checked 2026-11-25, 36 strains).
+MGP_VCF <- "ftp://ftp.ebi.ac.uk/pub/databases/mousegenomes/REL-1505-SNPs_Indels/mgp.v5.merged.snps_all.dbSNP142.vcf.gz"
 
 TUMOURS    <- c("HCC_1", "HCC_2", "HCC_3")
 KI_NORMALS <- c(HCC_1 = "KI1", HCC_2 = "KI2", HCC_3 = "KI3")   # labelled pairing
@@ -104,12 +105,14 @@ message("panel A: ", nrow(A), " sites")
 # ---- 3. Mouse Genomes Project ------------------------------------------------
 mgp <- data.table(); MGP_STATUS <- "skipped (MGP_VCF = NA)"; MGP_STRAINS <- character()
 if (!is.na(MGP_VCF)) {
+  # htslib saves a remote file's .tbi into the working directory: work in OUT during this step
+  wd_old <- setwd(OUT)
   hdr <- tryCatch(bcf(c("view", "-h", shQuote(MGP_VCF))), error = function(e) { message("MGP not readable: ", conditionMessage(e)); NULL })
   if (!is.null(hdr)) {
     MGP_STRAINS <- strsplit(sub("^#CHROM.*FORMAT\t", "", grep("^#CHROM", hdr, value = TRUE)), "\t", fixed = TRUE)[[1]]
     asm <- grep("^##(reference|assembly|contig=<ID=1,)", hdr, value = TRUE)
     message("MGP: ", length(MGP_STRAINS), " strains; header lines on the assembly:\n  ", paste(head(asm, 3), collapse = "\n  "))
-    if (any(grepl("GRCm39|mm39", asm))) stop("MGP_VCF looks like GRCm39 - use a GRCm38 release (REL-2005 / REL-1505)")
+    if (any(grepl("GRCm39|mm39", asm))) stop("MGP_VCF looks like GRCm39 - use a GRCm38 release (REL-1505 / REL-1807)")
     mgp_chr <- any(grepl("^##contig=<ID=chr", hdr))
     reg <- file.path(OUT, "regions_panelA.tsv")
     fwrite(A[, .(CHROM = paste0(if (mgp_chr) "chr" else "", sub("^chr", "", CHROM)), POS, POS2 = POS)], reg, sep = "\t", col.names = FALSE)
@@ -120,6 +123,7 @@ if (!is.na(MGP_VCF)) {
     mgp[, CHROM := sub("^chr", "", CHROM)]
     MGP_STATUS <- sprintf("%s (%d strains, %d records at panel A positions)", MGP_VCF, length(MGP_STRAINS), nrow(mgp))
   } else MGP_STATUS <- paste("NOT READ:", MGP_VCF)
+  setwd(wd_old)
 }
 message("MGP: ", MGP_STATUS)
 
