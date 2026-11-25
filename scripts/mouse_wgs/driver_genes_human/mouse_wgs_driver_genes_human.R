@@ -8,6 +8,7 @@
 #   gene lists    two separate analyses (own tables and plots, suffix _IntOGen_HCC / _CGC):
 #                   IntOGen_HCC  Compendium_Cancer_Genes.tsv, rows with TUMOUR_TYPE == "HCC" (106 genes; ROLE,
 #                                IntOGen's CGC_GENE flag as in_CGC, number of HCC cohorts kept)
+#                   IntOGen_all  every gene of the compendium, any tumour type (ROLE, in_CGC, tumour types, in_HCC)
 #                   CGC          COSMIC Cancer Gene Census, all genes (Tier 1 + 2; TIER and ROLE kept);
 #                                old cancer_gene_census.csv or new Cosmic_CancerGeneCensus_*.tsv
 #   patient_driver  TRUE if the human gene has is_driver == TRUE in the RJALS tumourevo driver.rds
@@ -70,7 +71,13 @@ intogen <- ig[get(tt) == CANCER, .(ROLE = if ("ROLE" %in% names(ig)) paste(sort(
                                    TIER = NA_character_,
                                    in_CGC = if ("CGC_GENE" %in% names(ig)) any(as.character(CGC_GENE) %chin% c("True", "TRUE")) else NA,
                                    n_cohorts = uniqueN(COHORT)), by = .(symbol_h = SYMBOL)]
-LISTS <- list(IntOGen_HCC = intogen)
+# All IntOGen driver genes, any tumour type (one row per gene)
+intogen_all <- ig[, .(ROLE = if ("ROLE" %in% names(ig)) paste(sort(unique(na.omit(ROLE))), collapse = ";") else NA_character_,
+                      TIER = NA_character_,
+                      in_CGC = if ("CGC_GENE" %in% names(ig)) any(as.character(CGC_GENE) %chin% c("True", "TRUE")) else NA,
+                      n_tumour_types = uniqueN(get(tt)), tumour_types = paste(sort(unique(get(tt))), collapse = ";"),
+                      in_HCC = any(get(tt) == CANCER)), by = .(symbol_h = SYMBOL)]
+LISTS <- list(IntOGen_HCC = intogen, IntOGen_all = intogen_all)
 if (HAVE_CGC) {
   cg <- fread(CGC)
   pick <- function(cands) { k <- intersect(cands, names(cg)); if (!length(k)) stop("CGC: none of ", paste(cands, collapse = "/"), " in ", CGC); k[1] }
@@ -170,7 +177,8 @@ res_n <- list()
 for (L in names(LISTS)) {
   gl <- LISTS[[L]]
   dh <- gl[driver_hits, on = "symbol_h", nomatch = NULL]                   # hits in this list's genes
-  setcolorder(dh, intersect(c("tumour", "symbol_h", "symbol_m_vep", "ROLE", "TIER", "in_CGC", "n_cohorts", "patient_driver"), names(dh)))
+  setcolorder(dh, intersect(c("tumour", "symbol_h", "symbol_m_vep", "ROLE", "TIER", "in_CGC", "n_cohorts", "in_HCC", "n_tumour_types",
+                              "tumour_types", "patient_driver"), names(dh)))
   setorder(dh, tumour, symbol_h, CHROM, POS)
   message("== ", L, ": ", uniqueN(dh[, .(tumour, CHROM, POS, REF, ALT)]), " harmful PASS variants in ", uniqueN(dh$symbol_h), " genes")
   print(dh[, .(tumour, symbol_h, symbol_m_vep, patient_driver, CLASS, IMPACT, Consequence, HGVSp, n_sets)])
