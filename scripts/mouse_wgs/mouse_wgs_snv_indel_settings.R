@@ -5,13 +5,20 @@
 # mouse_wgs_snv_indel_settings.R - compare the three calling settings per tumour.
 #
 # Sets (per tumour; PASS = FILTER == PASS in each file's own FILTER, never the merged file):
-#   A_freebayes          A: tumor_vs_normal, FreeBayes PASS
+#   A_freebayes            A: tumor_vs_normal, FreeBayes PASS (FILTER as it is in the file)
+#   A_freebayes_pass_expr  A: FreeBayes PASS AND the prefilter expression (below) on the split record
+#   A_freebayes_expr       A: FreeBayes, the prefilter expression only (FILTER ignored)
 #   A_mutect2_strelka    A: PASS first in Mutect2's and in Strelka's own file, then intersected
 #                        ("all records" = found by both, any FILTER)
 #   A_strelka            A: Strelka PASS
 #   A_mutect2            A: Mutect2 PASS
 #   B_mutect2_joint_wt   B: tumor_vs_joint_wt/  Mutect2 joint calls with the WT normals, PASS
 #   C_mutect2_pon        C: tumor_only_pon/     Mutect2 tumour-only + WT panel of normals, PASS
+#
+# FreeBayes prefilter expression (provider), evaluated in R on each record of the split file:
+#   INFO/MQM >= 40 && GT[normal]="0/0" && GT[tumor]="0/1" && FMT/DP[normal] >= 30 && FMT/DP[tumor] >= 30
+#   && QUAL/INFO/AO >= 5 && SAF > 0 && SAR > 0      (missing value = fails)
+# The file's FILTER does not follow it record by record (mouse_wgs_freebayes_pass_check.R), hence the 3 sets.
 #
 # Questions answered, per tumour:
 #   1. SNV / indel counts per set (all records vs PASS)
@@ -55,6 +62,8 @@ TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
              HCC_2 = "sfb_dikic_2025_05_11_KI_HCC_2",
              HCC_3 = "sfb_dikic_2025_05_12_KI_HCC_3")
 SET_LABELS <- c(A_freebayes        = "A: tumor_vs_normal, FreeBayes PASS",
+                A_freebayes_pass_expr = "A: tumor_vs_normal, FreeBayes PASS & prefilter expression",
+                A_freebayes_expr   = "A: tumor_vs_normal, FreeBayes prefilter expression only",
                 A_mutect2_strelka  = "A: tumor_vs_normal, Mutect2 PASS & Strelka PASS (intersect)",
                 A_strelka          = "A: tumor_vs_normal, Strelka PASS",
                 A_mutect2          = "A: tumor_vs_normal, Mutect2 PASS",
@@ -147,15 +156,38 @@ print(files[, .(tumour, src, samples)])
 # ---- 3. Read records and build the sets ----------------------------------------
 read_rec <- function(i) {
   f <- files[i]
-  cmd <- paste(shQuote(BCFTOOLS), "query", "-f", shQuote("%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER\\n"), shQuote(f$path))
-  x <- tryCatch(fread(cmd = cmd, sep = "\t", header = FALSE, col.names = c("CHROM", "POS", "REF", "ALT", "FILTER"), quote = "",
-                      colClasses = list(character = c("CHROM", "REF", "ALT", "FILTER"), integer = "POS")),
+  is_fb <- f$src == "A_freebayes"
+  fmt <- paste0("%CHROM\\t%POS\\t%REF\\t%ALT\\t%FILTER",
+                if (is_fb) "\\t%QUAL\\t%INFO/MQM\\t%INFO/AO\\t%INFO/SAF\\t%INFO/SAR[\\t%GT\\t%DP]", "\\n")
+  cn  <- c("CHROM", "POS", "REF", "ALT", "FILTER",
+           if (is_fb) c("QUAL", "MQM", "AO", "SAF", "SAR", "GT_s1", "DP_s1", "GT_s2", "DP_s2"))
+  cmd <- paste(shQuote(BCFTOOLS), "query", "-f", shQuote(fmt), shQuote(f$path))
+  x <- tryCatch(fread(cmd = cmd, sep = "\t", header = FALSE, col.names = cn, quote = "",
+                      colClasses = list(character = setdiff(cn, "POS"), integer = "POS")),
                 error = function(e) { message(f$rel, ": no records read (", conditionMessage(e), ")"); data.table() })
   if (!nrow(x)) return(NULL)
+  if (is_fb) {
+    # FreeBayes prefilter expression per record (see header); tumour/normal column from the sample names
+    smp <- strsplit(f$samples, ",", fixed = TRUE)[[1]]
+    it  <- grep(TUMOURS[[f$tumour]], smp, fixed = TRUE)
+    if (length(smp) != 2 || length(it) != 1) stop(f$rel, ": expected 2 samples, one of them the tumour; got ", f$samples)
+    g <- function(v, s) x[[paste0(v, "_s", s)]]
+    n <- function(v) suppressWarnings(as.numeric(v))
+    x[, RULE := n(MQM) >= 40 & g("GT", 3 - it) == "0/0" & g("GT", it) == "0/1" &
+                n(g("DP", 3 - it)) >= 30 & n(g("DP", it)) >= 30 & n(QUAL) / n(AO) >= 5 & n(SAF) > 0 & n(SAR) > 0]
+    x[is.na(RULE), RULE := FALSE]
+    x[, c("QUAL", "MQM", "AO", "SAF", "SAR", "GT_s1", "DP_s1", "GT_s2", "DP_s2") := NULL]
+  }
   x[, `:=`(tumour = f$tumour, src = f$src, rel = f$rel)]
 }
-raw <- rbindlist(lapply(seq_len(nrow(files)), read_rec), use.names = TRUE)
+raw <- rbindlist(lapply(seq_len(nrow(files)), read_rec), use.names = TRUE, fill = TRUE)
 raw[, PASS := FILTER == "PASS"]
+# The two extra FreeBayes sets: same records, PASS redefined
+fbx <- raw[src == "A_freebayes"]
+raw <- rbind(raw, copy(fbx)[, `:=`(src = "A_freebayes_pass_expr", PASS = PASS & RULE)],
+             copy(fbx)[, `:=`(src = "A_freebayes_expr", PASS = RULE)])
+rm(fbx)
+print(raw[src %like% "freebayes", .(records = .N, PASS = sum(PASS)), by = .(tumour, src)][order(tumour, src)])
 records_per_file <- raw[, .(records = .N, PASS = sum(PASS)), by = .(tumour, src, rel)][order(tumour, src)]
 print(records_per_file)
 filter_values <- raw[, .N, by = .(tumour, src, FILTER)][order(tumour, src, -N)]
@@ -176,7 +208,7 @@ key <- c("tumour", "CLASS", "CHROM", "POS", "REF", "ALT")
 m2s <- merge(rec[src == "A_mutect2", c(key, "PASS"), with = FALSE], rec[src == "A_strelka", c(key, "PASS"), with = FALSE],
              by = key, suffixes = c("_m2", "_st"))[, .(PASS = PASS_m2 & PASS_st), by = key]
 one <- function(s) rec[src == s, c(key, "PASS"), with = FALSE][, SET := s]
-allset <- rbind(one("A_freebayes"), m2s[, SET := "A_mutect2_strelka"], one("A_strelka"), one("A_mutect2"),
+allset <- rbind(one("A_freebayes"), one("A_freebayes_pass_expr"), one("A_freebayes_expr"), m2s[, SET := "A_mutect2_strelka"], one("A_strelka"), one("A_mutect2"),
                 one("B_mutect2_joint_wt"), one("C_mutect2_pon"), use.names = TRUE)
 rm(m2s)
 allset[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
@@ -202,7 +234,7 @@ p_counts <- ggplot(counts_filter, aes(SET, N, fill = CLASS)) +
        title = "SNVs and indels per setting, all records vs PASS",
        subtitle = "A_mutect2_strelka: all = found by both; PASS = PASS in both own files") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
-save_plot(p_counts, "counts_per_setting", 12, 8)
+save_plot(p_counts, "counts_per_setting", 16, 8)
 
 # PASS only, one panel per tumour (the main count plot)
 p_counts_pass <- ggplot(counts_filter[filter == "PASS"], aes(SET, N, fill = CLASS)) +
@@ -212,7 +244,7 @@ p_counts_pass <- ggplot(counts_filter[filter == "PASS"], aes(SET, N, fill = CLAS
   scale_y_continuous(expand = expansion(mult = c(0, 0.12))) +
   labs(x = NULL, y = "PASS variants (MNVs split)", fill = NULL, title = "PASS SNVs and indels per setting") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
-save_plot(p_counts_pass, "counts_per_setting_PASS", 12, 5)
+save_plot(p_counts_pass, "counts_per_setting_PASS", 16, 5.5)
 
 # qcVCF: PASS counts per set (classes SNV / INDEL after the MNV split)
 if (HAVE_QCVCF) {
@@ -248,7 +280,7 @@ p_pair <- ggplot(pairwise, aes(set_2, set_1, fill = pct_of_1)) +
   labs(x = "found also in", y = "set (row = 100%)", fill = "% of row",
        title = "Shared PASS variants between settings") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
-save_plot(p_pair, "pairwise_shared", 14, 7)
+save_plot(p_pair, "pairwise_shared", 19, 9)
 
 # qcVCF pairwise plots (SNV, INDEL): every tumour x set against every other, so sharing between tumours shows too.
 # qcVCF::plot_pairwise_shared_mutations() merges the table with itself without allow.cartesian: a variant in
@@ -287,7 +319,7 @@ if (HAVE_QCVCF) {
     pw <- tryCatch(qcVCF::plot_pairwise_shared_mutations(q, sample_col = "sample_tool", cohort = cl),
                    error = function(e) { message("qcVCF pairwise ", cl, " failed (", conditionMessage(e), ") - same plot from pairwise_shared_sparse()"); NULL })
     if (is.null(pw)) pw <- pairwise_shared_sparse(q, cohort = cl)
-    save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", cl), 13, 11)
+    save_plot(pw$plot, paste0("qcVCF_pairwise_shared_", cl), 17, 14)
     as.data.table(pw$data)[, CLASS := cl]
   }), fill = TRUE)
   print(qc_pairwise)
@@ -312,7 +344,7 @@ p_excl <- ggplot(exclusive, aes(factor(SETS, levels = lvl), N, fill = factor(N_S
        title = "Overlap between settings, exclusive categories (UpSet-style)",
        subtitle = "A_mutect2_strelka is a subset of A_mutect2 and A_strelka by definition") +
   theme_bw() + theme(axis.text.x = element_text(angle = 60, hjust = 1, size = 7), plot.subtitle = element_text(size = 8))
-save_plot(p_excl, "overlap_exclusive", 15, 8)
+save_plot(p_excl, "overlap_exclusive", 22, 9)
 
 # 5c. Proportion of each set's PASS variants also found in each other set, as stacked bars:
 #     for each set, its variants split by how many OTHER sets also have them
@@ -326,7 +358,7 @@ p_share <- ggplot(share_n, aes(SET, pct, fill = factor(other_sets))) +
   scale_fill_brewer(palette = "Blues", name = "also in\n# other sets") +
   labs(x = NULL, y = "% of the set's PASS variants", title = "Proportion of PASS variants shared with the other settings") +
   theme_bw() + theme(axis.text.x = element_text(angle = 30, hjust = 1), plot.subtitle = element_text(size = 8))
-save_plot(p_share, "proportion_shared", 12, 7)
+save_plot(p_share, "proportion_shared", 16, 7)
 
 # ---- 6. SBS96 context ----------------------------------------------------------
 SBS96_TYPES <- sort(CJ(b5 = c("A", "C", "G", "T"), sub = c("C>A", "C>G", "C>T", "T>A", "T>C", "T>G"),
@@ -443,7 +475,7 @@ if (HAVE_FASTA) {
       scale_y_discrete(limits = rev) +
       labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles between settings (PASS SNVs)") +
       theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.subtitle = element_text(size = 8))
-    save_plot(p_cos, "sbs96_cosine", 14, 6)
+    save_plot(p_cos, "sbs96_cosine", 19, 7)
   }
 
   # 6e. Cosine similarity per set, between tumours
@@ -470,7 +502,7 @@ if (HAVE_FASTA) {
                            oob = scales::squish, na.value = "grey85", name = "cosine") +
       labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles between tumours, per setting (PASS SNVs)") +
       theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-    save_plot(p_cos_s, "sbs96_cosine_between_tumours", 14, 4.5)
+    save_plot(p_cos_s, "sbs96_cosine_between_tumours", 22, 4.5)
     cosine_samples[, c("fill", "txt_col") := NULL]
   }
 }
