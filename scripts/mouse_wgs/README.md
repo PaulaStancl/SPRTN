@@ -445,9 +445,8 @@ compared with FILTER:
    per-sample genotype masking.
 3. Run the current **`mouse_wgs_sample_identity.R`**. Review `verdict.tsv`, `ibs0_rate_per_tumour.png`,
    `ibs0_genome_distribution.png` / `ibs0_blocks.tsv` and `quality_ibs0_vs_other.png`.
-4. Run **`mouse_wgs_somalier.R`**: `--test` first, then the real data (commands in 2.1). somalier is already
-   installed at `/common/WORK/pstancl/tools/somalier/somalier` (v0.3.5). Review `verdict.tsv`, `robustness.png`
-   and the heatmaps, then add the result to section 3.3.
+4. ~~Run `mouse_wgs_somalier.R`~~ done 2026-11-25 (result in 3.3). Still to review: `robustness.tsv`,
+   `assignment_scores.tsv`, the plots, and the max-depth filter (3.3).
 5. Download MGP REL-1505 to `/common/WORK/pstancl/references/mgp/` and re-run
    **`mouse_wgs_identity_strain_check.R`** (commands in 6.4). Review `summary_discordant_sites.tsv`,
    `discordant_sites_genome.png` and `isolated_discordant_sites.tsv`; then send
@@ -481,8 +480,16 @@ Agreed rules (do not change without Paula):
   Mutect2/FreeBayes as one MNV, and FreeBayes also joins non-adjacent SNVs into one haplotype record
   (HCC_1 FreeBayes PASS: 55,611 records = 29,234 SNV + 1,864 MNV + 24,513 indel; the MNVs hold 4,386 SNVs).
   Also recorded in `scripts/analysis/README.md`, Open questions 1.
-- **Mutect2 & Strelka intersect:** PASS in each caller's own file first, then present in both (FreeBayes
-  ignored). Paula distrusts FreeBayes, so this is the high-confidence set.
+- **Sets** (all from own-file PASS): each caller; `>=2 callers` (PASS in ≥ 2 own files, any pair);
+  **`mutect2+strelka`** (PASS in Mutect2's and in Strelka's own file, then present in both; FreeBayes ignored,
+  because Paula distrusts FreeBayes; the high-confidence set); `all 3 callers`; and `union (merged)` (merged
+  FILTER PASS, includes 1-caller calls).
+- **MNV split everywhere** now also covers the R7 intersects, the Venn and `intersect_mutect2_strelka_PASS.tsv`
+  (6963be1). Before, the Venn did not split: HCC_1 Mutect2 & Strelka was 3,291 in the Venn vs 3,351 in the
+  pairwise plot; the difference was doublet halves.
+- **Why the pairwise % dropped** versus older plots (e.g. HCC_1 Mutect2 → Strelka 94.6 % → 78.4 %): the old
+  plots predate 391d39a and took per-caller sets from merged PASS + INFO/CALLER, which inflates sharing. The
+  current numbers are correct; `parameters.tsv` `PER_CALLER_SOURCE` shows which source a run used.
 
 Changes to the outputs:
 - `intersect_mutect2_strelka_PASS.tsv` and `_counts.tsv`; the set also appears in the raw-vs-merged bar
@@ -494,7 +501,13 @@ Changes to the outputs:
   (`HCC_1 mutect2`, `HCC_2 strelka`, ...) instead of one plot per tumour.
 - **SBS96:** qcVCF plots stacked in one column, each set split into all SNVs / PASS / not PASS
   (`sbs96_snvs_by_filter.tsv`); the ggplot `sbs96_<tumour>` shows PASS only, one row per set. The SBS96
-  matrix and cosine similarities stay PASS-only; there is a between-tumour cosine heatmap per set.
+  matrix and cosine similarities stay PASS-only. Contexts come from the GRCm38 FASTA (samtools faidx), folded
+  to the pyrimidine strand, raw counts, no rescaling.
+- **Between-tumour cosine** (`sbs96_cosine_between_tumours.tsv/.png`, also in `summary.md` and the rds as
+  `cosine_samples`): HCC_1/2/3 per set; colour scale from the lowest off-diagonal value (rounded down to
+  0.05) to 1, diagonal grey.
+- Commits: 391d39a 67b47d7 65de2c2 4159641 72191e9 657c29f a81c9d4 536528f 6dc6393 ecb9d69 ba8fed4 b795527
+  beb1a5e 3331a41 6963be1. Re-run needed for all of it.
 
 FreeBayes checks done in the R console:
 - The provider's prefilter is the rule above (section 1). The check that every FreeBayes PASS satisfies it,
