@@ -61,7 +61,7 @@ All are tutorial-style, numbered blocks, run line by line in RStudio or with `Rs
 | `mouse_wgs_example_sites.R` | Diagnostics for chr19:30419577 T>C and chr10:3184122 G>T from the single-caller files: per-caller metrics, FreeBayes criteria, per-caller read counts in all samples, plots 01–08 | run, reviewed |
 | `mouse_wgs_sample_identity.R` | Sample identity from FreeBayes genotypes: IBS0 rates per shared confident sites (WT from Mutect2 joint), LD-thinned rate, IBS0 blocks and chromosomes, depth and GQ/MQM at IBS0 sites, optional MGP strains, bcftools gtcheck | v1 run (counts in section 3); **current version not run yet** |
 | `gtcheck_freebayes.sh` | bcftools gtcheck: biallelic autosomal SNVs, QUAL/DP/GQ filter, merge `-m none`, all-sites and common-sites runs, per-1000 table | run; common-sites rows not reviewed yet |
-| `mouse_wgs_somalier.R` | Identity with three methods (somalier, bcftools gtcheck, custom IBS0) on one masked 6-sample genotype file; panels A/B/C x thinning; see 2.1 | rewritten 2026-11-24 (94c7d76); `--test` passes on ssi 2026-11-25 (all checks incl. somalier, 9a19573); **real data not run yet** |
+| `mouse_wgs_somalier.R` | Identity: normal-homozygous discordance (primary), IBS0, somalier and gtcheck on one masked 6-sample genotype file; panels A/B/C × thinning, bootstrap, jackknife; see 2.1 | revised 2026-11-25 (f5e1226); `--test` (swap + null) passes on ssi incl. somalier n check and gtcheck 1.24; real data run 2026-11-25: swap confirmed, HCC_3-KI3 confirmed (section 3.3) |
 | `mouse_wgs_snv_indel.R` | Task 1: settings A/B/C (counts, VAF, FILTER, overlaps, annotation) | written, not run; block 9 reads ANN and must switch to **CSQ** |
 
 Run commands (from the repo on ssi):
@@ -279,6 +279,35 @@ jointly callable sites per tumour–normal pair.
   - `assignment_scores.tsv`;
   - the plots in `results/mouse_wgs/mouse_wgs_somalier/`.
 - All three methods use the same FreeBayes calls. Lab records remain the independent confirmation.
+
+**Revised identity analysis** (`mouse_wgs_somalier.R` f5e1226, real data, 2026-11-25). This is the
+final result.
+- **Primary metric:** discordance at normal-homozygous sites.
+- **Sites:** panel A, thinned at 20 kb (2,465 sites).
+- **Defaults:** PASS sites kept, max-depth filter 2.5 × median.
+
+| Tumour | Labelled normal: discordance | Genetic match: discordance | Next best | Paired p | Evidence vs the labelled / next normal |
+|---|---|---|---|---|---|
+| HCC_1 | KI1: 22.7% | **KI2: 0 / 1,481** | KI3: 8.3% | 3e-36 | 194 segments on 18 chromosomes (vs KI1) |
+| HCC_2 | KI2: 15.3% | **KI1: 0 / 1,630** | KI3: 9.3% | 9e-41 | 129 segments on 19 chromosomes (vs KI2) |
+| HCC_3 | KI3: 0 / 1,425 | **KI3** | KI2: 11.0% | 7e-49 | 101 segments on 18 chromosomes (vs KI2) |
+
+- **No tumour is ambiguous.** IBS0, somalier and gtcheck (bcftools 1.24) all give the same best normal.
+- **HCC_3–KI3 is now positively confirmed.** IBS0 could not confirm a correct label because of the per-pair
+  ascertainment; the normal-homozygous discordance can.
+- **Robustness:**
+  - block bootstrap (255 × 10 Mb blocks): D = 0.38 (95% CI 0.33–0.44), D > 0 in 100% of replicates, and
+    support 1.0 for the assignment HCC_1–KI2, HCC_2–KI1, HCC_3–KI3;
+  - jackknife: no chromosome changes the verdict or an ambiguity flag (weakest paired p ≤ 6e-27);
+  - files-1+2 ascertainment: p = 1e-308 and 1e-227;
+  - MIN_DP 15 and 20: same verdict;
+  - PASS exclusion: same verdict (it removes only 118 of 3,188 sites).
+- **The evidence is genome-wide** (18–19 of the 19 autosomes), not one inherited block.
+- **Open:** the max-depth filter removes many sites (panel A dropped from about 7,200 to 3,188 sites).
+  Check the per-sample medians in `filter_counts.tsv`. If one sample's median is low, run a sensitivity
+  check with a larger `MAX_DP_FACTOR`. The verdict does not depend on it.
+- **Genetics can't say which label is wrong** (tumour or normal) or where the swap happened; that needs
+  the lab records.
 
 ### 3.4 The mice are not genetically identical
 
