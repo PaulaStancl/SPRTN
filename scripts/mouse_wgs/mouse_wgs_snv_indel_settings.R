@@ -7,7 +7,7 @@
 # Sets (per tumour; PASS = FILTER == PASS in each file's own FILTER, never the merged file):
 #   A_freebayes            A: tumor_vs_normal, FreeBayes PASS (FILTER as it is in the file)
 #   A_freebayes_pass_expr  A: FreeBayes PASS AND the prefilter expression (below) on the split record
-#   A_freebayes_expr       A: FreeBayes, the prefilter expression only (FILTER ignored)
+#   A_freebayes_expr       A: FreeBayes, prefilter expression TRUE and NOT file PASS (expression only)
 #   A_mutect2_strelka    A: PASS first in Mutect2's and in Strelka's own file, then intersected
 #                        ("all records" = found by both, any FILTER)
 #   A_strelka            A: Strelka PASS
@@ -63,7 +63,7 @@ TUMOURS <- c(HCC_1 = "sfb_dikic_2025_05_10_KI_HCC_1",
              HCC_3 = "sfb_dikic_2025_05_12_KI_HCC_3")
 SET_LABELS <- c(A_freebayes        = "A: tumor_vs_normal, FreeBayes PASS",
                 A_freebayes_pass_expr = "A: tumor_vs_normal, FreeBayes PASS & prefilter expression",
-                A_freebayes_expr   = "A: tumor_vs_normal, FreeBayes prefilter expression only",
+                A_freebayes_expr   = "A: tumor_vs_normal, FreeBayes expression only (expression, not PASS)",
                 A_mutect2_strelka  = "A: tumor_vs_normal, Mutect2 PASS & Strelka PASS (intersect)",
                 A_strelka          = "A: tumor_vs_normal, Strelka PASS",
                 A_mutect2          = "A: tumor_vs_normal, Mutect2 PASS",
@@ -182,12 +182,9 @@ read_rec <- function(i) {
 }
 raw <- rbindlist(lapply(seq_len(nrow(files)), read_rec), use.names = TRUE, fill = TRUE)
 raw[, PASS := FILTER == "PASS"]
-# The two extra FreeBayes sets: same records, PASS redefined
-fbx <- raw[src == "A_freebayes"]
-raw <- rbind(raw, copy(fbx)[, `:=`(src = "A_freebayes_pass_expr", PASS = PASS & RULE)],
-             copy(fbx)[, `:=`(src = "A_freebayes_expr", PASS = RULE)])
-rm(fbx)
-print(raw[src %like% "freebayes", .(records = .N, PASS = sum(PASS)), by = .(tumour, src)][order(tumour, src)])
+# FreeBayes expression as its own temporary source (PASS = expression TRUE); the two extra FreeBayes sets
+# are built from it at variant level after the MNV split (block 3, below)
+raw <- rbind(raw, raw[src == "A_freebayes"][, `:=`(src = "fb_expression", PASS = RULE)])
 records_per_file <- raw[, .(records = .N, PASS = sum(PASS)), by = .(tumour, src, rel)][order(tumour, src)]
 print(records_per_file)
 filter_values <- raw[, .N, by = .(tumour, src, FILTER)][order(tumour, src, -N)]
@@ -208,9 +205,19 @@ key <- c("tumour", "CLASS", "CHROM", "POS", "REF", "ALT")
 m2s <- merge(rec[src == "A_mutect2", c(key, "PASS"), with = FALSE], rec[src == "A_strelka", c(key, "PASS"), with = FALSE],
              by = key, suffixes = c("_m2", "_st"))[, .(PASS = PASS_m2 & PASS_st), by = key]
 one <- function(s) rec[src == s, c(key, "PASS"), with = FALSE][, SET := s]
-allset <- rbind(one("A_freebayes"), one("A_freebayes_pass_expr"), one("A_freebayes_expr"), m2s[, SET := "A_mutect2_strelka"], one("A_strelka"), one("A_mutect2"),
+# FreeBayes, per variant (MNVs split): file PASS x expression
+#   A_freebayes_pass_expr = file PASS AND expression TRUE
+#   A_freebayes_expr      = expression TRUE AND NOT file PASS  (expression only)
+fbv <- merge(rec[src == "A_freebayes", c(key, "PASS"), with = FALSE], rec[src == "fb_expression", c(key, "PASS"), with = FALSE],
+             by = key, suffixes = c("_file", "_expr"))
+print(fbv[, .(variants = .N, PASS_only = sum(PASS_file & !PASS_expr), expr_only = sum(!PASS_file & PASS_expr),
+              PASS_and_expr = sum(PASS_file & PASS_expr), neither = sum(!PASS_file & !PASS_expr)), by = .(tumour, CLASS)])
+allset <- rbind(one("A_freebayes"),
+                fbv[, c(key, "PASS_file", "PASS_expr"), with = FALSE][, .(PASS = PASS_file & PASS_expr), by = key][, SET := "A_freebayes_pass_expr"],
+                fbv[, c(key, "PASS_file", "PASS_expr"), with = FALSE][, .(PASS = !PASS_file & PASS_expr), by = key][, SET := "A_freebayes_expr"],
+                m2s[, SET := "A_mutect2_strelka"], one("A_strelka"), one("A_mutect2"),
                 one("B_mutect2_joint_wt"), one("C_mutect2_pon"), use.names = TRUE)
-rm(m2s)
+rm(m2s, fbv)
 allset[, ID := paste(CHROM, POS, REF, ALT, sep = ":")]
 allset[, SET := factor(SET, levels = SET_LEVELS)]
 pass <- allset[PASS == TRUE]
