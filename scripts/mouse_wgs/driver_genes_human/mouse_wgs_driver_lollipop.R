@@ -60,7 +60,8 @@ if (!nrow(go)) stop("No mouse orthologs for ", paste(genes_h, collapse = ", "))
 
 # ---- 3. Mouse coding variants per set ---------------------------------------
 st <- readRDS(SETTINGS)
-pass <- as.data.table(st$pass)[, .(tumour, SET = as.character(SET), CHROM, POS, REF, ALT)]
+pass <- as.data.table(st$pass)[, .(tumour, SET = as.character(SET), CHROM = as.character(CHROM), POS = as.integer(POS),
+                                    REF = as.character(REF), ALT = as.character(ALT))]
 SET_LEVELS <- st$params$SET_LEVELS
 files <- as.data.table(st$files)
 ids_file <- tempfile(fileext = ".txt"); writeLines(unique(go$gene_id_m), ids_file)
@@ -91,6 +92,7 @@ mn <- csq[(MNV)]
 if (nrow(mn)) { mn <- mn[rep(seq_len(.N), nchar(REF))][, k := sequence(nchar(mn$REF))]
   mn[, `:=`(POS = POS + k - 1L, REF = substring(REF, k, k), ALT = substring(ALT, k, k))]; mn <- mn[REF != ALT][, k := NULL] }
 csq <- rbind(csq[!(MNV)], mn)[, MNV := NULL]
+csq[, `:=`(CHROM = as.character(CHROM), POS = as.integer(POS))]          # same types as pass (newer data.table reads 1..19 as int)
 
 # Canonical transcript per mouse gene (most frequent CANONICAL == YES feature; else most frequent feature)
 pick_tx <- function(d) {
