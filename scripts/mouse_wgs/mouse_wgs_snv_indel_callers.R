@@ -33,7 +33,7 @@
 #   5  counts per caller and the union (+ qcVCF plot_mutation_counts)
 #   6  pairwise sharing between callers (+ qcVCF plot_pairwise_shared_mutations), exclusive categories
 #   7  union vs single callers
-#   8  SBS96 context: profiles, plots (ggplot + qcVCF plot96_matrix), cosine similarity
+#   8  SBS96 context: profiles, plots (ggplot + qcVCF plot96_matrix), cosine similarity (sets per tumour; tumours per set)
 #   9  outputs, summary.md, RUN_LOG.md
 #
 # Comparison unit: chrom:pos:ref:alt. MNVs are split into SNVs (Strelka writes a CC>TT as two C>T,
@@ -549,7 +549,7 @@ in_doublet <- function(d) {
   paste(d$tumour, d$SET, d$CHROM, d$POS - 1L) %chin% here | paste(d$tumour, d$SET, d$CHROM, d$POS + 1L) %chin% here
 }
 
-snv96 <- data.table(); m96 <- data.table(); cosine <- data.table(); sbs96_filter_n <- data.table()
+snv96 <- data.table(); m96 <- data.table(); cosine <- data.table(); cosine_samples <- data.table(); sbs96_filter_n <- data.table()
 if (HAVE_FASTA) {
   snv <- atom[CLASS == "SNV", .(tumour, SET = as.character(SET), CHROM, POS, REF, ALT, ID)]
   snv_cal <- memb[CLASS == "SNV", .(tumour, ID, N_CALLERS)]
@@ -649,6 +649,27 @@ if (HAVE_FASTA) {
     labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles") +
     theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
   save_plot(p_cos, "sbs96_cosine", 13, 5)
+
+  # Cosine similarity of the SBS96 profiles, per set, between tumours (pairwise, PASS SNVs = m96)
+  cosine_samples <- rbindlist(lapply(SET96, function(s) {
+    cols <- names(m96)[endsWith(names(m96), paste0("|", s))]   # exact suffix: set names contain ( ) > =
+    if (length(cols) < 2) return(NULL)
+    M <- as.matrix(m96[, ..cols]); colnames(M) <- sub("\\|.*$", "", cols)
+    M <- M[, colSums(M) > 0, drop = FALSE]
+    if (ncol(M) < 2) return(NULL)
+    nrm <- sqrt(colSums(M^2)); C <- crossprod(M) / outer(nrm, nrm)
+    data.table(set = s, tumour_1 = rownames(C)[row(C)], tumour_2 = colnames(C)[col(C)], cosine = round(as.vector(C), 3))
+  }))
+  if (nrow(cosine_samples)) {
+    cosine_samples[, set := factor(set, levels = SET96)]
+    print(dcast(cosine_samples, set + tumour_1 ~ tumour_2, value.var = "cosine"))
+    p_cos_s <- ggplot(cosine_samples, aes(tumour_2, tumour_1, fill = cosine)) + geom_tile(colour = "white") +
+      geom_text(aes(label = sprintf("%.2f", cosine)), size = 3) + facet_wrap(~ set, nrow = 2) +
+      scale_fill_gradient(low = "white", high = "darkred", limits = c(0, 1)) +
+      labs(x = NULL, y = NULL, title = "Cosine similarity of SBS96 profiles between tumours, per set (PASS SNVs)") +
+      theme_bw() + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+    save_plot(p_cos_s, "sbs96_cosine_between_tumours", 11, 7)
+  }
 }
 
 # ---- 9. Outputs --------------------------------------------------------------
@@ -659,12 +680,12 @@ w(counts, "counts_per_caller"); w(counts_filter, "counts_per_caller_all_vs_PASS"
 w(pairwise, "pairwise_shared"); w(qc_pairwise, "qcVCF_pairwise_shared")
 w(exclusive, "caller_overlap_exclusive"); w(by_n_callers, "caller_overlap_by_n_callers")
 w(union_vs, "union_vs_callers"); w(union_check, "union_merged_vs_callers_union"); w(union_n, "union_by_n_callers")
-w(m96, "sbs96_matrix"); w(cosine, "sbs96_cosine"); w(sbs96_filter_n, "sbs96_snvs_by_filter")
+w(m96, "sbs96_matrix"); w(cosine, "sbs96_cosine"); w(cosine_samples, "sbs96_cosine_between_tumours"); w(sbs96_filter_n, "sbs96_snvs_by_filter")
 
 saveRDS(list(files = files, raw = raw, per_caller = per_caller, per_caller_source = PER_CALLER_SOURCE,
              union_pass = union_pass, sets = sets, atom = atom, counts = counts, pairwise = pairwise,
              memb = memb, exclusive = exclusive, union_vs = union_vs, union_check = union_check, union_n = union_n,
-             snv96 = snv96, m96 = m96, cosine = cosine,
+             snv96 = snv96, m96 = m96, cosine = cosine, cosine_samples = cosine_samples,
              params = list(FASTA = FASTA)),
         file.path(OUT, paste0("callers", ".rds")))
 
@@ -694,7 +715,9 @@ writeLines(c(
   "## Pairwise shared (row caller = 100%)", "", md_table(pairwise[caller_1 != caller_2]), "",
   "## Variants by number of callers", "", md_table(by_n_callers), "",
   "## Union vs single callers", "", md_table(union_vs), "", md_table(union_check), "",
-  if (nrow(cosine)) c("## SBS96 cosine similarity", "", md_table(dcast(cosine, tumour + set_1 ~ set_2, value.var = "cosine")), "") else
+  if (nrow(cosine)) c("## SBS96 cosine similarity", "", md_table(dcast(cosine, tumour + set_1 ~ set_2, value.var = "cosine")), "",
+                         if (nrow(cosine_samples)) c("## SBS96 cosine similarity between tumours, per set", "",
+                           md_table(dcast(cosine_samples, set + tumour_1 ~ tumour_2, value.var = "cosine")), "")) else
     "SBS96 skipped (no FASTA/samtools).",
   "## Notes", "",
   "- Agreement between callers shows robustness to the caller, not somatic origin.",
