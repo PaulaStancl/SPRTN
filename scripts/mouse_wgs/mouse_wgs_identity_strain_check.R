@@ -164,6 +164,8 @@ if (nrow(mgp)) {
   m <- unique(m, by = c("CHROM", "POS", "REF", "ALT"))
   A <- m[A, on = .(CHROM, POS, REF, ALT)]
   A[, mgp_same_alt := !is.na(mgp_n_strains_alt)]
+  # MGP was read: a site with no MGP record (same REF/ALT) has no strain carrying the ALT (FALSE, not NA)
+  A[mgp_same_alt == FALSE, `:=`(mgp_129_alt = FALSE, mgp_C57BL_alt = FALSE)]
   A[, mgp_position := paste(sub("^chr", "", CHROM), POS) %chin% mgp[, paste(CHROM, POS)]]   # any MGP record at the position
   A[, mgp_known_polymorphism := mgp_same_alt & mgp_n_strains_alt > 0]
 } else A[, c("mgp_same_alt", "mgp_position", "mgp_known_polymorphism", "mgp_129_alt") := NA]
@@ -285,7 +287,10 @@ if (nrow(pl)) {
 }
 sb <- melt(summ, id.vars = c("tumour", "comparison"), measure.vars = c("pct_disc_known_polymorphism", "pct_disc_129_carries_alt",
                                                                     "pct_disc_with_discordant_neighbour"))
+# legend shows how many discordant sites each % is based on (HCC_3 has few: its labelled normal is its own)
+n_disc <- summ[comparison == "labelled normal", setNames(sprintf("%s (n = %d discordant)", tumour, discordant), tumour)]
 p_sum <- ggplot(sb[comparison == "labelled normal"], aes(variable, value, fill = tumour)) + geom_col(position = "dodge") +
+  scale_fill_discrete(labels = n_disc) +
   geom_text(aes(label = fifelse(is.na(value), "n/a", as.character(value))), position = position_dodge(0.9), vjust = -0.3, size = 3) +
   scale_x_discrete(labels = c("known MGP\npolymorphism", "a 129 strain\ncarries the ALT", "has a discordant\nneighbour")) +
   labs(x = NULL, y = "% of discordant sites (tumour vs labelled normal)", fill = NULL,
