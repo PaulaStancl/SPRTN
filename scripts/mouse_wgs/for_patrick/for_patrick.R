@@ -83,7 +83,7 @@ igv[, igv_locus := paste0(CHROM, ":", POS - 50, "-", POS + 50)]
 igv <- igv[, c("group", "igv_locus", names(sites), "min_depth_tumours", "min_depth_normals",
                 "max_vaf_dev_tumours", "max_vaf_dev_normals"), with = FALSE]
 igv[, comment_Patrik := ""]
-igv[, .(group, igv_locus, GT_HCC_1, GT_KI1, GT_HCC_2, GT_KI2, GT_HCC_3, GT_KI3,
+igv[, .(group, CHROM, POS, REF, ALT, igv_locus, GT_HCC_1, GT_KI1, GT_HCC_2, GT_KI2, GT_HCC_3, GT_KI3,
         min_depth_tumours, min_depth_normals, max_vaf_dev_tumours, max_vaf_dev_normals)]
 fwrite(igv, file.path(OUT, "2_igv_sites.csv"))
 
