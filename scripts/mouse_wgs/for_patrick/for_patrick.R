@@ -60,6 +60,11 @@ gt  <- sapply(SAMPLES, function(s) sel[[paste0("GT_", s)]])
 expected <- matrix(c(`0/0` = 0, `0/1` = 0.5, `1/1` = 1)[gt], nrow = nrow(gt))
 sel[, min_depth := apply(dp, 1, min)]
 sel[, max_vaf_dev := round(apply(abs(vaf - expected), 1, max), 3)]
+TUM <- c("HCC_1", "HCC_2", "HCC_3"); NOR <- c("KI1", "KI2", "KI3")
+sel[, min_depth_tumours := apply(dp[, TUM], 1, min)]
+sel[, min_depth_normals := apply(dp[, NOR], 1, min)]
+sel[, max_vaf_dev_tumours := round(apply(abs(vaf - expected)[, TUM], 1, max), 3)]
+sel[, max_vaf_dev_normals := round(apply(abs(vaf - expected)[, NOR], 1, max), 3)]
 sel[, opp_hom_both := GT_HCC_1 %chin% c("0/0", "1/1") & GT_KI1 %chin% c("0/0", "1/1") & disc_HCC_1_vs_KI1 %in% TRUE &
                       GT_HCC_2 %chin% c("0/0", "1/1") & GT_KI2 %chin% c("0/0", "1/1") & disc_HCC_2_vs_KI2 %in% TRUE]
 sel[, all_het_concordant := apply(gt == "0/1", 1, all) %in% TRUE]
@@ -74,9 +79,11 @@ disc <- pick(sel[opp_hom_both == TRUE], 20)
 conc <- pick(sel[all_het_concordant == TRUE], 10)
 igv <- rbind(disc[, group := "discordant (opposite homozygotes)"], conc[, group := "concordant (all 0/1)"])
 igv[, igv_locus := paste0(CHROM, ":", POS - 50, "-", POS + 50)]
-igv <- igv[, c("group", "igv_locus", names(sites), "min_depth", "max_vaf_dev"), with = FALSE]
+igv <- igv[, c("group", "igv_locus", names(sites), "min_depth_tumours", "min_depth_normals",
+                "max_vaf_dev_tumours", "max_vaf_dev_normals"), with = FALSE]
 igv[, comment_Patrik := ""]
-igv[, .(group, igv_locus, GT_HCC_1, GT_KI1, GT_HCC_2, GT_KI2, GT_HCC_3, GT_KI3, min_depth, max_vaf_dev)]
+igv[, .(group, igv_locus, GT_HCC_1, GT_KI1, GT_HCC_2, GT_KI2, GT_HCC_3, GT_KI3,
+        min_depth_tumours, min_depth_normals, max_vaf_dev_tumours, max_vaf_dev_normals)]
 fwrite(igv, file.path(OUT, "2_igv_sites.csv"))
 
 # ---- 3. Driver genes with mouse orthologs ----------------------------------------
