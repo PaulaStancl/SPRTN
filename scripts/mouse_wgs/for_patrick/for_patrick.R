@@ -93,7 +93,12 @@ length(genes)
 orth <- fread(ORTHOLOGS, colClasses = "character", na.strings = c("", "NA"))
 drv <- orth[symbol_h %chin% genes & !is.na(gene_id_m),
             .(human_gene = symbol_h, human_ensembl = gene_id_h, mouse_gene = symbol_m, mouse_ensembl = gene_id_m, homology_type)]
-drv <- merge(data.table(human_gene = genes), drv, by = "human_gene", all.x = TRUE)
+tt <- intersect(c("TUMOUR_TYPE", "CANCER_TYPE"), names(ig))[1]
+tt
+types <- ig[, .(n_tumour_types = uniqueN(get(tt)), tumour_types = paste(sort(unique(get(tt))), collapse = ";"),
+                in_HCC = "HCC" %chin% get(tt)), by = .(human_gene = SYMBOL)]
+drv <- merge(types, drv, by = "human_gene", all.x = TRUE)
+setcolorder(drv, c("human_gene", "human_ensembl", "mouse_gene", "mouse_ensembl", "homology_type"))
 drv
 drv[, .N, by = homology_type]
 drv[is.na(mouse_ensembl), human_gene]
