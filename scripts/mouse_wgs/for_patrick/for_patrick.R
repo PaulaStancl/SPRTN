@@ -15,7 +15,8 @@ REPO      <- "/common/WORK/pstancl/projects/MariaBoskovic/SPRTN"
 MASKED    <- file.path(REPO, "results/mouse_wgs/mouse_wgs_somalier/masked/masked_6samples.bcf")
 INTOGEN   <- "/common/WORK/pstancl/references/intogen/Compendium_Cancer_Genes.tsv"
 ORTHOLOGS <- "/common/WORK/pstancl/references/cross_species/ensembl110/orthologs_hsapiens_mmusculus.tsv"
-BCFTOOLS  <- "/common/WORK/pstancl/envs/r-mutation/bin/bcftools"
+PATIENT_RDS <- file.path(REPO, "results/wgs/tumourevo/RJALS/driver_annotation/annotate_driver/RJALS/RJALS/RJALS_RJALS_Tm/RJALS_RJALS_RJALS_RJALS_Tm_driver.rds")
+BCFTOOLS  <-"/common/WORK/pstancl/envs/r-mutation/bin/bcftools"
 OUT       <- file.path(REPO, "results/mouse_wgs/for_patrick")
 dir.create(OUT, recursive = TRUE, showWarnings = FALSE)
 
@@ -92,13 +93,31 @@ genes <- sort(unique(ig$SYMBOL))
 length(genes)
 orth <- fread(ORTHOLOGS, colClasses = "character", na.strings = c("", "NA"))
 drv <- orth[symbol_h %chin% genes & !is.na(gene_id_m),
-            .(human_gene = symbol_h, human_ensembl = gene_id_h, mouse_gene = symbol_m, mouse_ensembl = gene_id_m, homology_type)]
+            .(human_gene = symbol_h, human_ensembl = gene_id_h, mouse_gene = symbol_m, mouse_ensembl = gene_id_m, homology_type,
+              perc_identity_human_to_mouse = perc_id_h_to_m)]
+names(ig)
 tt <- intersect(c("TUMOUR_TYPE", "CANCER_TYPE"), names(ig))[1]
-tt
-types <- ig[, .(n_tumour_types = uniqueN(get(tt)), tumour_types = paste(sort(unique(get(tt))), collapse = ";"),
-                in_HCC = "HCC" %chin% get(tt)), by = .(human_gene = SYMBOL)]
+pct <- grep("^%_SAMPLES", names(ig), value = TRUE)[1]
+tt; pct
+types <- ig[, .(ROLE = paste(sort(unique(na.omit(ROLE))), collapse = ";"),
+                in_CGC = any(as.character(CGC_GENE) %chin% c("True", "TRUE")),
+                n_tumour_types = uniqueN(get(tt)), tumour_types = paste(sort(unique(get(tt))), collapse = ";"),
+                in_HCC = "HCC" %chin% get(tt),
+                pct_samples_HCC = if (any(get(tt) == "HCC")) max(as.numeric(get(pct)[get(tt) == "HCC"]), na.rm = TRUE) else NA_real_),
+            by = .(human_gene = SYMBOL)]
+types
+
+px <- readRDS(PATIENT_RDS)
+names(px)
+pm <- as.data.table(px[["RJALS_RJALS_Tm"]]$mutations)
+patient_genes <- unique(as.character(pm[is_driver %in% TRUE, SYMBOL]))
+patient_genes
+types[, driver_in_patient := human_gene %chin% patient_genes]
+
 drv <- merge(types, drv, by = "human_gene", all.x = TRUE)
-setcolorder(drv, c("human_gene", "human_ensembl", "mouse_gene", "mouse_ensembl", "homology_type"))
+setcolorder(drv, c("human_gene", "human_ensembl", "mouse_gene", "mouse_ensembl", "homology_type", "perc_identity_human_to_mouse",
+                   "ROLE", "driver_in_patient", "in_CGC", "in_HCC", "pct_samples_HCC"))
+drv[driver_in_patient == TRUE]
 drv
 drv[, .N, by = homology_type]
 drv[is.na(mouse_ensembl), human_gene]
